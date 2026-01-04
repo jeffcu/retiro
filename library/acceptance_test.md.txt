@@ -1,0 +1,79 @@
+# Curie Trust - Acceptance Test Plan v1.0
+
+## 1. Introduction
+
+This document outlines the acceptance criteria and testing strategy for each phase of the Curie Trust Financial Control Center project, as defined in the Project Requirements Specification (PRS), Section 10. The purpose is to ensure that each development phase delivers the intended functionality and meets quality standards before proceeding to the next.
+
+Each phase includes:
+- **Objective**: A high-level goal for the phase.
+- **Acceptance Criteria**: A checklist of testable outcomes required for completion.
+- **Potential Risks & Failure Points**: Likely areas where issues may arise.
+- **Mitigation & Verification Strategy**: How we will test for these issues and what to do if they are found.
+
+---
+
+## 2. Phase 0: Transaction Import & Basic Sankey
+
+**Objective**: Establish the foundational data ingestion pipeline. The system must accept a standard transaction CSV, and the backend must be able to initialize the database and serve a placeholder API endpoint.
+
+**Acceptance Criteria**:
+- [ ] The application starts without errors (`uvicorn src.main:app`).
+- [ ] On first run, a `data/trust.db` file is created.
+- [ ] Inspecting `trust.db` with an SQLite tool reveals a `transactions` table with the correct columns.
+- [ ] Sending a POST request to `/api/import/csv` with a sample CSV file returns a `200 OK` status and a JSON response indicating the number of parsed transactions.
+- [ ] Sending the same request with a non-CSV file returns a `400 Bad Request` error.
+- [ ] Sending a GET request to `/api/sankey/income` returns a `200 OK` status with valid placeholder JSON data.
+
+**Potential Risks & Failure Points**:
+1.  **Database Initialization Failure**: Permissions issues or SQL syntax errors could prevent the database file or table from being created.
+2.  **CSV Parsing Logic is Brittle**: The initial parser may fail on common variations in CSVs (e.g., different line endings, encoding, header names).
+3.  **API Endpoint Misconfiguration**: FastAPI routes may not be set up correctly, leading to `404 Not Found` errors.
+
+**Mitigation & Verification Strategy**:
+1.  **DB Verification**: Manually delete `trust.db` and restart the app to confirm it's recreated. Use a command-line tool (`sqlite3`) to run `PRAGMA table_info(transactions);` and verify the schema.
+2.  **CSV Test Cases**: Create a small suite of test CSV files: one "perfect" file, one with different column orders, one with extra columns, and one with non-UTF-8 characters. The current test is manual; future phases may require automated unit tests for the importer.
+3.  **API Endpoint Testing**: Use `curl` or a tool like Postman to directly test the API endpoints, verifying headers, status codes, and response bodies.
+
+---
+
+## 3. Phase 1: Rules Engine & Tagging
+
+**Objective**: Implement the core logic for automatic transaction categorization and tagging based on user-defined rules.
+
+**Acceptance Criteria**:
+- [ ] A `rules` table exists in the database.
+- [ ] API endpoints exist to `CREATE`, `READ`, `UPDATE`, and `DELETE` categorization rules (e.g., `POST /api/rules`).
+- [ ] After creating a rule (e.g., description containing "Coffee Shop" maps to category "Food"), importing a CSV with matching transactions results in those transactions having `category = "Food"` in the database.
+- [ ] A transaction can be associated with multiple tags.
+- [ ] API drill-down endpoints work (e.g., `GET /api/transactions?category=Food`).
+
+**Potential Risks & Failure Points**:
+1.  **Regex Complexity**: Poorly written regex in rules could cause performance issues or incorrect matches.
+2.  **Rule Application Order**: It may be unclear which rule takes precedence if a transaction matches multiple rules.
+3.  **Data Integrity**: Updating a transaction's category/tags might fail or have unintended side effects.
+
+**Mitigation & Verification Strategy**:
+1.  **Rule Unit Tests**: The rules engine logic must be unit-tested in isolation with a variety of test descriptions and regex patterns.
+2.  **Define Precedence**: The system must have a clear, documented, and testable rule for precedence (e.g., order of creation, a user-defined priority field).
+3.  **Transactional Integrity**: All database modifications for a given import or update should be wrapped in a single transaction to ensure atomicity.
+
+---
+
+## 4. Subsequent Phases (High-Level Plan)
+
+This section will be detailed as development approaches each phase.
+
+### Phase 2: CapEx & Real Estate
+- **Verification**: Manually flag a transaction as CapEx. Verify it's removed from expense reports and that the corresponding asset's basis increases in an `assets` table. Check the Estate Flow Sankey data.
+
+### Phase 3: Holdings & Portfolio
+- **Verification**: Import a holdings CSV. Verify positions are created correctly in a `holdings` table. Verify the `price_history` table is created. Test API endpoints for portfolio composition.
+
+### Phase 4: Market Data Drip
+- **Verification**: Configure the Alpha Vantage API key. Manually trigger the fetch process. Verify the `price_history` table is populated with fresh quotes. Monitor application logs for evidence of hourly/EOD scheduled jobs. Test graceful failure by providing an invalid API key and observing logged errors.
+
+### Phase 5: Layered Returns
+- **Verification**: Manually create `FeeRecord` and `TaxRecord` entries via an API. Using a test portfolio with known values, verify that the calculated Gross, After-Fees, and After-Taxes returns match calculations performed in a separate spreadsheet.
+
+### Phase 6: Forecasting
+- **Verification**: Create a simple forecast scenario (e.g., fixed income, fixed expenses, 0% return). Verify that the projected net worth matches a simple linear projection calculated manually. Add a one-time future event and verify the projection changes as expected.

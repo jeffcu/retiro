@@ -1,0 +1,257 @@
+Curie Trust Financial Control Center — Project Requirements Specification (PRS) v1.0
+
+1) Mission
+
+Build a local-first financial control center for the Curie Trust that continuously answers three questions with high clarity:
+	1.	What is our latest net worth (right now)?
+	2.	Where did our income go (by top budget category and projects/tags)?
+	3.	What rate of return are we getting on our investments (before fees, after fees, after taxes)?
+
+The system ingests periodic CSV/spreadsheet uploads from multiple financial institutions, normalizes them into Curie Trust’s internal data model, and keeps market values fresh via API “drip” updates throughout the day, with hourly polling for the top 25 holdings and after-market polling for the long tail (250+).
+
+⸻
+
+2) Core UX Requirements (Sankey-forward)
+
+Sankey diagrams are not decorative. They are the primary language for “money as flow / conversion / leakage.”
+
+2.1 Required Sankey Diagrams (Must-Haves)
+
+A) Income → Uses of Money (Home Screen Primary Sankey)
+	•	Left node: Total Income for selected period
+	•	Middle split: Expenses (consumption), CapEx (asset-building), Net Savings/Surplus
+	•	Right split for Expenses: Top 5–7 budget categories, remainder as Other
+	•	CapEx flows to specific asset(s) (e.g., “Main Residence Basis”)
+
+B) Estate Flow (Net Worth / Estate Screen Sankey)
+	•	Left: Income + portfolio distributions (if modeled)
+	•	Flows to:
+	•	Consumption Expenses
+	•	CapEx → Real Estate Basis
+	•	Portfolio (invested) → Market Return → Fees → Taxes → After-Tax Return
+	•	This diagram must clearly show “conversion” (CapEx) vs “leakage” (fees/taxes).
+
+C) Portfolio Return Waterfall as Sankey (Portfolio Screen)
+	•	Left: Gross Market Return
+	•	Splits to: Fees, Taxes, After-Tax Return
+	•	Always displayed with matching numeric metrics (%, $).
+
+2.2 Sankey Interaction Rules
+	•	Node/flow click drills down to:
+	•	Categories → merchants → transactions
+	•	CapEx → asset ledger entries
+	•	Fees/taxes → supporting manual records
+	•	Must support: month, YTD, rolling 12 months, custom range.
+	•	Must cap complexity: max ~9–12 nodes per Sankey; enforce “Other” aggregation.
+
+⸻
+
+3) Financial Semantics (Non-Negotiable)
+
+3.1 Transaction Cashflow Types (Mutually Exclusive)
+
+Every transaction is exactly one:
+	•	Income
+	•	Expense (consumption)
+	•	Transfer (between trust-controlled accounts; net-zero)
+	•	CapEx (capital improvement; increases asset basis)
+	•	(Optional future) Investment transaction
+
+Expenses drive “spend/burn.”
+CapEx is excluded from “spend/burn” but included in net worth via asset basis.
+
+3.2 Tags (Non-Exclusive, Multi-Label)
+	•	A transaction can have 0..N tags (e.g., Travel AND Italy26).
+	•	Tag subtotals are non-exclusive by default (overlap is expected).
+
+3.3 Real Estate CapEx Accounting
+	•	Trust has no mortgage; liabilities default $0 unless user adds any.
+	•	CapEx transactions link to an Asset and increase asset basis.
+	•	Market value is tracked separately via snapshots (manual or appraised).
+
+⸻
+
+4) Screens (UI Requirements Summary)
+
+4.1 Home (Command Center)
+
+Priority order:
+	1.	Latest Net Worth Hero
+	2.	Income→Uses Sankey
+	3.	Portfolio Return Sankey (Gross→Fees→Taxes→After-Tax)
+	4.	Alerts/insights (spend spikes, missing imports, stale prices)
+
+4.2 Cashflow
+	•	Monthly income vs expenses trend
+	•	Category drilldowns
+	•	Toggle include/exclude CapEx (default exclude)
+
+4.3 Projects/Tags
+	•	Tag selector (single or multi)
+	•	Tag-specific totals, trends, and “where it went” Sankey filtered by tag
+
+4.4 Real Estate / Estate
+	•	Asset basis ledger
+	•	CapEx over time
+	•	Market value snapshots
+	•	Estate Flow Sankey
+
+4.5 Portfolio
+	•	Value over time (snapshots + intraday updates)
+	•	Allocation and concentration
+	•	Return layer metrics:
+	•	Before fees
+	•	After fees
+	•	After taxes
+	•	Return Sankey always visible here
+
+4.6 Forecast
+	•	Scenario-based forecast:
+	•	Expenses (consumption)
+	•	Income
+	•	Expected returns
+	•	One-time planned CapEx events
+	•	Outputs: projected portfolio, net worth, runway
+
+4.7 Data & Settings
+	•	CSV import, mapping profiles, dedupe logs
+	•	Rules editor (merchant→category/tags/type)
+	•	Manual entry: fees, taxes, market value snapshots
+	•	Backup/restore
+
+⸻
+
+5) Data Ingestion Requirements (CSV/Spreadsheet Flexibility)
+
+5.1 Supported Inputs (v1.0)
+	•	Bank transactions CSV
+	•	Credit card transactions CSV
+	•	Brokerage/retirement holdings snapshots spreadsheet/CSV
+	•	Optional: account balance snapshots
+
+5.2 Import Pipeline (Must)
+	1.	Upload file(s) (drag/drop)
+	2.	Detect type via column heuristics
+	3.	Preview + mapping UI (first time per institution)
+	4.	Save Import Profile (mapping + sign rules + date formats)
+	5.	Normalize into internal schema
+	6.	Deduplicate (hash-based fallback)
+	7.	Produce import audit log + “what changed” summary
+
+5.3 Categorization & Type Assignment
+	•	Rules engine:
+	•	merchant/description regex → cashflow_type, category, tags
+	•	transfer detection rules (pair matching or known transfer descriptors)
+	•	Manual override always available; edits can generate “rule suggestions.”
+
+⸻
+
+6) Market Value Drip Updates (API-driven pricing)
+
+6.1 Requirements
+	•	Maintain a Price Cache and update holdings market values throughout the day.
+	•	Polling schedule:
+	•	Top 25 holdings: hourly during market hours
+	•	Long tail 250+: after-market (end-of-day) polling
+	•	Must support multiple asset types where possible (stocks/ETFs; others optional).
+	•	Must degrade gracefully if API limits are hit (backoff, partial refresh, stale flags).
+
+6.2 Vendor Strategy (Pluggable Provider Interface)
+
+Implement a provider interface so Curie Trust can switch data sources without rewriting the app:
+
+Provider Interface (example)
+	•	get_quotes(symbols[]) -> {symbol: {price, timestamp, source}}
+	•	get_eod_prices(symbols[], date) -> ...
+	•	get_metadata(symbol) -> {name, currency, type}
+
+Reality check on rate limits: many “free” tiers are too limited for frequent polling; design must include caching and batching. Alpha Vantage explicitly documents free-tier usage constraints and offers premium scaling.  
+If you consider alternatives, Marketstack also publishes very low free quotas (e.g., limited monthly requests), which reinforces the need for batching and tiering.  
+
+6.3 Polling Algorithm
+	•	Rank holdings by current market value daily.
+	•	Select top 25 by value for “frequent set.”
+	•	During market hours:
+	•	Once per hour: batch request for top 25 (or smaller batches per provider limits)
+	•	After market close:
+	•	EOD refresh for all symbols not refreshed within the day
+	•	Use:
+	•	exponential backoff on errors
+	•	circuit breaker if provider fails repeatedly
+	•	stale-data indicators in UI (e.g., “prices last updated 2h ago”)
+
+6.4 Storage & Audit
+	•	Store every quote with timestamp (or store latest + optional history).
+	•	Keep provenance: provider name + request time.
+	•	Log refresh runs: number updated, failures, duration.
+
+⸻
+
+7) Returns Before Fees / After Fees / After Taxes
+
+7.1 Inputs
+	•	Portfolio value time series:
+	•	From holdings snapshots + intraday quotes
+	•	User-entered Fee Records
+	•	User-entered Tax Records from tax returns (annual totals and/or allocated)
+
+7.2 Output Metrics (Required)
+
+For selected period:
+	•	Gross Return ($, %): value change adjusted for contributions/withdrawals if available; otherwise snapshot-to-snapshot change labeled “approx.”
+	•	After Fees Return: gross minus fees in period
+	•	After Taxes Return: after-fees minus taxes in period
+
+All return views must label:
+	•	“Exact” vs “Estimated” based on data completeness.
+
+⸻
+
+8) Internal Data Model (Minimum Entities)
+	•	Transaction
+	•	Account
+	•	Institution
+	•	Category
+	•	Tag + TransactionTag
+	•	Asset (Real Estate, Portfolio, etc.)
+	•	AssetValueSnapshot (manual market value)
+	•	CapExEntry (or CapEx as Transaction with asset_id)
+	•	HoldingSnapshot (positions)
+	•	PriceQuote (intraday/EOD)
+	•	FeeRecord
+	•	TaxRecord
+	•	ImportProfile + ImportRun + ImportRowHash (dedupe/audit)
+
+⸻
+
+9) Non-Functional Requirements
+	•	Local-first storage (SQLite recommended)
+	•	Fast UI response (<1s for common filters on typical dataset sizes)
+	•	Deterministic calculations (same inputs → same outputs)
+	•	Safe importing (idempotent; repeat import doesn’t duplicate)
+	•	Backups (single file export + restore)
+	•	Security: encryption at rest optional v1.0; strongly recommended if later cloud sync exists
+
+⸻
+
+10) Phased Delivery (Thin Threads)
+
+Phase 0: Transactions import + Sankey Income→Categories (basic)
+Phase 1: Rules engine + tags + drilldowns
+Phase 2: CapEx + Real Estate basis + Estate Flow Sankey
+Phase 3: Holdings snapshots + portfolio screens + quote cache
+Phase 4: Scheduled drip pricing (top 25 hourly, long tail EOD)
+Phase 5: Fees/taxes entry + layered returns + returns Sankey
+Phase 6: Forecast scenarios + planned CapEx events
+
+⸻
+
+11) Acceptance Criteria (Key)
+	•	Home screen shows: Net Worth Hero + Income Sankey + Return Sankey with drilldowns.
+	•	Importing the same CSV twice produces no duplicates.
+	•	A transaction can be tagged with multiple tags and contributes to both tag totals.
+	•	Marking a transaction as CapEx:
+	•	removes it from “spending”
+	•	increases the selected asset’s basis ledger
+	•	Top 25 holdings refresh hourly during market hours; others refresh after market; UI clearly indicates quote staleness.
+	•	Portfolio screen displays before fees / after fees / after taxes and the Sankey that explains the difference.

@@ -2,13 +2,21 @@
   "@N1": {
     "name": "Number 1",
     "system_prompt_file": "scripts/ryker_prompt.txt",
-    "library_files": [],
+    "library_files": [
+      "projects/trust/library/Trust Financial System.txt",
+      "projects/trust/docs/Master_Design_Specification.md",
+      "projects/trust/library/acceptance_test.md.txt"
+    ],
     "codebase_level": "full"
   },
   "@Scotty": {
     "name": "Scotty - Master Architect",
     "system_prompt_file": "scripts/scotty_prompt.txt",
-    "library_files": [],
+    "library_files": [
+      "projects/trust/library/Trust Financial System.txt",
+      "projects/trust/docs/Master_Design_Specification.md",
+      "projects/trust/library/acceptance_test.md.txt"
+    ],
     "codebase_level": "full"
   },
   "@Uhura": {
