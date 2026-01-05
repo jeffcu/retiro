@@ -21,7 +21,6 @@ def _ensure_schema(conn: sqlite3.Connection):
     print("--- Verifying database schema... ---")
     cursor = conn.cursor()
 
-    # Per Phase 0 requirements, create the 'transactions' table.
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS transactions (
         transaction_id TEXT PRIMARY KEY,
@@ -39,7 +38,6 @@ def _ensure_schema(conn: sqlite3.Connection):
     );
     """)
 
-    # Per Phase 2 requirements, create the 'rules' table.
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS rules (
         rule_id TEXT PRIMARY KEY,
@@ -51,7 +49,7 @@ def _ensure_schema(conn: sqlite3.Connection):
     );
     """)
 
-    # Per Phase 4 requirements, create the 'holdings' table.
+    # UPDATED for Phase 4.5: Added market_value column
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS holdings (
         holding_id TEXT PRIMARY KEY,
@@ -59,6 +57,7 @@ def _ensure_schema(conn: sqlite3.Connection):
         symbol TEXT NOT NULL,
         quantity REAL NOT NULL,
         cost_basis REAL NOT NULL,
+        market_value REAL, 
         last_price REAL,
         last_price_timestamp TEXT,
         UNIQUE(account_id, symbol)
@@ -71,45 +70,28 @@ def _ensure_schema(conn: sqlite3.Connection):
 
 def get_db_connection():
     """ Establishes a connection to the SQLite database and ensures the schema is present. """
-    # Ensure the data directory exists
     DB_FILE.parent.mkdir(exist_ok=True)
-    
-    # Use the string representation of the path for sqlite3.connect
     conn = sqlite3.connect(str(DB_FILE))
     conn.row_factory = sqlite3.Row
     _ensure_schema(conn)
     return conn
 
 def initialize_database():
-    """
-    Creates the necessary tables in the database if they don't already exist,
-    based on the schema defined in the MDS and src/data_model.py.
-    """
     print(f"--- Initializing database at: {DB_FILE} ---")
     conn = get_db_connection()
     conn.close()
     print("--- Database initialization complete. ---")
 
 def save_transactions(transactions: List[Transaction]):
-    """
-    Saves a list of Transaction objects to the database.
-    Uses a transaction to ensure all or nothing is saved.
-    """
     if not transactions:
         return
-
     conn = get_db_connection()
     cursor = conn.cursor()
-    
-    # The UNIQUE constraint on raw_data_hash will prevent duplicates on re-import.
-    # Using INSERT OR REPLACE to allow re-importing and re-categorizing transactions.
     sql = """INSERT OR REPLACE INTO transactions (
                  transaction_id, account_id, transaction_date, amount, description, 
                  merchant, category, cashflow_type, is_transfer, asset_id, 
                  import_run_id, raw_data_hash
              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"""
-    
-    # For SQLite's REAL type, we must convert Python's Decimal to a float.
     data_to_insert = [
         (
             t.transaction_id, t.account_id, t.transaction_date.isoformat(), float(t.amount), t.description,
@@ -117,38 +99,33 @@ def save_transactions(transactions: List[Transaction]):
             1 if t.is_transfer else 0, t.asset_id, t.import_run_id, t.raw_data_hash
         ) for t in transactions
     ]
-
     try:
         cursor.executemany(sql, data_to_insert)
         conn.commit()
-        # The cursor.rowcount tells us how many rows were actually inserted/replaced.
         print(f"Successfully saved/updated {cursor.rowcount} transactions to the database.")
     except sqlite3.Error as e:
         print(f"Database error during transaction save: {e}")
         conn.rollback()
-        raise e  # Re-raise the exception to ensure the API endpoint fails correctly.
+        raise e
     finally:
         conn.close()
 
-
 def save_holdings(holdings: List[Holding]):
-    """ Saves a list of Holding objects to the database using INSERT OR REPLACE. """
     if not holdings:
         return
-    
     conn = get_db_connection()
     cursor = conn.cursor()
 
+    # UPDATED for Phase 4.5: Include market_value
     sql = """INSERT OR REPLACE INTO holdings (
-                holding_id, account_id, symbol, quantity, cost_basis
-             ) VALUES (?, ?, ?, ?, ?);"""
-    
+                holding_id, account_id, symbol, quantity, cost_basis, market_value
+             ) VALUES (?, ?, ?, ?, ?, ?);"""
     data_to_insert = [
         (
-            h.holding_id, h.account_id, h.symbol, float(h.quantity), float(h.cost_basis)
+            h.holding_id, h.account_id, h.symbol, float(h.quantity), float(h.cost_basis),
+            float(h.market_value) if h.market_value is not None else None
         ) for h in holdings
     ]
-
     try:
         cursor.executemany(sql, data_to_insert)
         conn.commit()
@@ -163,17 +140,14 @@ def save_holdings(holdings: List[Holding]):
 # --- Data Retrieval --- #
 
 def get_all_transactions() -> List[Dict[str, Any]]:
-    """ Retrieves all transactions from the database for analysis. """
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM transactions ORDER BY transaction_date DESC")
     rows = cursor.fetchall()
     conn.close()
-    # Convert rows to dictionaries for easier use
     return [dict(row) for row in rows]
 
 def get_all_holdings() -> List[Dict[str, Any]]:
-    """ Retrieves all holdings from the database. """
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM holdings ORDER BY symbol ASC")
@@ -184,11 +158,9 @@ def get_all_holdings() -> List[Dict[str, Any]]:
 # --- Rules CRUD --- #
 
 def _transform_rule_record(rule_row: sqlite3.Row) -> Dict[str, Any]:
-    """ Helper to convert a DB row for a rule into a consistent dictionary. """
     if not rule_row:
         return None
     rule_dict = dict(rule_row)
-    # Transform comma-separated tags string into a list
     if rule_dict.get('tags') and isinstance(rule_dict['tags'], str):
         rule_dict['tags'] = [tag.strip() for tag in rule_dict['tags'].split(',') if tag.strip()]
     else:
@@ -196,7 +168,6 @@ def _transform_rule_record(rule_row: sqlite3.Row) -> Dict[str, Any]:
     return rule_dict
 
 def create_rule(rule_data: Dict[str, Any]) -> Dict[str, Any]:
-    """ Creates a new rule in the database. """
     conn = get_db_connection()
     cursor = conn.cursor()
     rule_id = str(uuid.uuid4())
@@ -211,11 +182,13 @@ def create_rule(rule_data: Dict[str, Any]) -> Dict[str, Any]:
         rule_data.get('priority', 100)
     ))
     conn.commit()
+    new_rule_cursor = conn.cursor()
+    new_rule_cursor.execute("SELECT * FROM rules WHERE rule_id = ?", (rule_id,))
+    new_rule = new_rule_cursor.fetchone()
     conn.close()
-    return get_rule(rule_id)
+    return _transform_rule_record(new_rule)
 
 def get_rule(rule_id: str) -> Dict[str, Any] | None:
-    """ Retrieves a single rule by its ID. """
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM rules WHERE rule_id = ?", (rule_id,))
@@ -224,7 +197,6 @@ def get_rule(rule_id: str) -> Dict[str, Any] | None:
     return _transform_rule_record(rule_row)
 
 def get_all_rules() -> List[Dict[str, Any]]:
-    """ Retrieves all rules from the database. """
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM rules ORDER BY priority ASC, category ASC")
@@ -233,7 +205,6 @@ def get_all_rules() -> List[Dict[str, Any]]:
     return [_transform_rule_record(row) for row in rule_rows]
 
 def delete_rule(rule_id: str) -> bool:
-    """ Deletes a rule by its ID. Returns True if a row was deleted. """
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM rules WHERE rule_id = ?", (rule_id,))

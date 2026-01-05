@@ -1,18 +1,44 @@
+:root {
+  --dark-bg: #242424;
+  --medium-bg: #2f2f2f;
+  --light-bg: #3a3a3a;
+  --border-color: #444;
+  --text-color: rgba(255, 255, 255, 0.87);
+  --gold-accent: #E2B254;
+}
+
 #root {
-  max-width: 1280px;
+  max-width: 1400px;
   margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
+  padding: 1rem;
+  display: flex;
+  flex-direction: row;
+  gap: 1rem;
+}
+
+.main-content {
+  flex-grow: 1;
+  padding: 1rem;
 }
 
 .card {
-  padding: 2em;
-  border: 1px solid #444;
+  padding: 1.5em;
+  border: 1px solid var(--border-color);
   border-radius: 8px;
-  background-color: #2f2f2f;
-  margin-top: 2rem;
+  background-color: var(--medium-bg);
+  margin-bottom: 2rem;
 }
 
 h1, h2 {
-  color: #E2B254; /* A touch of gold for the command center */
+  color: var(--gold-accent);
+  text-align: left;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border-color);
+  margin-top: 0;
+}
+
+.grid-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+  gap: 1.5rem;
 }

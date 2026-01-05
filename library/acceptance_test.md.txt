@@ -67,13 +67,15 @@ This document outlines the acceptance criteria and testing strategy for each pha
 
 **Objective**: Establish the initial portfolio tracking capability by importing and displaying a list of holdings.
 
-**Acceptance Criteria**:
-- [ ] **Data Model**: A new `holdings` table exists in `data/trust.db` after restarting the backend.
-- [ ] **API Endpoint**: A `POST /api/import/holdings` endpoint is available to accept a holdings CSV file.
-- [ ] **Import Test**: Create a `sample_holdings.csv` file. Use a tool like `curl` to POST this file to the import endpoint. The API should return a success message.
-- [ ] **Database Verification**: The `holdings` table should be populated with the data from the CSV.
-- [ ] **UI Implementation**: A new "Portfolio Holdings" section appears on the main screen.
-- [ ] **UI Verification**: The portfolio section fetches data from `GET /api/holdings` and displays the imported holdings correctly in a table.
+**Result**: COMPLETED
+
+**Acceptance Criteria Met**:
+- [x] **Data Model**: A new `holdings` table exists in `data/trust.db` after restarting the backend.
+- [x] **API Endpoint**: A `POST /api/import/holdings` endpoint is available to accept a holdings CSV file.
+- [x] **Import Test**: Create a `sample_holdings.csv` file. Use a tool like `curl` to POST this file to the import endpoint. The API should return a success message.
+- [x] **Database Verification**: The `holdings` table should be populated with the data from the CSV.
+- [x] **UI Implementation**: A new "Portfolio Holdings" section appears on the main screen.
+- [x] **UI Verification**: The portfolio section fetches data from `GET /api/holdings` and displays the imported holdings correctly in a table.
 
 ---
 

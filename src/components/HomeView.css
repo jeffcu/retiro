@@ -1,0 +1,27 @@
+.net-worth-hero {
+    background-color: var(--medium-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 1.5rem 2rem;
+    margin-bottom: 2rem;
+    text-align: left;
+}
+
+.net-worth-hero h2 {
+    margin-top: 0;
+    border-bottom: none;
+    padding-bottom: 0;
+}
+
+.net-worth-hero .value {
+    font-size: 3.5em;
+    font-weight: bold;
+    color: #fff;
+    margin: 0.5rem 0;
+}
+
+.net-worth-hero .timestamp {
+    font-size: 0.9em;
+    color: #999;
+    margin: 0;
+}

@@ -1,0 +1,11 @@
+.placeholder-card {
+    text-align: center;
+    padding: 4rem 2rem;
+    color: #999;
+}
+
+.placeholder-card h2 {
+    text-align: center;
+    border-bottom: none;
+    color: #999;
+}

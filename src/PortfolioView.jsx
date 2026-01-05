@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import './PortfolioView.css';
 
 const PortfolioView = () => {
     const [holdings, setHoldings] = useState([]);
@@ -29,13 +30,16 @@ const PortfolioView = () => {
     const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
         style: 'currency',
         currency: 'USD',
-    }).format(value);
+    }).format(value || 0);
+
+    const totalMarketValue = holdings.reduce((sum, h) => sum + (h.market_value || 0), 0);
 
     if (loading) return <p>Loading portfolio...</p>;
     if (error) return <p>Error loading portfolio: {error}</p>;
 
     return (
-        <div className="portfolio-container">
+        <div className="card">
+            <h2>Detailed Holdings</h2>
             {holdings.length > 0 ? (
                 <div className="table-container">
                     <table>
@@ -45,6 +49,7 @@ const PortfolioView = () => {
                                 <th>Account</th>
                                 <th>Quantity</th>
                                 <th>Cost Basis</th>
+                                <th>Market Value</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -54,13 +59,20 @@ const PortfolioView = () => {
                                     <td>{h.account_id}</td>
                                     <td>{h.quantity.toFixed(4)}</td>
                                     <td>{formatCurrency(h.cost_basis)}</td>
+                                    <td>{formatCurrency(h.market_value)}</td>
                                 </tr>
                             ))}
                         </tbody>
+                        <tfoot>
+                            <tr>
+                                <td colSpan="4">Total Market Value</td>
+                                <td>{formatCurrency(totalMarketValue)}</td>
+                            </tr>
+                        </tfoot>
                     </table>
                 </div>
             ) : (
-                <p>No holdings data found. You may need to import a holdings CSV file.</p>
+                <p>No holdings data found. Please import a holdings CSV file via the 'Data & Settings' screen.</p>
             )}
         </div>
     );

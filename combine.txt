@@ -284,6 +284,14 @@ AAPL,50,2500.75
 MSFT,25,4000.50
 
 
+--- FILE: projects/trust/data/sample_holdings_valued.csv ---
+
+Symbol,Quantity,CostBasis,MarketValue
+VTSAX,100.5,5000.00,10552.50
+AAPL,50,2500.75,8500.00
+MSFT,25,4000.50,7500.25
+
+
 --- FILE: projects/trust/data/sample_transactions.csv ---
 
 Date,Description,Amount
@@ -775,13 +783,15 @@ This document outlines the acceptance criteria and testing strategy for each pha
 
 **Objective**: Establish the initial portfolio tracking capability by importing and displaying a list of holdings.
 
-**Acceptance Criteria**:
-- [ ] **Data Model**: A new `holdings` table exists in `data/trust.db` after restarting the backend.
-- [ ] **API Endpoint**: A `POST /api/import/holdings` endpoint is available to accept a holdings CSV file.
-- [ ] **Import Test**: Create a `sample_holdings.csv` file. Use a tool like `curl` to POST this file to the import endpoint. The API should return a success message.
-- [ ] **Database Verification**: The `holdings` table should be populated with the data from the CSV.
-- [ ] **UI Implementation**: A new "Portfolio Holdings" section appears on the main screen.
-- [ ] **UI Verification**: The portfolio section fetches data from `GET /api/holdings` and displays the imported holdings correctly in a table.
+**Result**: COMPLETED
+
+**Acceptance Criteria Met**:
+- [x] **Data Model**: A new `holdings` table exists in `data/trust.db` after restarting the backend.
+- [x] **API Endpoint**: A `POST /api/import/holdings` endpoint is available to accept a holdings CSV file.
+- [x] **Import Test**: Create a `sample_holdings.csv` file. Use a tool like `curl` to POST this file to the import endpoint. The API should return a success message.
+- [x] **Database Verification**: The `holdings` table should be populated with the data from the CSV.
+- [x] **UI Implementation**: A new "Portfolio Holdings" section appears on the main screen.
+- [x] **UI Verification**: The portfolio section fetches data from `GET /api/holdings` and displays the imported holdings correctly in a table.
 
 ---
 
@@ -870,117 +880,92 @@ echo "--- Vite dev server process terminated. ---"
 
 --- FILE: projects/trust/src/App.css ---
 
+:root {
+  --dark-bg: #242424;
+  --medium-bg: #2f2f2f;
+  --light-bg: #3a3a3a;
+  --border-color: #444;
+  --text-color: rgba(255, 255, 255, 0.87);
+  --gold-accent: #E2B254;
+}
+
 #root {
-  max-width: 1280px;
+  max-width: 1400px;
   margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
+  padding: 1rem;
+  display: flex;
+  flex-direction: row;
+  gap: 1rem;
+}
+
+.main-content {
+  flex-grow: 1;
+  padding: 1rem;
 }
 
 .card {
-  padding: 2em;
-  border: 1px solid #444;
+  padding: 1.5em;
+  border: 1px solid var(--border-color);
   border-radius: 8px;
-  background-color: #2f2f2f;
-  margin-top: 2rem;
+  background-color: var(--medium-bg);
+  margin-bottom: 2rem;
 }
 
 h1, h2 {
-  color: #E2B254; /* A touch of gold for the command center */
+  color: var(--gold-accent);
+  text-align: left;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border-color);
+  margin-top: 0;
+}
+
+.grid-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+  gap: 1.5rem;
 }
 
 
 --- FILE: projects/trust/src/App.jsx ---
 
-import { useState, useEffect, useCallback } from 'react';
-import SankeyChart from './SankeyChart';
-import TransactionTable from './TransactionTable';
-import RulesManager from './RulesManager';
-import PortfolioView from './PortfolioView';
+import { useState } from 'react';
+import NavBar from './components/NavBar';
+import HomeView from './components/HomeView';
+import PortfolioView from './PortfolioView'; // Corrected Path
+import DataImportView from './components/DataImportView';
+import PlaceholderView from './components/PlaceholderView';
 import './App.css';
-import './TransactionTable.css';
-import './RulesManager.css';
-import './PortfolioView.css';
 
 function App() {
-  const [sankeyData, setSankeyData] = useState(null);
-  const [transactions, setTransactions] = useState([]);
-  const [showTable, setShowTable] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [activeView, setActiveView] = useState('Home');
 
-  // Using useCallback to memoize the fetch function so it can be passed as a prop
-  // without causing unnecessary re-renders in the child component (RulesManager).
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      // Fetch both data sets in parallel
-      const [sankeyResponse, transactionsResponse] = await Promise.all([
-        fetch('/api/sankey/income'),
-        fetch('/api/transactions')
-      ]);
-
-      if (!sankeyResponse.ok) throw new Error(`HTTP error (Sankey)! status: ${sankeyResponse.status}`);
-      if (!transactionsResponse.ok) throw new Error(`HTTP error (Transactions)! status: ${transactionsResponse.status}`);
-      
-      const sankeyJson = await sankeyResponse.json();
-      const transactionsJson = await transactionsResponse.json();
-
-      setSankeyData(sankeyJson);
-      setTransactions(transactionsJson);
-
-    } catch (e) {
-      console.error("Error fetching data:", e);
-      setError(e.message);
-    } finally {
-      setLoading(false);
+  const renderView = () => {
+    switch (activeView) {
+      case 'Home':
+        return <HomeView />;
+      case 'Portfolio':
+        return <PortfolioView />;
+      case 'Data & Settings':
+        return <DataImportView />;
+      case 'Cashflow':
+      case 'Projects/Tags':
+      case 'Real Estate':
+      case 'Forecast':
+        return <PlaceholderView viewName={activeView} />;
+      default:
+        return <HomeView />;
     }
-  }, []); // Empty dependency array means this function is created once.
-
-  // Initial data fetch on component mount
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
-
-  const isChartVisible = sankeyData && sankeyData.links && sankeyData.links.length > 0;
+  };
 
   return (
     <>
-      <h1>Curie Trust Financial Control Center</h1>
-      
-      <div className="card">
-        <h2>Income → Uses of Money</h2>
-        {loading && <p>Loading chart data...</p>}
-        {error && <p>Error loading data: {error}</p>}
-        
-        {isChartVisible ? (
-            <SankeyChart data={sankeyData} />
-        ) : (
-          !loading && <p>No transaction data found. Please import a CSV file and refresh the page.</p>
-        )}
-      </div>
-
-      <div className="card">
-        <h2>Portfolio Holdings</h2>
-        <PortfolioView />
-      </div>
-
-      <div className="card">
-        <h2>Categorization Rules Management</h2>
-        <p>Define rules to automatically categorize transactions during import.</p>
-        <RulesManager onRuleAdded={fetchData} />
-      </div>
-
-      <div className="card">
-          <h2>Diagnostic Data Viewer</h2>
-          <button onClick={() => setShowTable(!showTable)} style={{marginBottom: '1rem'}}>
-              {showTable ? 'Hide' : 'Show'} Raw Transaction Data
-          </button>
-          {showTable && <TransactionTable transactions={transactions} />}
-      </div>
+      <NavBar activeView={activeView} setActiveView={setActiveView} />
+      <main className="main-content">
+        <h1>{activeView}</h1>
+        {renderView()}
+      </main>
     </>
-  )
+  );
 }
 
 export default App;
@@ -988,23 +973,61 @@ export default App;
 
 --- FILE: projects/trust/src/PortfolioView.css ---
 
-.portfolio-container {
+.table-container {
+    margin-top: 1rem;
+    max-height: 600px;
+    overflow-y: auto;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
     text-align: left;
 }
 
-.portfolio-container h2 {
-    margin-bottom: 1rem;
+.table-container table {
+    width: 100%;
+    border-collapse: collapse;
 }
 
-/* Re-use transaction table styles for consistency */
-.portfolio-container .table-container {
-    margin-top: 0;
+.table-container th, .table-container td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color);
+    text-align: left;
+}
+
+.table-container td:nth-child(3), 
+.table-container td:nth-child(4),
+.table-container td:nth-child(5) {
+    text-align: right;
+}
+
+.table-container thead th {
+    background-color: var(--light-bg);
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.table-container tbody tr:nth-child(even) {
+    background-color: var(--dark-bg);
+}
+
+.table-container tbody tr:hover {
+    background-color: #4a4a4a;
+}
+
+.table-container tfoot tr {
+    background-color: var(--light-bg);
+    font-weight: bold;
+}
+
+.table-container tfoot td:first-child {
+    text-align: right;
 }
 
 
 --- FILE: projects/trust/src/PortfolioView.jsx ---
 
 import { useState, useEffect } from 'react';
+import './PortfolioView.css';
 
 const PortfolioView = () => {
     const [holdings, setHoldings] = useState([]);
@@ -1035,13 +1058,16 @@ const PortfolioView = () => {
     const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
         style: 'currency',
         currency: 'USD',
-    }).format(value);
+    }).format(value || 0);
+
+    const totalMarketValue = holdings.reduce((sum, h) => sum + (h.market_value || 0), 0);
 
     if (loading) return <p>Loading portfolio...</p>;
     if (error) return <p>Error loading portfolio: {error}</p>;
 
     return (
-        <div className="portfolio-container">
+        <div className="card">
+            <h2>Detailed Holdings</h2>
             {holdings.length > 0 ? (
                 <div className="table-container">
                     <table>
@@ -1051,6 +1077,7 @@ const PortfolioView = () => {
                                 <th>Account</th>
                                 <th>Quantity</th>
                                 <th>Cost Basis</th>
+                                <th>Market Value</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -1060,278 +1087,26 @@ const PortfolioView = () => {
                                     <td>{h.account_id}</td>
                                     <td>{h.quantity.toFixed(4)}</td>
                                     <td>{formatCurrency(h.cost_basis)}</td>
+                                    <td>{formatCurrency(h.market_value)}</td>
                                 </tr>
                             ))}
                         </tbody>
+                        <tfoot>
+                            <tr>
+                                <td colSpan="4">Total Market Value</td>
+                                <td>{formatCurrency(totalMarketValue)}</td>
+                            </tr>
+                        </tfoot>
                     </table>
                 </div>
             ) : (
-                <p>No holdings data found. You may need to import a holdings CSV file.</p>
+                <p>No holdings data found. Please import a holdings CSV file via the 'Data & Settings' screen.</p>
             )}
         </div>
     );
 };
 
 export default PortfolioView;
-
-
---- FILE: projects/trust/src/RulesManager.css ---
-
-.rules-manager-container {
-    display: flex;
-    gap: 2rem;
-    text-align: left;
-    margin-top: 1.5rem;
-}
-
-.rules-list {
-    flex: 1;
-    max-height: 400px;
-    overflow-y: auto;
-    border: 1px solid #555;
-    padding: 1rem;
-    border-radius: 4px;
-}
-
-.rules-list h3 {
-    margin-top: 0;
-}
-
-.rules-list ul {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-}
-
-.rules-list li {
-    background-color: #2c2c2c;
-    padding: 0.5rem 0.75rem;
-    border-radius: 3px;
-    margin-bottom: 0.5rem;
-    font-family: monospace, monospace;
-    font-size: 0.9em;
-}
-
-.rules-list li span {
-    color: #E2B254;
-}
-
-.rule-form {
-    flex: 1;
-    border: 1px solid #555;
-    padding: 1rem;
-    border-radius: 4px;
-}
-
-.rule-form h3 {
-    margin-top: 0;
-}
-
-.form-group {
-    margin-bottom: 1rem;
-}
-
-.form-group label {
-    display: block;
-    margin-bottom: 0.25rem;
-    font-size: 0.9em;
-}
-
-.form-group input,
-.form-group select {
-    width: 100%;
-    padding: 0.5rem;
-    background-color: #3f3f3f;
-    border: 1px solid #666;
-    border-radius: 4px;
-    color: #fff;
-    box-sizing: border-box; /* Ensures padding doesn't affect width */
-}
-
-.rule-form button {
-    background-color: #E2B254;
-    color: #242424;
-    border: none;
-    padding: 0.6rem 1rem;
-    border-radius: 4px;
-    cursor: pointer;
-    font-weight: bold;
-}
-
-.rule-form button:hover {
-    background-color: #f0c36a;
-}
-
-.rule-form p.note {
-    font-size: 0.8em;
-    color: #999;
-    margin-top: 1.5rem;
-    border-top: 1px solid #444;
-    padding-top: 1rem;
-}
-
-
---- FILE: projects/trust/src/RulesManager.jsx ---
-
-import { useState, useEffect } from 'react';
-
-const RulesManager = ({ onRuleAdded }) => {
-    const [rules, setRules] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(null);
-    const [isSubmitting, setIsSubmitting] = useState(false);
-
-    // Form state
-    const [pattern, setPattern] = useState('');
-    const [category, setCategory] = useState('');
-    const [cashflowType, setCashflowType] = useState('Expense');
-
-    const fetchRules = async () => {
-        try {
-            setLoading(true);
-            const response = await fetch('/api/rules');
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            const data = await response.json();
-            setRules(data);
-        } catch (e) {
-            setError(e.message);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    useEffect(() => {
-        fetchRules();
-    }, []);
-
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        if (!pattern || !category) {
-            alert('Please fill in both Pattern and Category.');
-            return;
-        }
-
-        setIsSubmitting(true);
-
-        const newRule = { 
-            pattern,
-            category,
-            cashflow_type: cashflowType,
-        };
-
-        try {
-            // Step 1: Create the new rule
-            const createRuleResponse = await fetch('/api/rules', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(newRule),
-            });
-
-            if (!createRuleResponse.ok) {
-                throw new Error(`Failed to create rule: ${createRuleResponse.statusText}`);
-            }
-
-            // Step 2: Trigger the backend to re-categorize all transactions
-            const recategorizeResponse = await fetch('/api/transactions/recategorize', {
-                method: 'POST',
-            });
-
-            if (!recategorizeResponse.ok) {
-                throw new Error(`Failed to re-categorize transactions: ${recategorizeResponse.statusText}`);
-            }
-
-            // Reset form
-            setPattern('');
-            setCategory('');
-            setCashflowType('Expense');
-
-            // Notify parent component to refresh all data, which implicitly fetches the new rule list as well.
-            if (onRuleAdded) {
-                onRuleAdded();
-            }
-
-        } catch (error) {
-            console.error("Error during rule creation and re-categorization:", error);
-            alert(`Error: ${error.message}`);
-        } finally {
-            setIsSubmitting(false);
-        }
-    };
-
-    return (
-        <div className="rules-manager-container">
-            <div className="rules-list">
-                <h3>Existing Rules</h3>
-                {loading && <p>Loading rules...</p>}
-                {error && <p>Error loading rules: {error}</p>}
-                {rules.length > 0 ? (
-                    <ul>
-                        {rules.map(rule => (
-                            <li key={rule.rule_id}>
-                                "{rule.pattern}" → <span>{rule.category} ({rule.cashflow_type})</span>
-                            </li>
-                        ))}
-                    </ul>
-                ) : (
-                    !loading && <p>No rules defined yet.</p>
-                )}
-            </div>
-            <div className="rule-form">
-                <h3>Create New Rule</h3>
-                <form onSubmit={handleSubmit}>
-                    <div className="form-group">
-                        <label htmlFor="pattern">If description contains:</label>
-                        <input 
-                            id="pattern" 
-                            type="text" 
-                            value={pattern} 
-                            onChange={e => setPattern(e.target.value)} 
-                            placeholder="e.g., Safeway"
-                            disabled={isSubmitting}
-                        />
-                    </div>
-                    <div className="form-group">
-                        <label htmlFor="category">Categorize as:</label>
-                        <input 
-                            id="category" 
-                            type="text" 
-                            value={category} 
-                            onChange={e => setCategory(e.target.value)} 
-                            placeholder="e.g., Groceries"
-                            disabled={isSubmitting}
-                        />
-                    </div>
-                    <div className="form-group">
-                        <label htmlFor="cashflowType">Transaction Type:</label>
-                        <select 
-                            id="cashflowType" 
-                            value={cashflowType} 
-                            onChange={e => setCashflowType(e.target.value)}
-                            disabled={isSubmitting}
-                        >
-                            <option value="Expense">Expense</option>
-                            <option value="Income">Income</option>
-                            <option value="Transfer">Transfer</option>
-                            <option value="Capital Expenditure">Capital Expenditure</option>
-                        </select>
-                    </div>
-                    <button type="submit" disabled={isSubmitting}>
-                        {isSubmitting ? 'Processing...' : 'Create Rule & Apply'}
-                    </button>
-                    <p className='note'>
-                        <strong>Note:</strong> Creating a rule now automatically re-categorizes all existing transactions.
-                    </p>
-                </form>
-            </div>
-        </div>
-    );
-};
-
-export default RulesManager;
 
 
 --- FILE: projects/trust/src/SankeyChart.jsx ---
@@ -1417,78 +1192,6 @@ const SankeyChart = ({ data }) => {
 
 export default SankeyChart;
 
-
---- FILE: projects/trust/src/TransactionTable.css ---
-
-.table-container {
-  margin-top: 2rem;
-  max-height: 400px;
-  overflow-y: auto;
-  border: 1px solid #555;
-  border-radius: 4px;
-  text-align: left;
-}
-
-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.9em;
-}
-
-th, td {
-  padding: 8px 12px;
-  border-bottom: 1px solid #444;
-}
-
-thead th {
-  background-color: #3a3a3a;
-  position: sticky;
-  top: 0;
-  z-index: 1;
-}
-
-tbody tr:nth-child(even) {
-  background-color: #2c2c2c;
-}
-
-tbody tr:hover {
-  background-color: #4a4a4a;
-}
-
-
---- FILE: projects/trust/src/TransactionTable.jsx ---
-
-import React from 'react';
-
-const TransactionTable = ({ transactions }) => {
-    if (!transactions || transactions.length === 0) {
-        return <p>No transactions to display.</p>;
-    }
-
-    // Get headers from the keys of the first transaction object
-    const headers = Object.keys(transactions[0]);
-
-    return (
-        <div className="table-container">
-            <table>
-                <thead>
-                    <tr>
-                        {headers.map(header => <th key={header}>{header}</th>)}
-                    </tr>
-                </thead>
-                <tbody>
-                    {transactions.map((tx, index) => (
-                        <tr key={tx.transaction_id || index}>
-                            {headers.map(header => <td key={header}>{String(tx[header])}</td>)}
-                        </tr>
-                    ))}
-                </tbody>
-            </table>
-        </div>
-    );
-};
-
-export default TransactionTable;
 
 --- FILE: projects/trust/src/analysis.py ---
 
@@ -1621,21 +1324,17 @@ class Transaction:
     Represents a single, normalized financial transaction based on the internal data model.
     See PRS Section 8.
     """
-    transaction_id: str  # A unique identifier, possibly a hash of the raw data.
+    transaction_id: str
     account_id: str
     transaction_date: date
     amount: Decimal
-    description: str  # The original description from the financial institution.
-    merchant: str | None = None  # Normalized merchant name.
+    description: str
+    merchant: str | None = None
     category: str | None = None
     cashflow_type: CashflowType | None = None
     tags: list[str] = field(default_factory=list)
-    is_transfer: bool = False  # Derived from cashflow_type for quick filtering.
-
-    # Link to other entities
-    asset_id: str | None = None  # For CapEx transactions, linking to a specific asset.
-
-    # Audit trail
+    is_transfer: bool = False
+    asset_id: str | None = None
     import_run_id: str | None = None
     raw_data_hash: str | None = None
 
@@ -1646,12 +1345,13 @@ class Holding:
     Represents a single portfolio holding in a specific account.
     (PRS Section 8)
     """
-    holding_id: str  # Unique ID, typically a hash of account_id and symbol.
+    holding_id: str
     account_id: str
     symbol: str
     quantity: Decimal
     cost_basis: Decimal
-    # Market data to be added in Phase 5
+    # UPDATED for Phase 4.5: Added market_value, populated from CSV or API
+    market_value: Decimal | None = None
     last_price: Decimal | None = None
     last_price_timestamp: datetime | None = None
 
@@ -1681,7 +1381,6 @@ def _ensure_schema(conn: sqlite3.Connection):
     print("--- Verifying database schema... ---")
     cursor = conn.cursor()
 
-    # Per Phase 0 requirements, create the 'transactions' table.
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS transactions (
         transaction_id TEXT PRIMARY KEY,
@@ -1699,7 +1398,6 @@ def _ensure_schema(conn: sqlite3.Connection):
     );
     """)
 
-    # Per Phase 2 requirements, create the 'rules' table.
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS rules (
         rule_id TEXT PRIMARY KEY,
@@ -1711,7 +1409,7 @@ def _ensure_schema(conn: sqlite3.Connection):
     );
     """)
 
-    # Per Phase 4 requirements, create the 'holdings' table.
+    # UPDATED for Phase 4.5: Added market_value column
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS holdings (
         holding_id TEXT PRIMARY KEY,
@@ -1719,6 +1417,7 @@ def _ensure_schema(conn: sqlite3.Connection):
         symbol TEXT NOT NULL,
         quantity REAL NOT NULL,
         cost_basis REAL NOT NULL,
+        market_value REAL, 
         last_price REAL,
         last_price_timestamp TEXT,
         UNIQUE(account_id, symbol)
@@ -1731,45 +1430,28 @@ def _ensure_schema(conn: sqlite3.Connection):
 
 def get_db_connection():
     """ Establishes a connection to the SQLite database and ensures the schema is present. """
-    # Ensure the data directory exists
     DB_FILE.parent.mkdir(exist_ok=True)
-    
-    # Use the string representation of the path for sqlite3.connect
     conn = sqlite3.connect(str(DB_FILE))
     conn.row_factory = sqlite3.Row
     _ensure_schema(conn)
     return conn
 
 def initialize_database():
-    """
-    Creates the necessary tables in the database if they don't already exist,
-    based on the schema defined in the MDS and src/data_model.py.
-    """
     print(f"--- Initializing database at: {DB_FILE} ---")
     conn = get_db_connection()
     conn.close()
     print("--- Database initialization complete. ---")
 
 def save_transactions(transactions: List[Transaction]):
-    """
-    Saves a list of Transaction objects to the database.
-    Uses a transaction to ensure all or nothing is saved.
-    """
     if not transactions:
         return
-
     conn = get_db_connection()
     cursor = conn.cursor()
-    
-    # The UNIQUE constraint on raw_data_hash will prevent duplicates on re-import.
-    # Using INSERT OR REPLACE to allow re-importing and re-categorizing transactions.
     sql = """INSERT OR REPLACE INTO transactions (
                  transaction_id, account_id, transaction_date, amount, description, 
                  merchant, category, cashflow_type, is_transfer, asset_id, 
                  import_run_id, raw_data_hash
              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"""
-    
-    # For SQLite's REAL type, we must convert Python's Decimal to a float.
     data_to_insert = [
         (
             t.transaction_id, t.account_id, t.transaction_date.isoformat(), float(t.amount), t.description,
@@ -1777,38 +1459,33 @@ def save_transactions(transactions: List[Transaction]):
             1 if t.is_transfer else 0, t.asset_id, t.import_run_id, t.raw_data_hash
         ) for t in transactions
     ]
-
     try:
         cursor.executemany(sql, data_to_insert)
         conn.commit()
-        # The cursor.rowcount tells us how many rows were actually inserted/replaced.
         print(f"Successfully saved/updated {cursor.rowcount} transactions to the database.")
     except sqlite3.Error as e:
         print(f"Database error during transaction save: {e}")
         conn.rollback()
-        raise e  # Re-raise the exception to ensure the API endpoint fails correctly.
+        raise e
     finally:
         conn.close()
 
-
 def save_holdings(holdings: List[Holding]):
-    """ Saves a list of Holding objects to the database using INSERT OR REPLACE. """
     if not holdings:
         return
-    
     conn = get_db_connection()
     cursor = conn.cursor()
 
+    # UPDATED for Phase 4.5: Include market_value
     sql = """INSERT OR REPLACE INTO holdings (
-                holding_id, account_id, symbol, quantity, cost_basis
-             ) VALUES (?, ?, ?, ?, ?);"""
-    
+                holding_id, account_id, symbol, quantity, cost_basis, market_value
+             ) VALUES (?, ?, ?, ?, ?, ?);"""
     data_to_insert = [
         (
-            h.holding_id, h.account_id, h.symbol, float(h.quantity), float(h.cost_basis)
+            h.holding_id, h.account_id, h.symbol, float(h.quantity), float(h.cost_basis),
+            float(h.market_value) if h.market_value is not None else None
         ) for h in holdings
     ]
-
     try:
         cursor.executemany(sql, data_to_insert)
         conn.commit()
@@ -1823,17 +1500,14 @@ def save_holdings(holdings: List[Holding]):
 # --- Data Retrieval --- #
 
 def get_all_transactions() -> List[Dict[str, Any]]:
-    """ Retrieves all transactions from the database for analysis. """
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM transactions ORDER BY transaction_date DESC")
     rows = cursor.fetchall()
     conn.close()
-    # Convert rows to dictionaries for easier use
     return [dict(row) for row in rows]
 
 def get_all_holdings() -> List[Dict[str, Any]]:
-    """ Retrieves all holdings from the database. """
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM holdings ORDER BY symbol ASC")
@@ -1844,11 +1518,9 @@ def get_all_holdings() -> List[Dict[str, Any]]:
 # --- Rules CRUD --- #
 
 def _transform_rule_record(rule_row: sqlite3.Row) -> Dict[str, Any]:
-    """ Helper to convert a DB row for a rule into a consistent dictionary. """
     if not rule_row:
         return None
     rule_dict = dict(rule_row)
-    # Transform comma-separated tags string into a list
     if rule_dict.get('tags') and isinstance(rule_dict['tags'], str):
         rule_dict['tags'] = [tag.strip() for tag in rule_dict['tags'].split(',') if tag.strip()]
     else:
@@ -1856,7 +1528,6 @@ def _transform_rule_record(rule_row: sqlite3.Row) -> Dict[str, Any]:
     return rule_dict
 
 def create_rule(rule_data: Dict[str, Any]) -> Dict[str, Any]:
-    """ Creates a new rule in the database. """
     conn = get_db_connection()
     cursor = conn.cursor()
     rule_id = str(uuid.uuid4())
@@ -1871,11 +1542,13 @@ def create_rule(rule_data: Dict[str, Any]) -> Dict[str, Any]:
         rule_data.get('priority', 100)
     ))
     conn.commit()
+    new_rule_cursor = conn.cursor()
+    new_rule_cursor.execute("SELECT * FROM rules WHERE rule_id = ?", (rule_id,))
+    new_rule = new_rule_cursor.fetchone()
     conn.close()
-    return get_rule(rule_id)
+    return _transform_rule_record(new_rule)
 
 def get_rule(rule_id: str) -> Dict[str, Any] | None:
-    """ Retrieves a single rule by its ID. """
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM rules WHERE rule_id = ?", (rule_id,))
@@ -1884,7 +1557,6 @@ def get_rule(rule_id: str) -> Dict[str, Any] | None:
     return _transform_rule_record(rule_row)
 
 def get_all_rules() -> List[Dict[str, Any]]:
-    """ Retrieves all rules from the database. """
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM rules ORDER BY priority ASC, category ASC")
@@ -1893,7 +1565,6 @@ def get_all_rules() -> List[Dict[str, Any]]:
     return [_transform_rule_record(row) for row in rule_rows]
 
 def delete_rule(rule_id: str) -> bool:
-    """ Deletes a rule by its ID. Returns True if a row was deleted. """
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM rules WHERE rule_id = ?", (rule_id,))
@@ -1953,6 +1624,7 @@ import os
 import traceback
 from typing import List, Optional, Any, Dict
 from pydantic import BaseModel, Field
+from decimal import Decimal
 
 from src.importers import csv_importer, holdings_importer
 from src.database import initialize_database, save_transactions, save_holdings
@@ -1970,8 +1642,6 @@ app = FastAPI(
 )
 
 # --- CORS Middleware ---
-# This is necessary to allow the frontend (running on a different port)
-# to communicate with the backend, especially for non-simple requests like POST with JSON.
 origins = [
     "http://localhost:5173",  # Vite dev server
     "http://127.0.0.1:5173", # Also common
@@ -2001,7 +1671,6 @@ class RuleResponse(RuleCreate):
 @app.on_event("startup")
 async def startup_event():
     print("API is starting up...")
-    # Initialize the database and create tables if they don't exist
     initialize_database()
     
     api_key = os.getenv("ALPHA_VANTAGE_API_KEY")
@@ -2015,21 +1684,15 @@ async def root():
     return {"message": "Curie Trust Financial Control Center API is running."}
 
 
-@app.post("/api/import/csv", tags=["Import"])
+@app.post("/api/import/transactions", tags=["Import"])
 async def import_transactions_csv(account_id: str = Form(...), file: UploadFile = File(...)):
-    """
-    Accepts a CSV file, parses it, applies categorization rules, and stores the transactions.
-    (PRS Section 5.2, 5.3)
-    """
     if not file.filename or not file.filename.lower().endswith('.csv'):
         raise HTTPException(status_code=400, detail="Invalid file type. Please upload a CSV.")
 
     contents = await file.read()
     try:
         transactions = csv_importer.parse_standard_csv(contents, account_id)
-        
         save_transactions(transactions)
-        
         print(f"Successfully processed {len(transactions)} transactions for account {account_id}.")
         return {
             "message": f"Successfully imported and saved {len(transactions)} transactions.",
@@ -2042,10 +1705,6 @@ async def import_transactions_csv(account_id: str = Form(...), file: UploadFile 
 
 @app.post("/api/import/holdings", tags=["Import"])
 async def import_holdings_csv(account_id: str = Form(...), file: UploadFile = File(...)):
-    """
-    Accepts a holdings CSV file, parses it, and stores the portfolio holdings.
-    (PRS Section 5.1)
-    """
     if not file.filename or not file.filename.lower().endswith('.csv'):
         raise HTTPException(status_code=400, detail="Invalid file type. Please upload a CSV.")
     
@@ -2062,91 +1721,64 @@ async def import_holdings_csv(account_id: str = Form(...), file: UploadFile = Fi
         print(f"ERROR processing holdings file {file.filename}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to process holdings CSV file: {e}")
 
-# --- Rules API --- (Phase 2)
+# --- Rules API --- 
 @app.post("/api/rules", response_model=RuleResponse, status_code=201, tags=["Rules"])
 async def create_new_rule(rule: RuleCreate):
-    """ Creates a new categorization rule. """
     rule_dict = rule.dict()
-    # Convert enum to its string value for DB storage
     rule_dict['cashflow_type'] = rule_dict['cashflow_type'].value
     created_rule = db.create_rule(rule_dict)
     return created_rule
 
 @app.get("/api/rules", response_model=List[RuleResponse], tags=["Rules"])
 async def get_all_rules():
-    """ Retrieves all categorization rules. """
     rules = db.get_all_rules()
     return rules
-
-@app.get("/api/rules/{rule_id}", response_model=RuleResponse, tags=["Rules"])
-async def get_specific_rule(rule_id: str):
-    """ Retrieves a single rule by its ID. """
-    rule = db.get_rule(rule_id)
-    if not rule:
-        raise HTTPException(status_code=404, detail="Rule not found")
-    return rule
-
-@app.delete("/api/rules/{rule_id}", status_code=204, tags=["Rules"])
-async def delete_existing_rule(rule_id: str):
-    """ Deletes a rule by its ID. """
-    success = db.delete_rule(rule_id)
-    if not success:
-        raise HTTPException(status_code=404, detail="Rule not found")
-    return None # FastAPI will return a 204 No Content response
-
 
 # --- Data & Analysis API ---
 @app.get("/api/sankey/income", tags=["Analysis"])
 async def get_income_sankey_data(period: str = "all") -> Dict[str, List[Dict[str, Any]]]:
-    """ 
-    Generates the data for the main Income->Uses Sankey diagram.
-    Now powered by the analysis module.
-    """
     try:
         data = analysis.generate_income_sankey(period)
         return data
     except Exception as e:
-        # Log the full traceback to the backend console for diagnosis
-        print(f"\n---! ERROR IN /api/sankey/income ENDPOINT !---")
         traceback.print_exc()
-        print(f"---! END OF ERROR TRACEBACK !---\n")
-        # Re-raise as a standard HTTPException to inform the client
         raise HTTPException(status_code=500, detail=f"An internal error occurred in the analysis engine: {e}")
 
 @app.get("/api/transactions", tags=["Data"])
 async def get_all_transactions_for_display():
-    """ Retrieves all transactions from the database for display or debugging. """
     try:
-        transactions = db.get_all_transactions()
-        return transactions
+        return db.get_all_transactions()
     except Exception as e:
-        print(f"\n---! ERROR IN /api/transactions ENDPOINT !---")
         traceback.print_exc()
-        print(f"---! END OF ERROR TRACEBACK !---\n")
         raise HTTPException(status_code=500, detail=f"An internal error occurred while fetching transactions: {e}")
 
 @app.post("/api/transactions/recategorize", tags=["Processing"])
 async def trigger_recategorization():
-    """
-    Triggers a full re-categorization of all transactions based on the current ruleset.
-    """
     try:
         count = rules_engine.recategorize_all_transactions()
         return {"message": f"Successfully re-categorized {count} transactions."}
     except Exception as e:
-        print(f"\n---! ERROR IN /api/transactions/recategorize ENDPOINT !---")
         traceback.print_exc()
-        print(f"---! END OF ERROR TRACEBACK !---\n")
         raise HTTPException(status_code=500, detail=f"An internal error occurred during re-categorization: {e}")
 
 @app.get("/api/holdings", tags=["Data"])
 async def get_all_holdings():
-    """ Retrieves all portfolio holdings. """
     try:
         return db.get_all_holdings()
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Failed to retrieve holdings.")
+
+@app.get("/api/portfolio/summary", tags=["Analysis"])
+async def get_portfolio_summary():
+    """Calculates the total market value of all holdings."""
+    try:
+        holdings = db.get_all_holdings()
+        total_market_value = sum(h.get('market_value', 0) for h in holdings if h.get('market_value'))
+        return {"total_market_value": total_market_value}
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Failed to calculate portfolio summary.")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)
@@ -2284,6 +1916,486 @@ def recategorize_all_transactions() -> int:
     return len(updated_transactions)
 
 
+--- FILE: projects/trust/src/components/DataImportView.css ---
+
+.importer-container {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2rem;
+}
+
+.file-uploader-card {
+    background-color: var(--light-bg);
+    padding: 1.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+}
+
+.file-uploader-card h3 {
+    margin-top: 0;
+    color: var(--text-color);
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.5rem;
+}
+
+.form-group {
+    margin-bottom: 1rem;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-size: 0.9em;
+}
+
+.form-group input {
+    width: 100%;
+    padding: 0.5rem;
+    background-color: var(--medium-bg);
+    border: 1px solid #666;
+    border-radius: 4px;
+    color: #fff;
+    box-sizing: border-box;
+}
+
+.file-uploader-card button {
+    background-color: var(--gold-accent);
+    color: var(--dark-bg);
+    border: none;
+    padding: 0.6rem 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+    width: 100%;
+}
+
+.file-uploader-card button:hover {
+    opacity: 0.9;
+}
+
+.file-uploader-card button:disabled {
+    background-color: #555;
+    cursor: not-allowed;
+}
+
+.message {
+    margin-top: 1rem;
+    padding: 0.75rem;
+    border-radius: 4px;
+    font-size: 0.9em;
+}
+
+.message.success {
+    background-color: #2a4a2a;
+    border: 1px solid #3c6c3c;
+    color: #a7e2a7;
+}
+
+.message.error {
+    background-color: #5a2a2a;
+    border: 1px solid #8c3c3c;
+    color: #f2a7a7;
+}
+
+
+--- FILE: projects/trust/src/components/DataImportView.jsx ---
+
+import { useState } from 'react';
+import './DataImportView.css';
+
+const FileUploader = ({ title, importType }) => {
+    const [file, setFile] = useState(null);
+    const [accountId, setAccountId] = useState('');
+    const [message, setMessage] = useState('');
+    const [isError, setIsError] = useState(false);
+    const [isUploading, setIsUploading] = useState(false);
+
+    const handleFileChange = (e) => {
+        setFile(e.target.files[0]);
+    };
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (!file || !accountId) {
+            setMessage('Please select a file and enter an Account ID.');
+            setIsError(true);
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('account_id', accountId);
+
+        setIsUploading(true);
+        setMessage('');
+        setIsError(false);
+
+        try {
+            const endpoint = importType === 'transactions' 
+                ? '/api/import/transactions' 
+                : '/api/import/holdings';
+
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                body: formData,
+            });
+
+            const result = await response.json();
+
+            if (!response.ok) {
+                throw new Error(result.detail || 'Upload failed');
+            }
+
+            setMessage(result.message);
+            setFile(null);
+            e.target.reset(); // Reset the form fields
+        } catch (err) {
+            setMessage(`Error: ${err.message}`);
+            setIsError(true);
+        } finally {
+            setIsUploading(false);
+        }
+    };
+
+    return (
+        <div className="file-uploader-card">
+            <h3>{title}</h3>
+            <form onSubmit={handleSubmit}>
+                <div className="form-group">
+                    <label htmlFor={`${importType}-account-id`}>Account ID</label>
+                    <input 
+                        type="text" 
+                        id={`${importType}-account-id`}
+                        placeholder="e.g., brokerage, checking"
+                        onChange={(e) => setAccountId(e.target.value)} 
+                        required 
+                    />
+                </div>
+                <div className="form-group">
+                    <label htmlFor={`${importType}-file`}>CSV File</label>
+                    <input 
+                        type="file" 
+                        id={`${importType}-file`}
+                        accept=".csv" 
+                        onChange={handleFileChange} 
+                        required 
+                    />
+                </div>
+                <button type="submit" disabled={isUploading}>{isUploading ? 'Uploading...' : 'Upload'}</button>
+            </form>
+            {message && (
+                <p className={`message ${isError ? 'error' : 'success'}`}>{message}</p>
+            )}
+        </div>
+    );
+};
+
+const DataImportView = () => {
+    return (
+        <div className="card">
+            <h2>Data Importers</h2>
+            <div className="importer-container">
+                <FileUploader title="Import Transactions" importType="transactions" />
+                <FileUploader title="Import Portfolio Holdings" importType="holdings" />
+            </div>
+        </div>
+    );
+};
+
+export default DataImportView;
+
+
+--- FILE: projects/trust/src/components/HomeView.css ---
+
+.net-worth-hero {
+    background-color: var(--medium-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 1.5rem 2rem;
+    margin-bottom: 2rem;
+    text-align: left;
+}
+
+.net-worth-hero h2 {
+    margin-top: 0;
+    border-bottom: none;
+    padding-bottom: 0;
+}
+
+.net-worth-hero .value {
+    font-size: 3.5em;
+    font-weight: bold;
+    color: #fff;
+    margin: 0.5rem 0;
+}
+
+.net-worth-hero .timestamp {
+    font-size: 0.9em;
+    color: #999;
+    margin: 0;
+}
+
+
+--- FILE: projects/trust/src/components/HomeView.jsx ---
+
+import { useState, useEffect } from 'react';
+import SankeyChart from '../SankeyChart';
+import MockSankey from './MockSankey';
+import './HomeView.css';
+
+const NetWorthHero = () => {
+    const [netWorth, setNetWorth] = useState(null);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        const fetchSummary = async () => {
+            try {
+                setLoading(true);
+                const response = await fetch('/api/portfolio/summary');
+                if (!response.ok) throw new Error('Failed to fetch summary');
+                const data = await response.json();
+                setNetWorth(data.total_market_value);
+            } catch (error) {
+                console.error('Error fetching net worth:', error);
+                setNetWorth(0); // Default to 0 on error
+            } finally {
+                setLoading(false);
+            }
+        };
+        fetchSummary();
+    }, []);
+
+    const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        maximumFractionDigits: 0,
+    }).format(value);
+
+    return (
+        <div className="net-worth-hero">
+            <h2>Latest Net Worth</h2>
+            <p className="value">
+                {loading ? 'Calculating...' : formatCurrency(netWorth)}
+            </p>
+            <p className="timestamp">As of latest holdings import</p>
+        </div>
+    );
+};
+
+const HomeView = () => {
+    const [incomeSankeyData, setIncomeSankeyData] = useState(null);
+
+    useEffect(() => {
+        const fetchSankeyData = async () => {
+            try {
+                const response = await fetch('/api/sankey/income');
+                if (!response.ok) throw new Error('Failed to fetch income sankey');
+                const data = await response.json();
+                setIncomeSankeyData(data);
+            } catch (error) {
+                console.error(error);
+            }
+        };
+        fetchSankeyData();
+    }, []);
+
+    const isChartVisible = incomeSankeyData && incomeSankeyData.links.length > 0;
+
+    return (
+        <>
+            <NetWorthHero />
+            <div className="grid-container">
+                <div className="card">
+                    <h2>Income → Uses of Money</h2>
+                    {isChartVisible ? (
+                        <SankeyChart data={incomeSankeyData} />
+                    ) : (
+                        <p>No transaction data found for this chart.</p>
+                    )}
+                </div>
+                <div className="card">
+                    <h2>Portfolio Return Waterfall</h2>
+                    <MockSankey type="returns" />
+                </div>
+            </div>
+        </>
+    );
+};
+
+export default HomeView;
+
+
+--- FILE: projects/trust/src/components/MockSankey.jsx ---
+
+import SankeyChart from '../SankeyChart';
+
+const mockReturnData = {
+    nodes: [
+        { id: 'Gross Return' },
+        { id: 'Net Return' },
+        { id: 'Fees' },
+        { id: 'Taxes' },
+    ],
+    links: [
+        { source: 'Gross Return', target: 'Fees', value: 1500 },
+        { source: 'Gross Return', target: 'Taxes', value: 3500 },
+        { source: 'Gross Return', target: 'Net Return', value: 25000 },
+    ],
+};
+
+const MockSankey = ({ type }) => {
+    // In the future, this could select different mock data based on 'type'
+    const data = mockReturnData;
+
+    return (
+        <div style={{ position: 'relative' }}>
+            <div style={{ 
+                position: 'absolute',
+                top: 0, left: 0, right: 0, bottom: 0, 
+                background: 'rgba(47, 47, 47, 0.7)',
+                color: 'white',
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'center',
+                zIndex: 10,
+                borderRadius: '8px',
+                fontSize: '1.2em',
+                fontWeight: 'bold'
+            }}>
+                [Mock Data - Implementation Pending]
+            </div>
+            <div style={{ opacity: 0.2 }}>
+                <SankeyChart data={data} />
+            </div>
+        </div>
+    );
+};
+
+export default MockSankey;
+
+
+--- FILE: projects/trust/src/components/NavBar.css ---
+
+.navbar {
+    width: 220px;
+    min-width: 220px;
+    background-color: var(--medium-bg);
+    border-right: 1px solid var(--border-color);
+    height: 100vh;
+    padding: 1rem;
+    box-sizing: border-box;
+}
+
+.logo {
+    font-size: 1.5em;
+    font-weight: bold;
+    color: var(--gold-accent);
+    padding-bottom: 1rem;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.navbar ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.navbar li {
+    padding: 0.75rem 1rem;
+    margin-bottom: 0.5rem;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.navbar li:hover {
+    background-color: var(--light-bg);
+}
+
+.navbar li.active {
+    background-color: var(--gold-accent);
+    color: var(--dark-bg);
+    font-weight: bold;
+}
+
+
+--- FILE: projects/trust/src/components/NavBar.jsx ---
+
+import './NavBar.css';
+
+const NavItem = ({ name, activeView, setActiveView }) => (
+    <li 
+        className={activeView === name ? 'active' : ''}
+        onClick={() => setActiveView(name)}
+    >
+        {name}
+    </li>
+);
+
+const NavBar = ({ activeView, setActiveView }) => {
+    const navItems = [
+        'Home',
+        'Cashflow',
+        'Portfolio',
+        'Projects/Tags',
+        'Real Estate',
+        'Forecast',
+        'Data & Settings',
+    ];
+
+    return (
+        <nav className="navbar">
+            <div className="logo">Curie Trust</div>
+            <ul>
+                {navItems.map(item => (
+                    <NavItem 
+                        key={item} 
+                        name={item} 
+                        activeView={activeView} 
+                        setActiveView={setActiveView} 
+                    />
+                ))}
+            </ul>
+        </nav>
+    );
+};
+
+export default NavBar;
+
+
+--- FILE: projects/trust/src/components/PlaceholderView.css ---
+
+.placeholder-card {
+    text-align: center;
+    padding: 4rem 2rem;
+    color: #999;
+}
+
+.placeholder-card h2 {
+    text-align: center;
+    border-bottom: none;
+    color: #999;
+}
+
+
+--- FILE: projects/trust/src/components/PlaceholderView.jsx ---
+
+import './PlaceholderView.css';
+
+const PlaceholderView = ({ viewName }) => {
+    return (
+        <div className="card placeholder-card">
+            <h2>{viewName}</h2>
+            <p>This section is under construction.</p>
+            <p>Future capabilities will be implemented here as per the Project Requirements Specification.</p>
+        </div>
+    );
+};
+
+export default PlaceholderView;
+
+
 --- FILE: projects/trust/src/importers/__init__.py ---
 
 # This package will contain modules for importing and normalizing data
@@ -2368,23 +2480,36 @@ from ..data_model import Holding
 
 def parse_holdings_csv(file_contents: bytes, account_id: str) -> List[Holding]:
     """
-    Parses a holdings CSV with Symbol, Quantity, CostBasis columns.
+    Parses a holdings CSV with Symbol, Quantity, CostBasis, and optional MarketValue.
     (PRS Section 5.1)
     """
     holdings = []
     file_stream = io.StringIO(file_contents.decode('utf-8'))
     reader = csv.DictReader(file_stream)
 
+    # Normalize headers to be more robust: trim whitespace, lowercase, and remove internal spaces.
+    # This handles variations like ' Cost Basis ' -> 'costbasis'.
+    if reader.fieldnames:
+        reader.fieldnames = [name.strip().lower().replace(' ', '') for name in reader.fieldnames]
+    else:
+        # If there are no headers (e.g., empty file), return an empty list.
+        return []
+
+
     for row in reader:
         try:
-            symbol = row['Symbol'].strip().upper()
-            quantity = Decimal(row['Quantity'])
-            cost_basis = Decimal(row['CostBasis'])
+            symbol = row['symbol'].strip().upper()
+            quantity = Decimal(row['quantity'])
+            cost_basis = Decimal(row['costbasis'])
+            
+            # Phase 4.5: Handle optional market_value
+            market_value_raw = row.get('marketvalue')
+            market_value = Decimal(market_value_raw) if market_value_raw else None
+
         except (KeyError, ValueError, TypeError) as e:
             print(f"Skipping row due to parsing error: {row} - {e}")
             continue
 
-        # Create a unique, deterministic ID for the holding
         raw_id = f"{account_id}-{symbol}"
         holding_id = hashlib.sha256(raw_id.encode('utf-8')).hexdigest()
 
@@ -2393,7 +2518,8 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> List[Holding]:
             account_id=account_id,
             symbol=symbol,
             quantity=quantity,
-            cost_basis=cost_basis
+            cost_basis=cost_basis,
+            market_value=market_value
         )
         holdings.append(holding)
     
