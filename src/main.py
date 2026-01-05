@@ -12,6 +12,7 @@ from src.database import initialize_database, save_transactions
 from src.data_model import CashflowType
 from src import database as db
 from src import analysis
+from src import rules_engine
 
 # Load environment variables from .env file
 load_dotenv()
@@ -155,6 +156,20 @@ async def get_all_transactions_for_display():
         traceback.print_exc()
         print(f"---! END OF ERROR TRACEBACK !---\n")
         raise HTTPException(status_code=500, detail=f"An internal error occurred while fetching transactions: {e}")
+
+@app.post("/api/transactions/recategorize", tags=["Processing"])
+async def trigger_recategorization():
+    """
+    Triggers a full re-categorization of all transactions based on the current ruleset.
+    """
+    try:
+        count = rules_engine.recategorize_all_transactions()
+        return {"message": f"Successfully re-categorized {count} transactions."}
+    except Exception as e:
+        print(f"\n---! ERROR IN /api/transactions/recategorize ENDPOINT !---")
+        traceback.print_exc()
+        print(f"---! END OF ERROR TRACEBACK !---\n")
+        raise HTTPException(status_code=500, detail=f"An internal error occurred during re-categorization: {e}")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)

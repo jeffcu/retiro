@@ -4,6 +4,7 @@ const RulesManager = ({ onRuleAdded }) => {
     const [rules, setRules] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
     // Form state
     const [pattern, setPattern] = useState('');
@@ -37,6 +38,8 @@ const RulesManager = ({ onRuleAdded }) => {
             return;
         }
 
+        setIsSubmitting(true);
+
         const newRule = { 
             pattern,
             category,
@@ -44,7 +47,8 @@ const RulesManager = ({ onRuleAdded }) => {
         };
 
         try {
-            const response = await fetch('/api/rules', {
+            // Step 1: Create the new rule
+            const createRuleResponse = await fetch('/api/rules', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -52,8 +56,17 @@ const RulesManager = ({ onRuleAdded }) => {
                 body: JSON.stringify(newRule),
             });
 
-            if (!response.ok) {
-                throw new Error(`Failed to create rule: ${response.statusText}`);
+            if (!createRuleResponse.ok) {
+                throw new Error(`Failed to create rule: ${createRuleResponse.statusText}`);
+            }
+
+            // Step 2: Trigger the backend to re-categorize all transactions
+            const recategorizeResponse = await fetch('/api/transactions/recategorize', {
+                method: 'POST',
+            });
+
+            if (!recategorizeResponse.ok) {
+                throw new Error(`Failed to re-categorize transactions: ${recategorizeResponse.statusText}`);
             }
 
             // Reset form
@@ -61,17 +74,16 @@ const RulesManager = ({ onRuleAdded }) => {
             setCategory('');
             setCashflowType('Expense');
 
-            // Refetch rules to show the new one in the list
-            await fetchRules(); 
-
-            // Notify parent component that the rules have changed
+            // Notify parent component to refresh all data, which implicitly fetches the new rule list as well.
             if (onRuleAdded) {
                 onRuleAdded();
             }
 
         } catch (error) {
-            console.error("Error creating rule:", error);
+            console.error("Error during rule creation and re-categorization:", error);
             alert(`Error: ${error.message}`);
+        } finally {
+            setIsSubmitting(false);
         }
     };
 
@@ -104,6 +116,7 @@ const RulesManager = ({ onRuleAdded }) => {
                             value={pattern} 
                             onChange={e => setPattern(e.target.value)} 
                             placeholder="e.g., Safeway"
+                            disabled={isSubmitting}
                         />
                     </div>
                     <div className="form-group">
@@ -114,6 +127,7 @@ const RulesManager = ({ onRuleAdded }) => {
                             value={category} 
                             onChange={e => setCategory(e.target.value)} 
                             placeholder="e.g., Groceries"
+                            disabled={isSubmitting}
                         />
                     </div>
                     <div className="form-group">
@@ -122,6 +136,7 @@ const RulesManager = ({ onRuleAdded }) => {
                             id="cashflowType" 
                             value={cashflowType} 
                             onChange={e => setCashflowType(e.target.value)}
+                            disabled={isSubmitting}
                         >
                             <option value="Expense">Expense</option>
                             <option value="Income">Income</option>
@@ -129,9 +144,11 @@ const RulesManager = ({ onRuleAdded }) => {
                             <option value="Capital Expenditure">Capital Expenditure</option>
                         </select>
                     </div>
-                    <button type="submit">Create Rule</button>
+                    <button type="submit" disabled={isSubmitting}>
+                        {isSubmitting ? 'Processing...' : 'Create Rule & Apply'}
+                    </button>
                     <p className='note'>
-                        <strong>Note:</strong> After adding a rule, you must re-import your CSV file to see its effects on existing transactions.
+                        <strong>Note:</strong> Creating a rule now automatically re-categorizes all existing transactions.
                     </p>
                 </form>
             </div>
