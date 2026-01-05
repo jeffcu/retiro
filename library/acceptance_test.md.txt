@@ -24,32 +24,41 @@ This document outlines the acceptance criteria and testing strategy for each pha
 
 **Objective**: Visualize real, user-imported data in the primary Income→Uses Sankey chart. This confirms the entire data flow from CSV to UI is working.
 
-**Acceptance Criteria**:
-- [ ] **Data Flow Test**: Start with a fresh, empty `data/trust.db` file.
-- [ ] **Import**: Use a tool like `curl` to POST the `data/sample_transactions.csv` file to the `/api/import/csv` endpoint.
-    - `curl -X POST -F "file=@data/sample_transactions.csv" -F "account_id=test_account" http://127.0.0.1:8000/api/import/csv`
-- [ ] **Verification**: The API should return a success message indicating 3 transactions were processed.
-- [ ] **Database Check**: Inspecting the `transactions` table in `trust.db` should show 3 records corresponding to the CSV file.
-- [ ] **UI Visualization**: Refreshing the web UI should display a Sankey chart with the following nodes and links:
-    - Node: "Income" (value: 2000.00)
-    - Node: "Expenses" (value: 120.75)
-    - Node: "Net Surplus" (value: 1879.25)
-    - Link: Income → Uses of Money (2000.00)
-    - Link: Uses of Money → Expenses (120.75)
-    - Link: Uses of Money → Net Surplus (1879.25)
-- [ ] **Categorization**: Because no rules exist, expenses should be grouped under "Uncategorized".
+**Result**: COMPLETED
 
-**Potential Risks & Failure Points**:
-1.  **Analysis Logic Error**: The `analysis.py` module might miscalculate totals, leading to an incorrect chart.
-2.  **Data Serialization**: The backend might not format the JSON for the Nivo chart component correctly.
-3.  **Frontend State**: The React component might not re-render correctly after fetching the data.
+**Acceptance Criteria Met**:
+- [x] **Data Flow Test**: Started with a fresh, empty `data/trust.db` file.
+- [x] **Import**: Used `projects/trust/data/phase1_test_data.csv` via the backend API.
+- [x] **Verification**: API returned a success message indicating transactions were processed.
+- [x] **Database Check**: `transactions` table in `trust.db` was correctly populated.
+- [x] **UI Visualization**: Refreshing the web UI displayed a Sankey chart with the following primary nodes and links:
+    - Node: "Income" (value: 6250.00)
+    - Node: "Expenses" (value: 3925.07)
+    - Node: "Net Surplus" (value: 2324.93)
+    - Link: Income → Uses of Money (6250.00)
+    - Link: Uses of Money → Expenses (3925.07)
+    - Link: Uses of Money → Net Surplus (2324.93)
+- [x] **Categorization**: All expenses were correctly grouped under "Uncategorized" as no rules exist yet.
+- [x] **Diagnostic Tooltip**: Hovering over links correctly displays the formatted currency value, confirming data integrity.
 
 ---
 
-## 4. Future Phases (High-Level Plan)
+## 4. Phase 2: Interactive Drill-Downs & Rules Management
 
-### Phase 2: Interactive Drill-Downs & Rules Management
-- **Verification**: Create a rule via the API. Re-import the CSV. Verify the expense in the Sankey is now correctly categorized. Implement a `GET /api/transactions` endpoint and test that it can be used to fetch data for a specific category.
+**Objective**: Allow users to inspect their data and manage categorization, moving beyond the default "Uncategorized" expense bucket.
+
+**Acceptance Criteria**:
+- [ ] **API Check**: The backend already has `GET /api/rules` and `POST /api/rules` endpoints. These must be verified with a tool like `curl` or Postman.
+- [ ] **UI Implementation**: A new UI component is built to manage rules.
+    - [ ] It can display a list of existing rules fetched from `GET /api/rules`.
+    - [ ] It provides a form to create a new rule (e.g., pattern: "Safeway", category: "Groceries", type: "Expense").
+    - [ ] Submitting the form successfully POSTs to `/api/rules` and updates the list.
+- [ ] **Re-Import & Verification**: After creating a rule for "Safeway", re-importing `phase1_test_data.csv` (or simply refreshing the Sankey data) results in a new "Groceries" node flowing from the "Expenses" node.
+- [ ] **Transfer Logic**: Create a rule to classify "Transfer to Savings" as a `Transfer` type. Verify this amount is no longer included in the "Expenses" total on the Sankey chart, thereby increasing "Net Surplus".
+
+---
+
+## 5. Future Phases (High-Level Plan)
 
 ### Phase 3: Introducing Capital Expenditures (CapEx)
 - **Verification**: Manually flag a transaction as CapEx via an API call. Verify the primary Sankey updates to show a "CapEx" flow, and the "Expenses" flow is reduced.

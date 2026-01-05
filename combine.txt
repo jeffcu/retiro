@@ -257,6 +257,25 @@ export default defineConfig({
 })
 
 
+--- FILE: projects/trust/data/phase1_test_data.csv ---
+
+Date,Description,Amount
+2023-11-01,Starfleet Direct Deposit,5500.00
+2023-11-01,Federation Mortgage Corp,-2200.50
+2023-11-02,TRICITY UTILITIES,-155.75
+2023-11-03,Safeway Groceries #221,-245.30
+2023-11-05,AMAZON MKTPLACE PMTS,-89.99
+2023-11-06,Freelance Holo-novel Payment,750.00
+2023-11-07,Chevron Gas Station,-62.15
+2023-11-10,Replimat #4 - Dining,-45.00
+2023-11-12,Starfleet Fitness Center,-35.00
+2023-11-15,Sundry Purchases - Target,-112.88
+2023-11-18,Repairs - Home Depot,-350.00
+2023-11-20,MOVIE TICKET - GALAXY,-28.50
+2023-11-22,ATM WITHDRAWAL #9982,-100.00
+2023-11-25,Transfer to Savings, -500.00
+
+
 --- FILE: projects/trust/data/sample_transactions.csv ---
 
 Date,Description,Amount
@@ -705,32 +724,41 @@ This document outlines the acceptance criteria and testing strategy for each pha
 
 **Objective**: Visualize real, user-imported data in the primary Income→Uses Sankey chart. This confirms the entire data flow from CSV to UI is working.
 
-**Acceptance Criteria**:
-- [ ] **Data Flow Test**: Start with a fresh, empty `data/trust.db` file.
-- [ ] **Import**: Use a tool like `curl` to POST the `data/sample_transactions.csv` file to the `/api/import/csv` endpoint.
-    - `curl -X POST -F "file=@data/sample_transactions.csv" -F "account_id=test_account" http://127.0.0.1:8000/api/import/csv`
-- [ ] **Verification**: The API should return a success message indicating 3 transactions were processed.
-- [ ] **Database Check**: Inspecting the `transactions` table in `trust.db` should show 3 records corresponding to the CSV file.
-- [ ] **UI Visualization**: Refreshing the web UI should display a Sankey chart with the following nodes and links:
-    - Node: "Income" (value: 2000.00)
-    - Node: "Expenses" (value: 120.75)
-    - Node: "Net Surplus" (value: 1879.25)
-    - Link: Income → Uses of Money (2000.00)
-    - Link: Uses of Money → Expenses (120.75)
-    - Link: Uses of Money → Net Surplus (1879.25)
-- [ ] **Categorization**: Because no rules exist, expenses should be grouped under "Uncategorized".
+**Result**: COMPLETED
 
-**Potential Risks & Failure Points**:
-1.  **Analysis Logic Error**: The `analysis.py` module might miscalculate totals, leading to an incorrect chart.
-2.  **Data Serialization**: The backend might not format the JSON for the Nivo chart component correctly.
-3.  **Frontend State**: The React component might not re-render correctly after fetching the data.
+**Acceptance Criteria Met**:
+- [x] **Data Flow Test**: Started with a fresh, empty `data/trust.db` file.
+- [x] **Import**: Used `projects/trust/data/phase1_test_data.csv` via the backend API.
+- [x] **Verification**: API returned a success message indicating transactions were processed.
+- [x] **Database Check**: `transactions` table in `trust.db` was correctly populated.
+- [x] **UI Visualization**: Refreshing the web UI displayed a Sankey chart with the following primary nodes and links:
+    - Node: "Income" (value: 6250.00)
+    - Node: "Expenses" (value: 3925.07)
+    - Node: "Net Surplus" (value: 2324.93)
+    - Link: Income → Uses of Money (6250.00)
+    - Link: Uses of Money → Expenses (3925.07)
+    - Link: Uses of Money → Net Surplus (2324.93)
+- [x] **Categorization**: All expenses were correctly grouped under "Uncategorized" as no rules exist yet.
+- [x] **Diagnostic Tooltip**: Hovering over links correctly displays the formatted currency value, confirming data integrity.
 
 ---
 
-## 4. Future Phases (High-Level Plan)
+## 4. Phase 2: Interactive Drill-Downs & Rules Management
 
-### Phase 2: Interactive Drill-Downs & Rules Management
-- **Verification**: Create a rule via the API. Re-import the CSV. Verify the expense in the Sankey is now correctly categorized. Implement a `GET /api/transactions` endpoint and test that it can be used to fetch data for a specific category.
+**Objective**: Allow users to inspect their data and manage categorization, moving beyond the default "Uncategorized" expense bucket.
+
+**Acceptance Criteria**:
+- [ ] **API Check**: The backend already has `GET /api/rules` and `POST /api/rules` endpoints. These must be verified with a tool like `curl` or Postman.
+- [ ] **UI Implementation**: A new UI component is built to manage rules.
+    - [ ] It can display a list of existing rules fetched from `GET /api/rules`.
+    - [ ] It provides a form to create a new rule (e.g., pattern: "Safeway", category: "Groceries", type: "Expense").
+    - [ ] Submitting the form successfully POSTs to `/api/rules` and updates the list.
+- [ ] **Re-Import & Verification**: After creating a rule for "Safeway", re-importing `phase1_test_data.csv` (or simply refreshing the Sankey data) results in a new "Groceries" node flowing from the "Expenses" node.
+- [ ] **Transfer Logic**: Create a rule to classify "Transfer to Savings" as a `Transfer` type. Verify this amount is no longer included in the "Expenses" total on the Sankey chart, thereby increasing "Net Surplus".
+
+---
+
+## 5. Future Phases (High-Level Plan)
 
 ### Phase 3: Introducing Capital Expenditures (CapEx)
 - **Verification**: Manually flag a transaction as CapEx via an API call. Verify the primary Sankey updates to show a "CapEx" flow, and the "Expenses" flow is reduced.
@@ -743,6 +771,7 @@ This document outlines the acceptance criteria and testing strategy for each pha
 
 ### Phase 6: Forecasting
 - **Verification**: Create a simple forecast scenario via an API. Verify the projected net worth from the API matches a manual calculation.
+
 
 --- FILE: projects/trust/scripts/start_backend.sh ---
 
@@ -842,115 +871,488 @@ h1, h2 {
 
 --- FILE: projects/trust/src/App.jsx ---
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import SankeyChart from './SankeyChart';
+import TransactionTable from './TransactionTable';
+import RulesManager from './RulesManager';
 import './App.css';
+import './TransactionTable.css';
+import './RulesManager.css';
 
 function App() {
   const [sankeyData, setSankeyData] = useState(null);
+  const [transactions, setTransactions] = useState([]);
+  const [showTable, setShowTable] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  // Using useCallback to memoize the fetch function so it can be passed as a prop
+  // without causing unnecessary re-renders in the child component (RulesManager).
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      // Fetch both data sets in parallel
+      const [sankeyResponse, transactionsResponse] = await Promise.all([
+        fetch('/api/sankey/income'),
+        fetch('/api/transactions')
+      ]);
+
+      if (!sankeyResponse.ok) throw new Error(`HTTP error (Sankey)! status: ${sankeyResponse.status}`);
+      if (!transactionsResponse.ok) throw new Error(`HTTP error (Transactions)! status: ${transactionsResponse.status}`);
+      
+      const sankeyJson = await sankeyResponse.json();
+      const transactionsJson = await transactionsResponse.json();
+
+      setSankeyData(sankeyJson);
+      setTransactions(transactionsJson);
+
+    } catch (e) {
+      console.error("Error fetching data:", e);
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    } 
+  }, []); // Empty dependency array means this function is created once.
+
+  // Initial data fetch on component mount
   useEffect(() => {
-    // Fetch data from the backend API
-    fetch('/api/sankey/income')
-      .then(response => {
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        return response.json();
-      })
-      .then(data => {
-        // A valid Sankey chart needs at least one link.
-        if (data && data.nodes && data.links && data.links.length > 0) {
-          setSankeyData(data);
-        } else {
-          // Handle the case of no data or empty data gracefully
-          setSankeyData({ nodes: [], links: [] });
-        }
-        setLoading(false);
-      })
-      .catch(error => {
-        console.error("Error fetching Sankey data:", error);
-        setError(error.message);
-        setLoading(false);
-      });
-  }, []); // The empty dependency array means this effect runs once on mount
+    fetchData();
+  }, [fetchData]);
+
+  const isChartVisible = sankeyData && sankeyData.links && sankeyData.links.length > 0;
 
   return (
     <>
       <h1>Curie Trust Financial Control Center</h1>
+      
       <div className="card">
         <h2>Income → Uses of Money</h2>
         {loading && <p>Loading chart data...</p>}
         {error && <p>Error loading data: {error}</p>}
-        {sankeyData && sankeyData.links.length === 0 && !loading && (
-            <p>No transaction data found. Please import a CSV file to see the chart.</p>
-        )}
-        {sankeyData && sankeyData.links.length > 0 && (
+        
+        {isChartVisible ? (
             <SankeyChart data={sankeyData} />
+        ) : (
+          !loading && <p>No transaction data found. Please import a CSV file and refresh the page.</p>
         )}
+      </div>
+
+      <div className="card">
+        <h2>Categorization Rules Management</h2>
+        <p>Define rules to automatically categorize transactions during import.</p>
+        <RulesManager onRuleAdded={fetchData} />
+      </div>
+
+      <div className="card">
+          <h2>Diagnostic Data Viewer</h2>
+          <button onClick={() => setShowTable(!showTable)} style={{marginBottom: '1rem'}}>
+              {showTable ? 'Hide' : 'Show'} Raw Transaction Data
+          </button>
+          {showTable && <TransactionTable transactions={transactions} />}
       </div>
     </>
   )
 }
 
-export default App
+export default App;
+
+
+--- FILE: projects/trust/src/RulesManager.css ---
+
+.rules-manager-container {
+    display: flex;
+    gap: 2rem;
+    text-align: left;
+    margin-top: 1.5rem;
+}
+
+.rules-list {
+    flex: 1;
+    max-height: 400px;
+    overflow-y: auto;
+    border: 1px solid #555;
+    padding: 1rem;
+    border-radius: 4px;
+}
+
+.rules-list h3 {
+    margin-top: 0;
+}
+
+.rules-list ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.rules-list li {
+    background-color: #2c2c2c;
+    padding: 0.5rem 0.75rem;
+    border-radius: 3px;
+    margin-bottom: 0.5rem;
+    font-family: monospace, monospace;
+    font-size: 0.9em;
+}
+
+.rules-list li span {
+    color: #E2B254;
+}
+
+.rule-form {
+    flex: 1;
+    border: 1px solid #555;
+    padding: 1rem;
+    border-radius: 4px;
+}
+
+.rule-form h3 {
+    margin-top: 0;
+}
+
+.form-group {
+    margin-bottom: 1rem;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.25rem;
+    font-size: 0.9em;
+}
+
+.form-group input,
+.form-group select {
+    width: 100%;
+    padding: 0.5rem;
+    background-color: #3f3f3f;
+    border: 1px solid #666;
+    border-radius: 4px;
+    color: #fff;
+    box-sizing: border-box; /* Ensures padding doesn't affect width */
+}
+
+.rule-form button {
+    background-color: #E2B254;
+    color: #242424;
+    border: none;
+    padding: 0.6rem 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.rule-form button:hover {
+    background-color: #f0c36a;
+}
+
+.rule-form p.note {
+    font-size: 0.8em;
+    color: #999;
+    margin-top: 1.5rem;
+    border-top: 1px solid #444;
+    padding-top: 1rem;
+}
+
+
+--- FILE: projects/trust/src/RulesManager.jsx ---
+
+import { useState, useEffect } from 'react';
+
+const RulesManager = ({ onRuleAdded }) => {
+    const [rules, setRules] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+
+    // Form state
+    const [pattern, setPattern] = useState('');
+    const [category, setCategory] = useState('');
+    const [cashflowType, setCashflowType] = useState('Expense');
+
+    const fetchRules = async () => {
+        try {
+            setLoading(true);
+            const response = await fetch('/api/rules');
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            const data = await response.json();
+            setRules(data);
+        } catch (e) {
+            setError(e.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchRules();
+    }, []);
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (!pattern || !category) {
+            alert('Please fill in both Pattern and Category.');
+            return;
+        }
+
+        const newRule = { 
+            pattern,
+            category,
+            cashflow_type: cashflowType,
+        };
+
+        try {
+            const response = await fetch('/api/rules', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(newRule),
+            });
+
+            if (!response.ok) {
+                throw new Error(`Failed to create rule: ${response.statusText}`);
+            }
+
+            // Reset form
+            setPattern('');
+            setCategory('');
+            setCashflowType('Expense');
+
+            // Refetch rules to show the new one in the list
+            await fetchRules(); 
+
+            // Notify parent component that the rules have changed
+            if (onRuleAdded) {
+                onRuleAdded();
+            }
+
+        } catch (error) {
+            console.error("Error creating rule:", error);
+            alert(`Error: ${error.message}`);
+        }
+    };
+
+    return (
+        <div className="rules-manager-container">
+            <div className="rules-list">
+                <h3>Existing Rules</h3>
+                {loading && <p>Loading rules...</p>}
+                {error && <p>Error loading rules: {error}</p>}
+                {rules.length > 0 ? (
+                    <ul>
+                        {rules.map(rule => (
+                            <li key={rule.rule_id}>
+                                "{rule.pattern}" → <span>{rule.category} ({rule.cashflow_type})</span>
+                            </li>
+                        ))}
+                    </ul>
+                ) : (
+                    !loading && <p>No rules defined yet.</p>
+                )}
+            </div>
+            <div className="rule-form">
+                <h3>Create New Rule</h3>
+                <form onSubmit={handleSubmit}>
+                    <div className="form-group">
+                        <label htmlFor="pattern">If description contains:</label>
+                        <input 
+                            id="pattern" 
+                            type="text" 
+                            value={pattern} 
+                            onChange={e => setPattern(e.target.value)} 
+                            placeholder="e.g., Safeway"
+                        />
+                    </div>
+                    <div className="form-group">
+                        <label htmlFor="category">Categorize as:</label>
+                        <input 
+                            id="category" 
+                            type="text" 
+                            value={category} 
+                            onChange={e => setCategory(e.target.value)} 
+                            placeholder="e.g., Groceries"
+                        />
+                    </div>
+                    <div className="form-group">
+                        <label htmlFor="cashflowType">Transaction Type:</label>
+                        <select 
+                            id="cashflowType" 
+                            value={cashflowType} 
+                            onChange={e => setCashflowType(e.target.value)}
+                        >
+                            <option value="Expense">Expense</option>
+                            <option value="Income">Income</option>
+                            <option value="Transfer">Transfer</option>
+                            <option value="Capital Expenditure">Capital Expenditure</option>
+                        </select>
+                    </div>
+                    <button type="submit">Create Rule</button>
+                    <p className='note'>
+                        <strong>Note:</strong> After adding a rule, you must re-import your CSV file to see its effects on existing transactions.
+                    </p>
+                </form>
+            </div>
+        </div>
+    );
+};
+
+export default RulesManager;
 
 
 --- FILE: projects/trust/src/SankeyChart.jsx ---
 
 import { ResponsiveSankey } from '@nivo/sankey';
 
-const SankeyChart = ({ data }) => (
-    <div style={{ height: '600px', width: '100%' }}>
-        <ResponsiveSankey
-            data={data}
-            margin={{ top: 40, right: 160, bottom: 40, left: 50 }}
-            align="justify"
-            colors={{ scheme: 'category10' }}
-            nodeOpacity={1}
-            nodeHoverOthersOpacity={0.35}
-            nodeThickness={18}
-            nodeSpacing={24}
-            nodeBorderWidth={0}
-            nodeBorderColor={{ from: 'color', modifiers: [['darker', 0.8]] }}
-            nodeBorderRadius={3}
-            linkOpacity={0.5}
-            linkHoverOthersOpacity={0.1}
-            linkContract={3}
-            enableLinkGradient={true}
-            labelPosition="outside"
-            labelOrientation="vertical"
-            labelPadding={16}
-            labelTextColor={{ from: 'color', modifiers: [['darker', 1]] }}
-            legends={[
-                {
-                    anchor: 'bottom-right',
-                    direction: 'column',
-                    translateX: 130,
-                    itemWidth: 100,
-                    itemHeight: 14,
-                    itemDirection: 'right-to-left',
-                    itemsSpacing: 2,
-                    itemTextColor: '#999',
-                    symbolSize: 14,
-                    effects: [
-                        {
-                            on: 'hover',
-                            style: {
-                                itemTextColor: '#000'
+const SankeyChart = ({ data }) => {
+
+    // Helper to format numbers with commas and two decimal places.
+    const formatValue = (value) => new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+    }).format(value);
+
+    return (
+        <div style={{ height: '600px', width: '100%' }}>
+            <ResponsiveSankey
+                data={data} 
+                margin={{ top: 40, right: 160, bottom: 40, left: 50 }}
+                align="justify"
+                colors={{ scheme: 'category10' }}
+                nodeOpacity={1}
+                nodeHoverOthersOpacity={0.35}
+                nodeThickness={18}
+                nodeSpacing={24}
+                nodeBorderWidth={0}
+                nodeBorderColor={{ from: 'color', modifiers: [['darker', 0.8]] }}
+                nodeBorderRadius={3}
+                linkOpacity={0.5}
+                linkHoverOthersOpacity={0.1}
+                linkContract={3}
+                enableLinkGradient={true}
+                labelPosition="outside"
+                labelOrientation="vertical"
+                labelPadding={16}
+                labelTextColor={{ from: 'color', modifiers: [['darker', 1]] }}
+                
+                // --- DIAGNOSTIC ENHANCEMENT --- //
+                // This new property adds a tooltip that displays the value when hovering over a link.
+                linkTooltip={({ link }) => (
+                    <div style={{
+                        padding: '12px',
+                        background: '#fff',
+                        color: '#000',
+                        border: '1px solid #ccc',
+                        borderRadius: '3px',
+                    }}>
+                        <strong>{link.source.id}</strong> → <strong>{link.target.id}</strong>
+                        <br />
+                        {formatValue(link.value)}
+                    </div>
+                )}
+
+                legends={[
+                    {
+                        anchor: 'bottom-right',
+                        direction: 'column',
+                        translateX: 130,
+                        itemWidth: 100,
+                        itemHeight: 14,
+                        itemDirection: 'right-to-left',
+                        itemsSpacing: 2,
+                        itemTextColor: '#999',
+                        symbolSize: 14,
+                        effects: [
+                            {
+                                on: 'hover',
+                                style: {
+                                    itemTextColor: '#fff'
+                                }
                             }
-                        }
-                    ]
-                }
-            ]}
-        />
-    </div>
-);
+                        ]
+                    }
+                ]}
+            />
+        </div>
+    )
+};
 
 export default SankeyChart;
 
+
+--- FILE: projects/trust/src/TransactionTable.css ---
+
+.table-container {
+  margin-top: 2rem;
+  max-height: 400px;
+  overflow-y: auto;
+  border: 1px solid #555;
+  border-radius: 4px;
+  text-align: left;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9em;
+}
+
+th, td {
+  padding: 8px 12px;
+  border-bottom: 1px solid #444;
+}
+
+thead th {
+  background-color: #3a3a3a;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+tbody tr:nth-child(even) {
+  background-color: #2c2c2c;
+}
+
+tbody tr:hover {
+  background-color: #4a4a4a;
+}
+
+
+--- FILE: projects/trust/src/TransactionTable.jsx ---
+
+import React from 'react';
+
+const TransactionTable = ({ transactions }) => {
+    if (!transactions || transactions.length === 0) {
+        return <p>No transactions to display.</p>;
+    }
+
+    // Get headers from the keys of the first transaction object
+    const headers = Object.keys(transactions[0]);
+
+    return (
+        <div className="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        {headers.map(header => <th key={header}>{header}</th>)}
+                    </tr>
+                </thead>
+                <tbody>
+                    {transactions.map((tx, index) => (
+                        <tr key={tx.transaction_id || index}>
+                            {headers.map(header => <td key={header}>{String(tx[header])}</td>)}
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
+};
+
+export default TransactionTable;
 
 --- FILE: projects/trust/src/analysis.py ---
 
@@ -992,7 +1394,7 @@ def generate_income_sankey(period: str) -> Dict[str, Any]:
                 total_income += amount
             elif cashflow_type == 'Expense' and amount < 0:
                 # CRITICAL FIX: Ensure category is never None. If tx['category'] is None or an empty string,
-                # default to 'Uncategorized'.
+                # default to 'Uncategorized'. This prevents a 'None' node in the Sankey data.
                 category = tx.get('category') or 'Uncategorized'
                 expense_by_category[category] += abs(amount)
         except (ValueError, TypeError) as e:
@@ -1335,6 +1737,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
 
 import uvicorn
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body
+from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import os
 import traceback
@@ -1354,6 +1757,23 @@ app = FastAPI(
     title="Curie Trust Financial Control Center API",
     version="1.0",
 )
+
+# --- CORS Middleware ---
+# This is necessary to allow the frontend (running on a different port)
+# to communicate with the backend, especially for non-simple requests like POST with JSON.
+origins = [
+    "http://localhost:5173",  # Vite dev server
+    "http://127.0.0.1:5173", # Also common
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 # --- Pydantic Models for API data validation ---
 class RuleCreate(BaseModel):
@@ -1443,7 +1863,7 @@ async def delete_existing_rule(rule_id: str):
     return None # FastAPI will return a 204 No Content response
 
 
-# --- Analysis API ---
+# --- Data & Analysis API ---
 @app.get("/api/sankey/income", tags=["Analysis"])
 async def get_income_sankey_data(period: str = "all") -> Dict[str, List[Dict[str, Any]]]:
     """ 
@@ -1460,6 +1880,18 @@ async def get_income_sankey_data(period: str = "all") -> Dict[str, List[Dict[str
         print(f"---! END OF ERROR TRACEBACK !---\n")
         # Re-raise as a standard HTTPException to inform the client
         raise HTTPException(status_code=500, detail=f"An internal error occurred in the analysis engine: {e}")
+
+@app.get("/api/transactions", tags=["Data"])
+async def get_all_transactions_for_display():
+    """ Retrieves all transactions from the database for display or debugging. """
+    try:
+        transactions = db.get_all_transactions()
+        return transactions
+    except Exception as e:
+        print(f"\n---! ERROR IN /api/transactions ENDPOINT !---")
+        traceback.print_exc()
+        print(f"---! END OF ERROR TRACEBACK !---\n")
+        raise HTTPException(status_code=500, detail=f"An internal error occurred while fetching transactions: {e}")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)

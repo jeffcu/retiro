@@ -1,5 +1,6 @@
 import uvicorn
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body
+from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import os
 import traceback
@@ -19,6 +20,23 @@ app = FastAPI(
     title="Curie Trust Financial Control Center API",
     version="1.0",
 )
+
+# --- CORS Middleware ---
+# This is necessary to allow the frontend (running on a different port)
+# to communicate with the backend, especially for non-simple requests like POST with JSON.
+origins = [
+    "http://localhost:5173",  # Vite dev server
+    "http://127.0.0.1:5173", # Also common
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 # --- Pydantic Models for API data validation ---
 class RuleCreate(BaseModel):
@@ -108,7 +126,7 @@ async def delete_existing_rule(rule_id: str):
     return None # FastAPI will return a 204 No Content response
 
 
-# --- Analysis API ---
+# --- Data & Analysis API ---
 @app.get("/api/sankey/income", tags=["Analysis"])
 async def get_income_sankey_data(period: str = "all") -> Dict[str, List[Dict[str, Any]]]:
     """ 
@@ -125,6 +143,18 @@ async def get_income_sankey_data(period: str = "all") -> Dict[str, List[Dict[str
         print(f"---! END OF ERROR TRACEBACK !---\n")
         # Re-raise as a standard HTTPException to inform the client
         raise HTTPException(status_code=500, detail=f"An internal error occurred in the analysis engine: {e}")
+
+@app.get("/api/transactions", tags=["Data"])
+async def get_all_transactions_for_display():
+    """ Retrieves all transactions from the database for display or debugging. """
+    try:
+        transactions = db.get_all_transactions()
+        return transactions
+    except Exception as e:
+        print(f"\n---! ERROR IN /api/transactions ENDPOINT !---")
+        traceback.print_exc()
+        print(f"---! END OF ERROR TRACEBACK !---\n")
+        raise HTTPException(status_code=500, detail=f"An internal error occurred while fetching transactions: {e}")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)

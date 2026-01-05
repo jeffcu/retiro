@@ -36,7 +36,7 @@ def generate_income_sankey(period: str) -> Dict[str, Any]:
                 total_income += amount
             elif cashflow_type == 'Expense' and amount < 0:
                 # CRITICAL FIX: Ensure category is never None. If tx['category'] is None or an empty string,
-                # default to 'Uncategorized'.
+                # default to 'Uncategorized'. This prevents a 'None' node in the Sankey data.
                 category = tx.get('category') or 'Uncategorized'
                 expense_by_category[category] += abs(amount)
         except (ValueError, TypeError) as e:
