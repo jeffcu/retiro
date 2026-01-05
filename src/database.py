@@ -2,7 +2,7 @@ import sqlite3
 import uuid
 from pathlib import Path
 from typing import List, Dict, Any
-from src.data_model import Transaction
+from src.data_model import Transaction, Holding
 
 # Per MDS, the database is a single file in the data/ directory.
 # We resolve the path to its absolute form to avoid ambiguity.
@@ -39,7 +39,7 @@ def _ensure_schema(conn: sqlite3.Connection):
     );
     """)
 
-    # Per Phase 1 requirements, create the 'rules' table.
+    # Per Phase 2 requirements, create the 'rules' table.
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS rules (
         rule_id TEXT PRIMARY KEY,
@@ -48,6 +48,20 @@ def _ensure_schema(conn: sqlite3.Connection):
         cashflow_type TEXT NOT NULL,
         tags TEXT, -- Comma-separated list
         priority INTEGER DEFAULT 100
+    );
+    """)
+
+    # Per Phase 4 requirements, create the 'holdings' table.
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS holdings (
+        holding_id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        quantity REAL NOT NULL,
+        cost_basis REAL NOT NULL,
+        last_price REAL,
+        last_price_timestamp TEXT,
+        UNIQUE(account_id, symbol)
     );
     """)
 
@@ -116,6 +130,36 @@ def save_transactions(transactions: List[Transaction]):
     finally:
         conn.close()
 
+
+def save_holdings(holdings: List[Holding]):
+    """ Saves a list of Holding objects to the database using INSERT OR REPLACE. """
+    if not holdings:
+        return
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    sql = """INSERT OR REPLACE INTO holdings (
+                holding_id, account_id, symbol, quantity, cost_basis
+             ) VALUES (?, ?, ?, ?, ?);"""
+    
+    data_to_insert = [
+        (
+            h.holding_id, h.account_id, h.symbol, float(h.quantity), float(h.cost_basis)
+        ) for h in holdings
+    ]
+
+    try:
+        cursor.executemany(sql, data_to_insert)
+        conn.commit()
+        print(f"Successfully saved/updated {cursor.rowcount} holdings.")
+    except sqlite3.Error as e:
+        print(f"Database error during holdings save: {e}")
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
 # --- Data Retrieval --- #
 
 def get_all_transactions() -> List[Dict[str, Any]]:
@@ -126,6 +170,15 @@ def get_all_transactions() -> List[Dict[str, Any]]:
     rows = cursor.fetchall()
     conn.close()
     # Convert rows to dictionaries for easier use
+    return [dict(row) for row in rows]
+
+def get_all_holdings() -> List[Dict[str, Any]]:
+    """ Retrieves all holdings from the database. """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM holdings ORDER BY symbol ASC")
+    rows = cursor.fetchall()
+    conn.close()
     return [dict(row) for row in rows]
 
 # --- Rules CRUD --- #

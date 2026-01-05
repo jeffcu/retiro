@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 
@@ -35,3 +35,19 @@ class Transaction:
     # Audit trail
     import_run_id: str | None = None
     raw_data_hash: str | None = None
+
+
+@dataclass
+class Holding:
+    """
+    Represents a single portfolio holding in a specific account.
+    (PRS Section 8)
+    """
+    holding_id: str  # Unique ID, typically a hash of account_id and symbol.
+    account_id: str
+    symbol: str
+    quantity: Decimal
+    cost_basis: Decimal
+    # Market data to be added in Phase 5
+    last_price: Decimal | None = None
+    last_price_timestamp: datetime | None = None

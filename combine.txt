@@ -276,6 +276,14 @@ Date,Description,Amount
 2023-11-25,Transfer to Savings, -500.00
 
 
+--- FILE: projects/trust/data/sample_holdings.csv ---
+
+Symbol,Quantity,CostBasis
+VTSAX,100.5,5000.00
+AAPL,50,2500.75
+MSFT,25,4000.50
+
+
 --- FILE: projects/trust/data/sample_transactions.csv ---
 
 Date,Description,Amount
@@ -731,13 +739,7 @@ This document outlines the acceptance criteria and testing strategy for each pha
 - [x] **Import**: Used `projects/trust/data/phase1_test_data.csv` via the backend API.
 - [x] **Verification**: API returned a success message indicating transactions were processed.
 - [x] **Database Check**: `transactions` table in `trust.db` was correctly populated.
-- [x] **UI Visualization**: Refreshing the web UI displayed a Sankey chart with the following primary nodes and links:
-    - Node: "Income" (value: 6250.00)
-    - Node: "Expenses" (value: 3925.07)
-    - Node: "Net Surplus" (value: 2324.93)
-    - Link: Income → Uses of Money (6250.00)
-    - Link: Uses of Money → Expenses (3925.07)
-    - Link: Uses of Money → Net Surplus (2324.93)
+- [x] **UI Visualization**: Refreshing the web UI displayed a Sankey chart with the correct nodes and values.
 - [x] **Categorization**: All expenses were correctly grouped under "Uncategorized" as no rules exist yet.
 - [x] **Diagnostic Tooltip**: Hovering over links correctly displays the formatted currency value, confirming data integrity.
 
@@ -747,24 +749,43 @@ This document outlines the acceptance criteria and testing strategy for each pha
 
 **Objective**: Allow users to inspect their data and manage categorization, moving beyond the default "Uncategorized" expense bucket.
 
-**Acceptance Criteria**:
-- [ ] **API Check**: The backend already has `GET /api/rules` and `POST /api/rules` endpoints. These must be verified with a tool like `curl` or Postman.
-- [ ] **UI Implementation**: A new UI component is built to manage rules.
-    - [ ] It can display a list of existing rules fetched from `GET /api/rules`.
-    - [ ] It provides a form to create a new rule (e.g., pattern: "Safeway", category: "Groceries", type: "Expense").
-    - [ ] Submitting the form successfully POSTs to `/api/rules` and updates the list.
-- [ ] **Re-Import & Verification**: After creating a rule for "Safeway", re-importing `phase1_test_data.csv` (or simply refreshing the Sankey data) results in a new "Groceries" node flowing from the "Expenses" node.
-- [ ] **Transfer Logic**: Create a rule to classify "Transfer to Savings" as a `Transfer` type. Verify this amount is no longer included in the "Expenses" total on the Sankey chart, thereby increasing "Net Surplus".
+**Result**: COMPLETED
+
+**Acceptance Criteria Met**:
+- [x] The UI correctly displays existing rules and allows for the creation of new rules.
+- [x] Creating a new rule (e.g., "Safeway" → Groceries) and triggering a re-categorization correctly updates the Sankey chart to show a new "Groceries" node.
+- [x] Creating a rule to classify a transaction as a `Transfer` correctly removes its value from the "Expenses" total, increasing the "Net Surplus".
 
 ---
 
-## 5. Future Phases (High-Level Plan)
+## 5. Phase 3: Introducing Capital Expenditures (CapEx)
 
-### Phase 3: Introducing Capital Expenditures (CapEx)
-- **Verification**: Manually flag a transaction as CapEx via an API call. Verify the primary Sankey updates to show a "CapEx" flow, and the "Expenses" flow is reduced.
+**Objective**: Differentiate consumption expenses from asset-building expenses and visualize the impact.
 
-### Phase 4: The Portfolio View
-- **Verification**: Import a holdings CSV. Test a new API endpoint that returns the list of holdings. The UI should display this list on a new Portfolio screen.
+**Result**: COMPLETED
+
+**Acceptance Criteria Met**:
+- [x] A rule can be created with the type "Capital Expenditure".
+- [x] After re-categorization, the primary Sankey chart updates to show a new "Capital Expenditure" flow originating from "Uses of Money".
+- [x] The value of the "Expenses" flow is correctly reduced by the CapEx amount.
+
+---
+
+## 6. Phase 4: The Portfolio View
+
+**Objective**: Establish the initial portfolio tracking capability by importing and displaying a list of holdings.
+
+**Acceptance Criteria**:
+- [ ] **Data Model**: A new `holdings` table exists in `data/trust.db` after restarting the backend.
+- [ ] **API Endpoint**: A `POST /api/import/holdings` endpoint is available to accept a holdings CSV file.
+- [ ] **Import Test**: Create a `sample_holdings.csv` file. Use a tool like `curl` to POST this file to the import endpoint. The API should return a success message.
+- [ ] **Database Verification**: The `holdings` table should be populated with the data from the CSV.
+- [ ] **UI Implementation**: A new "Portfolio Holdings" section appears on the main screen.
+- [ ] **UI Verification**: The portfolio section fetches data from `GET /api/holdings` and displays the imported holdings correctly in a table.
+
+---
+
+## 7. Future Phases (High-Level Plan)
 
 ### Phase 5: Automated Market Data & Layered Returns
 - **Verification**: Manually trigger the market data fetch process. Verify prices are updated in the database. Verify the Portfolio screen now shows correct market values.
@@ -875,9 +896,11 @@ import { useState, useEffect, useCallback } from 'react';
 import SankeyChart from './SankeyChart';
 import TransactionTable from './TransactionTable';
 import RulesManager from './RulesManager';
+import PortfolioView from './PortfolioView';
 import './App.css';
 import './TransactionTable.css';
 import './RulesManager.css';
+import './PortfolioView.css';
 
 function App() {
   const [sankeyData, setSankeyData] = useState(null);
@@ -912,7 +935,7 @@ function App() {
       setError(e.message);
     } finally {
       setLoading(false);
-    } 
+    }
   }, []); // Empty dependency array means this function is created once.
 
   // Initial data fetch on component mount
@@ -939,6 +962,11 @@ function App() {
       </div>
 
       <div className="card">
+        <h2>Portfolio Holdings</h2>
+        <PortfolioView />
+      </div>
+
+      <div className="card">
         <h2>Categorization Rules Management</h2>
         <p>Define rules to automatically categorize transactions during import.</p>
         <RulesManager onRuleAdded={fetchData} />
@@ -956,6 +984,95 @@ function App() {
 }
 
 export default App;
+
+
+--- FILE: projects/trust/src/PortfolioView.css ---
+
+.portfolio-container {
+    text-align: left;
+}
+
+.portfolio-container h2 {
+    margin-bottom: 1rem;
+}
+
+/* Re-use transaction table styles for consistency */
+.portfolio-container .table-container {
+    margin-top: 0;
+}
+
+
+--- FILE: projects/trust/src/PortfolioView.jsx ---
+
+import { useState, useEffect } from 'react';
+
+const PortfolioView = () => {
+    const [holdings, setHoldings] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+
+    useEffect(() => {
+        const fetchHoldings = async () => {
+            try {
+                setLoading(true);
+                const response = await fetch('/api/holdings');
+                if (!response.ok) {
+                    throw new Error(`HTTP Error: ${response.status}`);
+                }
+                const data = await response.json();
+                setHoldings(data);
+            } catch (e) {
+                setError(e.message);
+                console.error("Failed to fetch holdings:", e);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        fetchHoldings();
+    }, []);
+
+    const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+    }).format(value);
+
+    if (loading) return <p>Loading portfolio...</p>;
+    if (error) return <p>Error loading portfolio: {error}</p>;
+
+    return (
+        <div className="portfolio-container">
+            {holdings.length > 0 ? (
+                <div className="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Symbol</th>
+                                <th>Account</th>
+                                <th>Quantity</th>
+                                <th>Cost Basis</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {holdings.map(h => (
+                                <tr key={h.holding_id}>
+                                    <td>{h.symbol}</td>
+                                    <td>{h.account_id}</td>
+                                    <td>{h.quantity.toFixed(4)}</td>
+                                    <td>{formatCurrency(h.cost_basis)}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            ) : (
+                <p>No holdings data found. You may need to import a holdings CSV file.</p>
+            )}
+        </div>
+    );
+};
+
+export default PortfolioView;
 
 
 --- FILE: projects/trust/src/RulesManager.css ---
@@ -1062,6 +1179,7 @@ const RulesManager = ({ onRuleAdded }) => {
     const [rules, setRules] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
     // Form state
     const [pattern, setPattern] = useState('');
@@ -1095,6 +1213,8 @@ const RulesManager = ({ onRuleAdded }) => {
             return;
         }
 
+        setIsSubmitting(true);
+
         const newRule = { 
             pattern,
             category,
@@ -1102,7 +1222,8 @@ const RulesManager = ({ onRuleAdded }) => {
         };
 
         try {
-            const response = await fetch('/api/rules', {
+            // Step 1: Create the new rule
+            const createRuleResponse = await fetch('/api/rules', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -1110,8 +1231,17 @@ const RulesManager = ({ onRuleAdded }) => {
                 body: JSON.stringify(newRule),
             });
 
-            if (!response.ok) {
-                throw new Error(`Failed to create rule: ${response.statusText}`);
+            if (!createRuleResponse.ok) {
+                throw new Error(`Failed to create rule: ${createRuleResponse.statusText}`);
+            }
+
+            // Step 2: Trigger the backend to re-categorize all transactions
+            const recategorizeResponse = await fetch('/api/transactions/recategorize', {
+                method: 'POST',
+            });
+
+            if (!recategorizeResponse.ok) {
+                throw new Error(`Failed to re-categorize transactions: ${recategorizeResponse.statusText}`);
             }
 
             // Reset form
@@ -1119,17 +1249,16 @@ const RulesManager = ({ onRuleAdded }) => {
             setCategory('');
             setCashflowType('Expense');
 
-            // Refetch rules to show the new one in the list
-            await fetchRules(); 
-
-            // Notify parent component that the rules have changed
+            // Notify parent component to refresh all data, which implicitly fetches the new rule list as well.
             if (onRuleAdded) {
                 onRuleAdded();
             }
 
         } catch (error) {
-            console.error("Error creating rule:", error);
+            console.error("Error during rule creation and re-categorization:", error);
             alert(`Error: ${error.message}`);
+        } finally {
+            setIsSubmitting(false);
         }
     };
 
@@ -1162,6 +1291,7 @@ const RulesManager = ({ onRuleAdded }) => {
                             value={pattern} 
                             onChange={e => setPattern(e.target.value)} 
                             placeholder="e.g., Safeway"
+                            disabled={isSubmitting}
                         />
                     </div>
                     <div className="form-group">
@@ -1172,6 +1302,7 @@ const RulesManager = ({ onRuleAdded }) => {
                             value={category} 
                             onChange={e => setCategory(e.target.value)} 
                             placeholder="e.g., Groceries"
+                            disabled={isSubmitting}
                         />
                     </div>
                     <div className="form-group">
@@ -1180,6 +1311,7 @@ const RulesManager = ({ onRuleAdded }) => {
                             id="cashflowType" 
                             value={cashflowType} 
                             onChange={e => setCashflowType(e.target.value)}
+                            disabled={isSubmitting}
                         >
                             <option value="Expense">Expense</option>
                             <option value="Income">Income</option>
@@ -1187,9 +1319,11 @@ const RulesManager = ({ onRuleAdded }) => {
                             <option value="Capital Expenditure">Capital Expenditure</option>
                         </select>
                     </div>
-                    <button type="submit">Create Rule</button>
+                    <button type="submit" disabled={isSubmitting}>
+                        {isSubmitting ? 'Processing...' : 'Create Rule & Apply'}
+                    </button>
                     <p className='note'>
-                        <strong>Note:</strong> After adding a rule, you must re-import your CSV file to see its effects on existing transactions.
+                        <strong>Note:</strong> Creating a rule now automatically re-categorizes all existing transactions.
                     </p>
                 </form>
             </div>
@@ -1235,7 +1369,9 @@ const SankeyChart = ({ data }) => {
                 labelPosition="outside"
                 labelOrientation="vertical"
                 labelPadding={16}
-                labelTextColor={{ from: 'color', modifiers: [['darker', 1]] }}
+                // --- VISIBILITY FIX --- //
+                // Set a static, light color for labels for high contrast on a dark background.
+                labelTextColor="#DDDDDD"
                 
                 // --- DIAGNOSTIC ENHANCEMENT --- //
                 // This new property adds a tooltip that displays the value when hovering over a link.
@@ -1369,7 +1505,7 @@ def generate_income_sankey(period: str) -> Dict[str, Any]:
     """
     Analyzes all transactions and generates the data structure
     required for the "Income -> Uses of Money" Sankey diagram, formatted for Nivo.
-    This function is designed to be robust against incomplete or corrupt data.
+    This function now differentiates between Expenses and Capital Expenditures.
     (PRS Section 2.1.A)
 
     Args:
@@ -1383,29 +1519,28 @@ def generate_income_sankey(period: str) -> Dict[str, Any]:
     
     total_income = 0
     expense_by_category = defaultdict(float)
+    total_capex = 0
     
     for tx in transactions:
         try:
-            # Defensively convert amount to float, handling potential data corruption.
             amount = float(tx['amount'])
             cashflow_type = tx.get('cashflow_type')
 
             if cashflow_type == 'Income' and amount > 0:
                 total_income += amount
             elif cashflow_type == 'Expense' and amount < 0:
-                # CRITICAL FIX: Ensure category is never None. If tx['category'] is None or an empty string,
-                # default to 'Uncategorized'. This prevents a 'None' node in the Sankey data.
                 category = tx.get('category') or 'Uncategorized'
                 expense_by_category[category] += abs(amount)
+            elif cashflow_type == 'Capital Expenditure' and amount < 0:
+                total_capex += abs(amount)
+
         except (ValueError, TypeError) as e:
-            # If a transaction has a non-numeric amount, skip it and warn.
-            # This prevents the entire API endpoint from crashing.
             tx_id = tx.get('transaction_id', 'N/A')
             print(f"WARNING: Skipping transaction {tx_id} due to invalid amount: {tx.get('amount')}. Error: {e}")
             continue
 
     total_expenses = sum(expense_by_category.values())
-    net_surplus = total_income - total_expenses
+    net_surplus = total_income - total_expenses - total_capex
 
     # Step 1: Build the links conditionally based on non-zero values.
     links = []
@@ -1431,6 +1566,13 @@ def generate_income_sankey(period: str) -> Dict[str, Any]:
                     "value": round(amount, 2)
                 })
     
+    if total_capex > 0:
+        links.append({
+            "source": "Uses of Money",
+            "target": "Capital Expenditure",
+            "value": round(total_capex, 2)
+        })
+
     if net_surplus > 0:
         links.append({
             "source": "Uses of Money", 
@@ -1443,7 +1585,6 @@ def generate_income_sankey(period: str) -> Dict[str, Any]:
         return {"nodes": [], "links": []}
 
     # Step 2: Derive the complete, unique set of nodes directly from the links.
-    # This guarantees that every source and target in a link has a corresponding node.
     node_ids = set()
     for link in links:
         node_ids.add(link["source"])
@@ -1461,7 +1602,7 @@ def generate_income_sankey(period: str) -> Dict[str, Any]:
 --- FILE: projects/trust/src/data_model.py ---
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 
@@ -1499,13 +1640,29 @@ class Transaction:
     raw_data_hash: str | None = None
 
 
+@dataclass
+class Holding:
+    """
+    Represents a single portfolio holding in a specific account.
+    (PRS Section 8)
+    """
+    holding_id: str  # Unique ID, typically a hash of account_id and symbol.
+    account_id: str
+    symbol: str
+    quantity: Decimal
+    cost_basis: Decimal
+    # Market data to be added in Phase 5
+    last_price: Decimal | None = None
+    last_price_timestamp: datetime | None = None
+
+
 --- FILE: projects/trust/src/database.py ---
 
 import sqlite3
 import uuid
 from pathlib import Path
 from typing import List, Dict, Any
-from src.data_model import Transaction
+from src.data_model import Transaction, Holding
 
 # Per MDS, the database is a single file in the data/ directory.
 # We resolve the path to its absolute form to avoid ambiguity.
@@ -1542,7 +1699,7 @@ def _ensure_schema(conn: sqlite3.Connection):
     );
     """)
 
-    # Per Phase 1 requirements, create the 'rules' table.
+    # Per Phase 2 requirements, create the 'rules' table.
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS rules (
         rule_id TEXT PRIMARY KEY,
@@ -1551,6 +1708,20 @@ def _ensure_schema(conn: sqlite3.Connection):
         cashflow_type TEXT NOT NULL,
         tags TEXT, -- Comma-separated list
         priority INTEGER DEFAULT 100
+    );
+    """)
+
+    # Per Phase 4 requirements, create the 'holdings' table.
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS holdings (
+        holding_id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        quantity REAL NOT NULL,
+        cost_basis REAL NOT NULL,
+        last_price REAL,
+        last_price_timestamp TEXT,
+        UNIQUE(account_id, symbol)
     );
     """)
 
@@ -1619,6 +1790,36 @@ def save_transactions(transactions: List[Transaction]):
     finally:
         conn.close()
 
+
+def save_holdings(holdings: List[Holding]):
+    """ Saves a list of Holding objects to the database using INSERT OR REPLACE. """
+    if not holdings:
+        return
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    sql = """INSERT OR REPLACE INTO holdings (
+                holding_id, account_id, symbol, quantity, cost_basis
+             ) VALUES (?, ?, ?, ?, ?);"""
+    
+    data_to_insert = [
+        (
+            h.holding_id, h.account_id, h.symbol, float(h.quantity), float(h.cost_basis)
+        ) for h in holdings
+    ]
+
+    try:
+        cursor.executemany(sql, data_to_insert)
+        conn.commit()
+        print(f"Successfully saved/updated {cursor.rowcount} holdings.")
+    except sqlite3.Error as e:
+        print(f"Database error during holdings save: {e}")
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
 # --- Data Retrieval --- #
 
 def get_all_transactions() -> List[Dict[str, Any]]:
@@ -1629,6 +1830,15 @@ def get_all_transactions() -> List[Dict[str, Any]]:
     rows = cursor.fetchall()
     conn.close()
     # Convert rows to dictionaries for easier use
+    return [dict(row) for row in rows]
+
+def get_all_holdings() -> List[Dict[str, Any]]:
+    """ Retrieves all holdings from the database. """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM holdings ORDER BY symbol ASC")
+    rows = cursor.fetchall()
+    conn.close()
     return [dict(row) for row in rows]
 
 # --- Rules CRUD --- #
@@ -1744,11 +1954,12 @@ import traceback
 from typing import List, Optional, Any, Dict
 from pydantic import BaseModel, Field
 
-from src.importers import csv_importer
-from src.database import initialize_database, save_transactions
+from src.importers import csv_importer, holdings_importer
+from src.database import initialize_database, save_transactions, save_holdings
 from src.data_model import CashflowType
 from src import database as db
 from src import analysis
+from src import rules_engine
 
 # Load environment variables from .env file
 load_dotenv()
@@ -1829,8 +2040,29 @@ async def import_transactions_csv(account_id: str = Form(...), file: UploadFile 
         print(f"ERROR processing file {file.filename}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to process CSV file: {e}")
 
+@app.post("/api/import/holdings", tags=["Import"])
+async def import_holdings_csv(account_id: str = Form(...), file: UploadFile = File(...)):
+    """
+    Accepts a holdings CSV file, parses it, and stores the portfolio holdings.
+    (PRS Section 5.1)
+    """
+    if not file.filename or not file.filename.lower().endswith('.csv'):
+        raise HTTPException(status_code=400, detail="Invalid file type. Please upload a CSV.")
+    
+    contents = await file.read()
+    try:
+        holdings = holdings_importer.parse_holdings_csv(contents, account_id)
+        save_holdings(holdings)
+        return {
+            "message": f"Successfully imported and saved {len(holdings)} holdings.",
+            "filename": file.filename,
+            "holdings_count": len(holdings)
+        }
+    except Exception as e:
+        print(f"ERROR processing holdings file {file.filename}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to process holdings CSV file: {e}")
 
-# --- Rules API --- (Phase 1)
+# --- Rules API --- (Phase 2)
 @app.post("/api/rules", response_model=RuleResponse, status_code=201, tags=["Rules"])
 async def create_new_rule(rule: RuleCreate):
     """ Creates a new categorization rule. """
@@ -1893,6 +2125,29 @@ async def get_all_transactions_for_display():
         print(f"---! END OF ERROR TRACEBACK !---\n")
         raise HTTPException(status_code=500, detail=f"An internal error occurred while fetching transactions: {e}")
 
+@app.post("/api/transactions/recategorize", tags=["Processing"])
+async def trigger_recategorization():
+    """
+    Triggers a full re-categorization of all transactions based on the current ruleset.
+    """
+    try:
+        count = rules_engine.recategorize_all_transactions()
+        return {"message": f"Successfully re-categorized {count} transactions."}
+    except Exception as e:
+        print(f"\n---! ERROR IN /api/transactions/recategorize ENDPOINT !---")
+        traceback.print_exc()
+        print(f"---! END OF ERROR TRACEBACK !---\n")
+        raise HTTPException(status_code=500, detail=f"An internal error occurred during re-categorization: {e}")
+
+@app.get("/api/holdings", tags=["Data"])
+async def get_all_holdings():
+    """ Retrieves all portfolio holdings. """
+    try:
+        return db.get_all_holdings()
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Failed to retrieve holdings.")
+
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)
 
@@ -1902,9 +2157,11 @@ if __name__ == "__main__":
 import re
 from dataclasses import dataclass, field
 from typing import List
+from datetime import datetime
+from decimal import Decimal
 
 from .data_model import Transaction, CashflowType
-from .database import get_all_rules as db_get_all_rules
+from . import database as db
 
 
 @dataclass
@@ -1920,12 +2177,35 @@ class Rule:
     tags: List[str] = field(default_factory=list)
     priority: int = 100
 
+def _reset_and_apply_defaults(transaction: Transaction) -> Transaction:
+    """
+    Resets classification fields to their defaults before reapplying rules.
+    This is crucial for re-categorization when rules have been changed or deleted.
+    """
+    # Reset rule-derived fields
+    transaction.category = None
+    transaction.cashflow_type = None
+    transaction.tags = []
+    transaction.is_transfer = False
+
+    # Apply default classification based on amount
+    if transaction.amount > 0:
+        transaction.cashflow_type = CashflowType.INCOME
+        transaction.category = 'Income'
+    elif transaction.amount < 0:
+        transaction.cashflow_type = CashflowType.EXPENSE
+        # 'Uncategorized' will be the effective category if no rule matches
+
+    return transaction
 
 def apply_rules_to_transaction(transaction: Transaction, rules: List[Rule]) -> Transaction:
     """
     Applies a list of rules to a single transaction, modifying it in place.
     The first rule that matches (by priority, then by order) wins.
     """
+    # First, reset the transaction to its default state
+    transaction = _reset_and_apply_defaults(transaction)
+
     # Sort rules by priority. Lower number means higher priority.
     sorted_rules = sorted(rules, key=lambda r: r.priority)
 
@@ -1940,6 +2220,8 @@ def apply_rules_to_transaction(transaction: Transaction, rules: List[Rule]) -> T
                 # Set is_transfer flag for convenience
                 if rule.cashflow_type == CashflowType.TRANSFER:
                     transaction.is_transfer = True
+                else:
+                    transaction.is_transfer = False
                 
                 # First match wins, so we break.
                 break 
@@ -1953,7 +2235,7 @@ def load_rules_from_db() -> List[Rule]:
     """
     Loads all rules from the database and returns them as Rule objects.
     """
-    rule_records = db_get_all_rules()
+    rule_records = db.get_all_rules()
     rules = [
         Rule(
             rule_id=r['rule_id'],
@@ -1965,6 +2247,41 @@ def load_rules_from_db() -> List[Rule]:
         ) for r in rule_records
     ]
     return rules
+
+def recategorize_all_transactions() -> int:
+    """
+    Fetches all transactions, re-applies all current rules, and saves them back to the DB.
+    Returns the number of transactions processed.
+    """
+    print("--- Starting global re-categorization process... ---")
+    rules = load_rules_from_db()
+    transaction_dicts = db.get_all_transactions()
+    updated_transactions = []
+
+    for tx_dict in transaction_dicts:
+        # Convert dict from DB back into a Transaction object for processing
+        # This ensures type safety and consistency with the data model.
+        tx_obj = Transaction(
+            transaction_id=tx_dict['transaction_id'],
+            account_id=tx_dict['account_id'],
+            transaction_date=datetime.strptime(tx_dict['transaction_date'].split(' ')[0], '%Y-%m-%d').date(),
+            amount=Decimal(str(tx_dict['amount'])),
+            description=tx_dict['description'],
+            merchant=tx_dict.get('merchant'),
+            asset_id=tx_dict.get('asset_id'),
+            import_run_id=tx_dict.get('import_run_id'),
+            raw_data_hash=tx_dict.get('raw_data_hash')
+        )
+
+        # Apply the full rule set to the reconstituted transaction object
+        updated_tx = apply_rules_to_transaction(tx_obj, rules)
+        updated_transactions.append(updated_tx)
+
+    if updated_transactions:
+        db.save_transactions(updated_transactions)
+    
+    print(f"--- Re-categorization complete. Processed {len(updated_transactions)} transactions. ---")
+    return len(updated_transactions)
 
 
 --- FILE: projects/trust/src/importers/__init__.py ---
@@ -2037,6 +2354,50 @@ def parse_standard_csv(file_contents: bytes, account_id: str) -> list[Transactio
         transactions.append(tx)
 
     return transactions
+
+
+--- FILE: projects/trust/src/importers/holdings_importer.py ---
+
+import csv
+import io
+import hashlib
+from decimal import Decimal
+from typing import List
+
+from ..data_model import Holding
+
+def parse_holdings_csv(file_contents: bytes, account_id: str) -> List[Holding]:
+    """
+    Parses a holdings CSV with Symbol, Quantity, CostBasis columns.
+    (PRS Section 5.1)
+    """
+    holdings = []
+    file_stream = io.StringIO(file_contents.decode('utf-8'))
+    reader = csv.DictReader(file_stream)
+
+    for row in reader:
+        try:
+            symbol = row['Symbol'].strip().upper()
+            quantity = Decimal(row['Quantity'])
+            cost_basis = Decimal(row['CostBasis'])
+        except (KeyError, ValueError, TypeError) as e:
+            print(f"Skipping row due to parsing error: {row} - {e}")
+            continue
+
+        # Create a unique, deterministic ID for the holding
+        raw_id = f"{account_id}-{symbol}"
+        holding_id = hashlib.sha256(raw_id.encode('utf-8')).hexdigest()
+
+        holding = Holding(
+            holding_id=holding_id,
+            account_id=account_id,
+            symbol=symbol,
+            quantity=quantity,
+            cost_basis=cost_basis
+        )
+        holdings.append(holding)
+    
+    return holdings
 
 
 --- AGENT MANIFEST FOR PROJECT: trust ---

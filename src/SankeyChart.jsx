@@ -31,7 +31,9 @@ const SankeyChart = ({ data }) => {
                 labelPosition="outside"
                 labelOrientation="vertical"
                 labelPadding={16}
-                labelTextColor={{ from: 'color', modifiers: [['darker', 1]] }}
+                // --- VISIBILITY FIX --- //
+                // Set a static, light color for labels for high contrast on a dark background.
+                labelTextColor="#DDDDDD"
                 
                 // --- DIAGNOSTIC ENHANCEMENT --- //
                 // This new property adds a tooltip that displays the value when hovering over a link.

@@ -7,8 +7,8 @@ import traceback
 from typing import List, Optional, Any, Dict
 from pydantic import BaseModel, Field
 
-from src.importers import csv_importer
-from src.database import initialize_database, save_transactions
+from src.importers import csv_importer, holdings_importer
+from src.database import initialize_database, save_transactions, save_holdings
 from src.data_model import CashflowType
 from src import database as db
 from src import analysis
@@ -93,8 +93,29 @@ async def import_transactions_csv(account_id: str = Form(...), file: UploadFile 
         print(f"ERROR processing file {file.filename}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to process CSV file: {e}")
 
+@app.post("/api/import/holdings", tags=["Import"])
+async def import_holdings_csv(account_id: str = Form(...), file: UploadFile = File(...)):
+    """
+    Accepts a holdings CSV file, parses it, and stores the portfolio holdings.
+    (PRS Section 5.1)
+    """
+    if not file.filename or not file.filename.lower().endswith('.csv'):
+        raise HTTPException(status_code=400, detail="Invalid file type. Please upload a CSV.")
+    
+    contents = await file.read()
+    try:
+        holdings = holdings_importer.parse_holdings_csv(contents, account_id)
+        save_holdings(holdings)
+        return {
+            "message": f"Successfully imported and saved {len(holdings)} holdings.",
+            "filename": file.filename,
+            "holdings_count": len(holdings)
+        }
+    except Exception as e:
+        print(f"ERROR processing holdings file {file.filename}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to process holdings CSV file: {e}")
 
-# --- Rules API --- (Phase 1)
+# --- Rules API --- (Phase 2)
 @app.post("/api/rules", response_model=RuleResponse, status_code=201, tags=["Rules"])
 async def create_new_rule(rule: RuleCreate):
     """ Creates a new categorization rule. """
@@ -170,6 +191,15 @@ async def trigger_recategorization():
         traceback.print_exc()
         print(f"---! END OF ERROR TRACEBACK !---\n")
         raise HTTPException(status_code=500, detail=f"An internal error occurred during re-categorization: {e}")
+
+@app.get("/api/holdings", tags=["Data"])
+async def get_all_holdings():
+    """ Retrieves all portfolio holdings. """
+    try:
+        return db.get_all_holdings()
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Failed to retrieve holdings.")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)

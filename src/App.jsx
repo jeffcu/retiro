@@ -2,9 +2,11 @@ import { useState, useEffect, useCallback } from 'react';
 import SankeyChart from './SankeyChart';
 import TransactionTable from './TransactionTable';
 import RulesManager from './RulesManager';
+import PortfolioView from './PortfolioView';
 import './App.css';
 import './TransactionTable.css';
 import './RulesManager.css';
+import './PortfolioView.css';
 
 function App() {
   const [sankeyData, setSankeyData] = useState(null);
@@ -39,7 +41,7 @@ function App() {
       setError(e.message);
     } finally {
       setLoading(false);
-    } 
+    }
   }, []); // Empty dependency array means this function is created once.
 
   // Initial data fetch on component mount
@@ -63,6 +65,11 @@ function App() {
         ) : (
           !loading && <p>No transaction data found. Please import a CSV file and refresh the page.</p>
         )}
+      </div>
+
+      <div className="card">
+        <h2>Portfolio Holdings</h2>
+        <PortfolioView />
       </div>
 
       <div className="card">

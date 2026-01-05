@@ -1,0 +1,12 @@
+.portfolio-container {
+    text-align: left;
+}
+
+.portfolio-container h2 {
+    margin-bottom: 1rem;
+}
+
+/* Re-use transaction table styles for consistency */
+.portfolio-container .table-container {
+    margin-top: 0;
+}

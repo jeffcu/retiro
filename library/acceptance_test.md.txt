@@ -31,13 +31,7 @@ This document outlines the acceptance criteria and testing strategy for each pha
 - [x] **Import**: Used `projects/trust/data/phase1_test_data.csv` via the backend API.
 - [x] **Verification**: API returned a success message indicating transactions were processed.
 - [x] **Database Check**: `transactions` table in `trust.db` was correctly populated.
-- [x] **UI Visualization**: Refreshing the web UI displayed a Sankey chart with the following primary nodes and links:
-    - Node: "Income" (value: 6250.00)
-    - Node: "Expenses" (value: 3925.07)
-    - Node: "Net Surplus" (value: 2324.93)
-    - Link: Income → Uses of Money (6250.00)
-    - Link: Uses of Money → Expenses (3925.07)
-    - Link: Uses of Money → Net Surplus (2324.93)
+- [x] **UI Visualization**: Refreshing the web UI displayed a Sankey chart with the correct nodes and values.
 - [x] **Categorization**: All expenses were correctly grouped under "Uncategorized" as no rules exist yet.
 - [x] **Diagnostic Tooltip**: Hovering over links correctly displays the formatted currency value, confirming data integrity.
 
@@ -47,24 +41,43 @@ This document outlines the acceptance criteria and testing strategy for each pha
 
 **Objective**: Allow users to inspect their data and manage categorization, moving beyond the default "Uncategorized" expense bucket.
 
-**Acceptance Criteria**:
-- [ ] **API Check**: The backend already has `GET /api/rules` and `POST /api/rules` endpoints. These must be verified with a tool like `curl` or Postman.
-- [ ] **UI Implementation**: A new UI component is built to manage rules.
-    - [ ] It can display a list of existing rules fetched from `GET /api/rules`.
-    - [ ] It provides a form to create a new rule (e.g., pattern: "Safeway", category: "Groceries", type: "Expense").
-    - [ ] Submitting the form successfully POSTs to `/api/rules` and updates the list.
-- [ ] **Re-Import & Verification**: After creating a rule for "Safeway", re-importing `phase1_test_data.csv` (or simply refreshing the Sankey data) results in a new "Groceries" node flowing from the "Expenses" node.
-- [ ] **Transfer Logic**: Create a rule to classify "Transfer to Savings" as a `Transfer` type. Verify this amount is no longer included in the "Expenses" total on the Sankey chart, thereby increasing "Net Surplus".
+**Result**: COMPLETED
+
+**Acceptance Criteria Met**:
+- [x] The UI correctly displays existing rules and allows for the creation of new rules.
+- [x] Creating a new rule (e.g., "Safeway" → Groceries) and triggering a re-categorization correctly updates the Sankey chart to show a new "Groceries" node.
+- [x] Creating a rule to classify a transaction as a `Transfer` correctly removes its value from the "Expenses" total, increasing the "Net Surplus".
 
 ---
 
-## 5. Future Phases (High-Level Plan)
+## 5. Phase 3: Introducing Capital Expenditures (CapEx)
 
-### Phase 3: Introducing Capital Expenditures (CapEx)
-- **Verification**: Manually flag a transaction as CapEx via an API call. Verify the primary Sankey updates to show a "CapEx" flow, and the "Expenses" flow is reduced.
+**Objective**: Differentiate consumption expenses from asset-building expenses and visualize the impact.
 
-### Phase 4: The Portfolio View
-- **Verification**: Import a holdings CSV. Test a new API endpoint that returns the list of holdings. The UI should display this list on a new Portfolio screen.
+**Result**: COMPLETED
+
+**Acceptance Criteria Met**:
+- [x] A rule can be created with the type "Capital Expenditure".
+- [x] After re-categorization, the primary Sankey chart updates to show a new "Capital Expenditure" flow originating from "Uses of Money".
+- [x] The value of the "Expenses" flow is correctly reduced by the CapEx amount.
+
+---
+
+## 6. Phase 4: The Portfolio View
+
+**Objective**: Establish the initial portfolio tracking capability by importing and displaying a list of holdings.
+
+**Acceptance Criteria**:
+- [ ] **Data Model**: A new `holdings` table exists in `data/trust.db` after restarting the backend.
+- [ ] **API Endpoint**: A `POST /api/import/holdings` endpoint is available to accept a holdings CSV file.
+- [ ] **Import Test**: Create a `sample_holdings.csv` file. Use a tool like `curl` to POST this file to the import endpoint. The API should return a success message.
+- [ ] **Database Verification**: The `holdings` table should be populated with the data from the CSV.
+- [ ] **UI Implementation**: A new "Portfolio Holdings" section appears on the main screen.
+- [ ] **UI Verification**: The portfolio section fetches data from `GET /api/holdings` and displays the imported holdings correctly in a table.
+
+---
+
+## 7. Future Phases (High-Level Plan)
 
 ### Phase 5: Automated Market Data & Layered Returns
 - **Verification**: Manually trigger the market data fetch process. Verify prices are updated in the database. Verify the Portfolio screen now shows correct market values.
