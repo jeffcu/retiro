@@ -17,12 +17,12 @@ Each phase includes:
 **Objective**: Establish the foundational data ingestion pipeline. The system must accept a standard transaction CSV, and the backend must be able to initialize the database and serve a placeholder API endpoint.
 
 **Acceptance Criteria**:
-- [ ] The application starts without errors (`uvicorn src.main:app`).
-- [ ] On first run, a `data/trust.db` file is created.
-- [ ] Inspecting `trust.db` with an SQLite tool reveals a `transactions` table with the correct columns.
-- [ ] Sending a POST request to `/api/import/csv` with a sample CSV file returns a `200 OK` status and a JSON response indicating the number of parsed transactions.
-- [ ] Sending the same request with a non-CSV file returns a `400 Bad Request` error.
-- [ ] Sending a GET request to `/api/sankey/income` returns a `200 OK` status with valid placeholder JSON data.
+- [x] The application starts without errors (`uvicorn src.main:app`).
+- [x] On first run, a `data/trust.db` file is created.
+- [x] Inspecting `trust.db` with an SQLite tool reveals a `transactions` table with the correct columns.
+- [x] Sending a POST request to `/api/import/csv` with a sample CSV file returns a `200 OK` status and a JSON response indicating the number of parsed transactions.
+- [x] Sending the same request with a non-CSV file returns a `400 Bad Request` error.
+- [x] Sending a GET request to `/api/sankey/income` returns a `200 OK` status with valid placeholder JSON data.
 
 **Potential Risks & Failure Points**:
 1.  **Database Initialization Failure**: Permissions issues or SQL syntax errors could prevent the database file or table from being created.

@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 import os
 
 from src.importers import csv_importer
-from src.database import initialize_database, get_db_connection
+from src.database import initialize_database, get_db_connection, save_transactions
 
 # Load environment variables from .env file
 load_dotenv()
@@ -44,16 +44,20 @@ async def import_transactions_csv(account_id: str = Form(...), file: UploadFile 
     contents = await file.read()
     try:
         transactions = csv_importer.parse_standard_csv(contents, account_id)
-        # Next step: Add logic here to save transactions to the database
-        # and perform deduplication.
-        print(f"Successfully parsed {len(transactions)} transactions for account {account_id}.")
+        
+        # Persist the parsed transactions to the database
+        save_transactions(transactions)
+        
+        print(f"Successfully processed {len(transactions)} transactions for account {account_id}.")
         return {
-            "message": f"Successfully imported {len(transactions)} transactions.",
+            "message": f"Successfully imported and saved {len(transactions)} transactions.",
             "filename": file.filename,
             "transaction_count": len(transactions)
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to parse CSV file: {e}")
+        # It's good practice to log the actual error for diagnostics
+        print(f"ERROR processing file {file.filename}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to process CSV file: {e}")
 
 
 # Placeholder for Phase 0 endpoint

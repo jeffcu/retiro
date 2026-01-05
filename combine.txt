@@ -647,12 +647,12 @@ Each phase includes:
 **Objective**: Establish the foundational data ingestion pipeline. The system must accept a standard transaction CSV, and the backend must be able to initialize the database and serve a placeholder API endpoint.
 
 **Acceptance Criteria**:
-- [ ] The application starts without errors (`uvicorn src.main:app`).
-- [ ] On first run, a `data/trust.db` file is created.
-- [ ] Inspecting `trust.db` with an SQLite tool reveals a `transactions` table with the correct columns.
-- [ ] Sending a POST request to `/api/import/csv` with a sample CSV file returns a `200 OK` status and a JSON response indicating the number of parsed transactions.
-- [ ] Sending the same request with a non-CSV file returns a `400 Bad Request` error.
-- [ ] Sending a GET request to `/api/sankey/income` returns a `200 OK` status with valid placeholder JSON data.
+- [x] The application starts without errors (`uvicorn src.main:app`).
+- [x] On first run, a `data/trust.db` file is created.
+- [x] Inspecting `trust.db` with an SQLite tool reveals a `transactions` table with the correct columns.
+- [x] Sending a POST request to `/api/import/csv` with a sample CSV file returns a `200 OK` status and a JSON response indicating the number of parsed transactions.
+- [x] Sending the same request with a non-CSV file returns a `400 Bad Request` error.
+- [x] Sending a GET request to `/api/sankey/income` returns a `200 OK` status with valid placeholder JSON data.
 
 **Potential Risks & Failure Points**:
 1.  **Database Initialization Failure**: Permissions issues or SQL syntax errors could prevent the database file or table from being created.
@@ -707,7 +707,6 @@ This section will be detailed as development approaches each phase.
 
 ### Phase 6: Forecasting
 - **Verification**: Create a simple forecast scenario (e.g., fixed income, fixed expenses, 0% return). Verify that the projected net worth matches a simple linear projection calculated manually. Add a one-time future event and verify the projection changes as expected.
-
 
 --- FILE: projects/trust/src/App.css ---
 
@@ -847,16 +846,20 @@ class Transaction:
 
 import sqlite3
 from pathlib import Path
+from typing import List
+from src.data_model import Transaction
 
 # Per MDS, the database is a single file in the data/ directory.
-DB_FILE = Path(__file__).parent.parent / "data" / "trust.db"
+# We resolve the path to its absolute form to avoid ambiguity.
+DB_FILE = (Path(__file__).parent.parent / "data" / "trust.db").resolve()
 
 def get_db_connection():
     """ Establishes a connection to the SQLite database. """
     # Ensure the data directory exists
     DB_FILE.parent.mkdir(exist_ok=True)
     
-    conn = sqlite3.connect(DB_FILE)
+    # Use the string representation of the path for sqlite3.connect
+    conn = sqlite3.connect(str(DB_FILE))
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -865,13 +868,11 @@ def initialize_database():
     Creates the necessary tables in the database if they don't already exist,
     based on the schema defined in the MDS and src/data_model.py.
     """
+    print(f"--- Initializing database at: {DB_FILE} ---")
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    # This is a placeholder for the full schema creation logic.
-    # We will build this out as we implement each feature.
-    # Starting with the 'transactions' table for Phase 0.
-    
+    # Per Phase 0 requirements, create the 'transactions' table.
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS transactions (
         transaction_id TEXT PRIMARY KEY,
@@ -885,20 +886,51 @@ def initialize_database():
         is_transfer INTEGER,
         asset_id TEXT,
         import_run_id TEXT,
-        raw_data_hash TEXT
+        raw_data_hash TEXT UNIQUE
     );
     """)
 
-    # We will add more tables here as we progress through the phases:
-    # accounts, assets, holdings, price_history, rules, import_profiles, etc.
-
-    print("Database initialized.")
     conn.commit()
     conn.close()
+    print("--- Database initialization complete. ---")
 
-if __name__ == '__main__':
-    print(f"Initializing database at: {DB_FILE}")
-    initialize_database()
+def save_transactions(transactions: List[Transaction]):
+    """
+    Saves a list of Transaction objects to the database.
+    Uses a transaction to ensure all or nothing is saved.
+    """
+    if not transactions:
+        return
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # The UNIQUE constraint on raw_data_hash will prevent duplicates on re-import.
+    sql = """INSERT OR IGNORE INTO transactions (
+                 transaction_id, account_id, transaction_date, amount, description, 
+                 merchant, category, cashflow_type, is_transfer, asset_id, 
+                 import_run_id, raw_data_hash
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"""
+    
+    # This data tuple must match the SQL columns exactly (12 items).
+    data_to_insert = [
+        (
+            t.transaction_id, t.account_id, t.transaction_date.isoformat(), t.amount, t.description,
+            t.merchant, t.category, t.cashflow_type.value if t.cashflow_type else None,
+            1 if t.is_transfer else 0, t.asset_id, t.import_run_id, t.raw_data_hash
+        ) for t in transactions
+    ]
+
+    try:
+        cursor.executemany(sql, data_to_insert)
+        conn.commit()
+        # The cursor.rowcount tells us how many rows were actually inserted (not ignored).
+        print(f"Successfully saved {cursor.rowcount} new transactions to the database.")
+    except sqlite3.Error as e:
+        print(f"Database error: {e}")
+        conn.rollback()
+    finally:
+        conn.close()
 
 
 --- FILE: projects/trust/src/index.css ---
@@ -949,7 +981,7 @@ from dotenv import load_dotenv
 import os
 
 from src.importers import csv_importer
-from src.database import initialize_database, get_db_connection
+from src.database import initialize_database, get_db_connection, save_transactions
 
 # Load environment variables from .env file
 load_dotenv()
@@ -981,22 +1013,28 @@ async def import_transactions_csv(account_id: str = Form(...), file: UploadFile 
     Accepts a CSV file, parses it, and stores the transactions.
     (PRS Section 5.2)
     """
-    if file.content_type != 'text/csv':
+    # Using the filename extension is more robust than checking the content_type header,
+    # which can be inconsistent between different clients (like curl).
+    if not file.filename or not file.filename.lower().endswith('.csv'):
         raise HTTPException(status_code=400, detail="Invalid file type. Please upload a CSV.")
 
     contents = await file.read()
     try:
         transactions = csv_importer.parse_standard_csv(contents, account_id)
-        # Next step: Add logic here to save transactions to the database
-        # and perform deduplication.
-        print(f"Successfully parsed {len(transactions)} transactions for account {account_id}.")
+        
+        # Persist the parsed transactions to the database
+        save_transactions(transactions)
+        
+        print(f"Successfully processed {len(transactions)} transactions for account {account_id}.")
         return {
-            "message": f"Successfully imported {len(transactions)} transactions.",
+            "message": f"Successfully imported and saved {len(transactions)} transactions.",
             "filename": file.filename,
             "transaction_count": len(transactions)
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to parse CSV file: {e}")
+        # It's good practice to log the actual error for diagnostics
+        print(f"ERROR processing file {file.filename}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to process CSV file: {e}")
 
 
 # Placeholder for Phase 0 endpoint
@@ -1020,7 +1058,6 @@ if __name__ == "__main__":
     # Note: The command 'uvicorn src.main:app --reload' should be run from the project root.
     # Running this file directly is not the intended use for a uvicorn server with reload.
     uvicorn.run(app, host="127.0.0.1", port=8000)
-
 
 --- FILE: projects/trust/src/importers/__init__.py ---
 
