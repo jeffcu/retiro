@@ -3,49 +3,82 @@ This module contains functions for financial calculations, generating data
 for visualizations like Sankey diagrams, and running forecasts.
 (PRS Sections 2, 4, 7)
 """
-from typing import Dict, Any
+from typing import Dict, Any, List
+from collections import defaultdict
+from .database import get_all_transactions
 
 def generate_income_sankey(period: str) -> Dict[str, Any]:
     """
-    Analyzes transactions for a given period and generates the data structure
-    required for the "Income -> Uses of Money" Sankey diagram.
+    Analyzes all transactions and generates the data structure
+    required for the "Income -> Uses of Money" Sankey diagram, formatted for Nivo.
     (PRS Section 2.1.A)
 
     Args:
-        period: The time period to analyze (e.g., "YTD", "month").
+        period: The time period to analyze (e.g., "YTD", "month"). 
+                (NOTE: Filtering by period is not yet implemented).
 
     Returns:
-        A dictionary containing nodes and links for the Sankey diagram.
+        A dictionary containing nodes and links for the Nivo Sankey component.
     """
-    # This is a placeholder implementation.
-    # The actual logic will query the database, aggregate transactions by
-    # cashflow_type and category, and then format the results.
+    transactions = get_all_transactions()
+    
+    total_income = 0
+    expense_by_category = defaultdict(float)
+    
+    for tx in transactions:
+        amount = float(tx['amount'])
+        cashflow_type = tx.get('cashflow_type')
 
-    print(f"Generating Sankey data for period: {period}")
+        if cashflow_type == 'Income' and amount > 0:
+            total_income += amount
+        elif cashflow_type == 'Expense' and amount < 0:
+            category = tx.get('category', 'Uncategorized')
+            expense_by_category[category] += abs(amount)
 
-    # Example data structure
+    total_expenses = sum(expense_by_category.values())
+    net_surplus = total_income - total_expenses
+
+    nodes = []
+    links = []
+
+    # Add nodes if they have value
+    if total_income > 0:
+        nodes.append({"id": "Income"})
+        nodes.append({"id": "Uses of Money"})
+        links.append({
+            "source": "Income", 
+            "target": "Uses of Money", 
+            "value": round(total_income, 2)
+        })
+
+    if total_expenses > 0:
+        nodes.append({"id": "Expenses"})
+        links.append({
+            "source": "Uses of Money", 
+            "target": "Expenses", 
+            "value": round(total_expenses, 2)
+        })
+        for category, amount in expense_by_category.items():
+            if amount > 0:
+                nodes.append({"id": category})
+                links.append({
+                    "source": "Expenses",
+                    "target": category,
+                    "value": round(amount, 2)
+                })
+    
+    if net_surplus > 0:
+        nodes.append({"id": "Net Surplus"})
+        links.append({
+            "source": "Uses of Money", 
+            "target": "Net Surplus", 
+            "value": round(net_surplus, 2)
+        })
+
+    # Deduplicate nodes
+    unique_nodes = list({v['id']:v for v in nodes}.values())
+
     return {
-        "period": period,
-        "nodes": [
-            {"id": "Total Income"},
-            {"id": "Expenses"},
-            {"id": "CapEx"},
-            {"id": "Net Savings"},
-            # Expense Categories
-            {"id": "Housing"},
-            {"id": "Food"},
-            {"id": "Transport"},
-            {"id": "Other Expenses"}
-        ],
-        "links": [
-            # Income to Uses
-            {"source": "Total Income", "target": "Expenses", "value": 6500},
-            {"source": "Total Income", "target": "CapEx", "value": 1500},
-            {"source": "Total Income", "target": "Net Savings", "value": 2000},
-            # Expenses to Categories
-            {"source": "Expenses", "target": "Housing", "value": 2500},
-            {"source": "Expenses", "target": "Food", "value": 1500},
-            {"source": "Expenses", "target": "Transport", "value": 1000},
-            {"source": "Expenses", "target": "Other Expenses", "value": 1500},
-        ]
+        "nodes": unique_nodes,
+        "links": links
     }

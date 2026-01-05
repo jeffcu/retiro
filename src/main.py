@@ -2,13 +2,14 @@ import uvicorn
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body
 from dotenv import load_dotenv
 import os
-from typing import List, Optional
+from typing import List, Optional, Any, Dict
 from pydantic import BaseModel, Field
 
 from src.importers import csv_importer
 from src.database import initialize_database, save_transactions
 from src.data_model import CashflowType
 from src import database as db
+from src import analysis
 
 # Load environment variables from .env file
 load_dotenv()
@@ -106,22 +107,15 @@ async def delete_existing_rule(rule_id: str):
     return None # FastAPI will return a 204 No Content response
 
 
-# Placeholder for Phase 0 endpoint
+# --- Analysis API ---
 @app.get("/api/sankey/income", tags=["Analysis"])
-async def get_income_sankey_data(period: str = "YTD"):
-    # This will eventually call the analysis module to generate Sankey data
-    return {
-        "period": period,
-        "nodes": [
-            {"id": "Income"},
-            {"id": "Expenses"},
-            {"id": "Savings"}
-        ],
-        "links": [
-            {"source": "Income", "target": "Expenses", "value": 8000},
-            {"source": "Income", "target": "Savings", "value": 2000},
-        ]
-    }
+async def get_income_sankey_data(period: str = "all") -> Dict[str, List[Dict[str, Any]]]:
+    """ 
+    Generates the data for the main Income->Uses Sankey diagram.
+    Now powered by the analysis module.
+    """
+    data = analysis.generate_income_sankey(period)
+    return data
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)

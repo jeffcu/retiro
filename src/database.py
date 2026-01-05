@@ -100,7 +100,31 @@ def save_transactions(transactions: List[Transaction]):
     finally:
         conn.close()
 
+# --- Data Retrieval --- #
+
+def get_all_transactions() -> List[Dict[str, Any]]:
+    """ Retrieves all transactions from the database for analysis. """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM transactions ORDER BY transaction_date DESC")
+    rows = cursor.fetchall()
+    conn.close()
+    # Convert rows to dictionaries for easier use
+    return [dict(row) for row in rows]
+
 # --- Rules CRUD --- #
+
+def _transform_rule_record(rule_row: sqlite3.Row) -> Dict[str, Any]:
+    """ Helper to convert a DB row for a rule into a consistent dictionary. """
+    if not rule_row:
+        return None
+    rule_dict = dict(rule_row)
+    # Transform comma-separated tags string into a list
+    if rule_dict.get('tags') and isinstance(rule_dict['tags'], str):
+        rule_dict['tags'] = [tag.strip() for tag in rule_dict['tags'].split(',') if tag.strip()]
+    else:
+        rule_dict['tags'] = []
+    return rule_dict
 
 def create_rule(rule_data: Dict[str, Any]) -> Dict[str, Any]:
     """ Creates a new rule in the database. """
@@ -126,18 +150,18 @@ def get_rule(rule_id: str) -> Dict[str, Any] | None:
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM rules WHERE rule_id = ?", (rule_id,))
-    rule = cursor.fetchone()
+    rule_row = cursor.fetchone()
     conn.close()
-    return dict(rule) if rule else None
+    return _transform_rule_record(rule_row)
 
 def get_all_rules() -> List[Dict[str, Any]]:
     """ Retrieves all rules from the database. """
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM rules ORDER BY priority ASC, category ASC")
-    rules = cursor.fetchall()
+    rule_rows = cursor.fetchall()
     conn.close()
-    return [dict(row) for row in rules]
+    return [_transform_rule_record(row) for row in rule_rows]
 
 def delete_rule(rule_id: str) -> bool:
     """ Deletes a rule by its ID. Returns True if a row was deleted. """

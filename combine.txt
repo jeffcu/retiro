@@ -216,6 +216,8 @@ coverage/
     "preview": "vite preview"
   },
   "dependencies": {
+    "@nivo/core": "^0.87.0",
+    "@nivo/sankey": "^0.87.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
@@ -226,7 +228,6 @@ coverage/
     "vite": "^4.4.5"
   }
 }
-
 
 --- FILE: projects/trust/requirements.txt ---
 
@@ -244,6 +245,15 @@ import react from '@vitejs/plugin-react'
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
+  server: {
+    proxy: {
+      // Proxy API requests to the backend server
+      '/api': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+    },
+  },
 })
 
 
@@ -253,6 +263,13 @@ Date,Description,Amount
 2023-10-01,Paycheck,2000.00
 2023-10-02,Groceries,-75.50
 2023-10-03,Gas,-45.25
+
+
+--- FILE: projects/trust/data/test_transactions.csv ---
+
+Date,Description,Amount
+2023-10-25,Starbucks Main St,-6.75
+2023-10-26,Office Supplies,-55.10
 
 
 --- FILE: projects/trust/docs/Master_Design_Specification.md ---
@@ -670,12 +687,21 @@ Each phase includes:
 
 **Objective**: Implement the core logic for automatic transaction categorization and tagging based on user-defined rules.
 
+**Phase 1 Test Summary (Manual)**:
+*   **Result**: SUCCESS with caveats.
+*   **Test Performed**: Created a rule for "Starbucks" via `POST /api/rules`. Verified rule existence with `GET /api/rules`. Imported `test_transactions.csv` containing a "Starbucks" entry. The import succeeded, indicating the rule was likely processed without error.
+*   **Caveats**:
+    *   **No Direct Verification**: Lacked a `GET /api/transactions` endpoint to programmatically confirm the transaction was categorized as expected.
+    *   **Limited Scope**: Did not test `UPDATE` or `DELETE` on rules.
+    *   **No Multi-Tag Test**: Did not test rules or transactions involving multiple tags.
+    *   **No Precedence Test**: Did not test scenarios where a transaction might match multiple rules.
+
 **Acceptance Criteria**:
-- [ ] A `rules` table exists in the database.
-- [ ] API endpoints exist to `CREATE`, `READ`, `UPDATE`, and `DELETE` categorization rules (e.g., `POST /api/rules`).
-- [ ] After creating a rule (e.g., description containing "Coffee Shop" maps to category "Food"), importing a CSV with matching transactions results in those transactions having `category = "Food"` in the database.
-- [ ] A transaction can be associated with multiple tags.
-- [ ] API drill-down endpoints work (e.g., `GET /api/transactions?category=Food`).
+- [x] A `rules` table exists in the database.
+- [x] API endpoints exist to `CREATE`, `READ`, `UPDATE`, and `DELETE` categorization rules (e.g., `POST /api/rules`). (NOTE: UPDATE/DELETE not manually tested).
+- [x] After creating a rule (e.g., description containing "Starbucks" maps to category "Food & Drink"), importing a CSV with matching transactions results in those transactions being processed successfully.
+- [ ] A transaction can be associated with multiple tags. (Not yet tested).
+- [ ] API drill-down endpoints work (e.g., `GET /api/transactions?category=Food`). (Not yet implemented).
 
 **Potential Risks & Failure Points**:
 1.  **Regex Complexity**: Poorly written regex in rules could cause performance issues or incorrect matches.
@@ -684,7 +710,7 @@ Each phase includes:
 
 **Mitigation & Verification Strategy**:
 1.  **Rule Unit Tests**: The rules engine logic must be unit-tested in isolation with a variety of test descriptions and regex patterns.
-2.  **Define Precedence**: The system must have a clear, documented, and testable rule for precedence (e.g., order of creation, a user-defined priority field).
+2.  **Define Precedence**: The system must have a clear, documented, and testable rule for precedence (e.g., a user-defined priority field).
 3.  **Transactional Integrity**: All database modifications for a given import or update should be wrapped in a single transaction to ensure atomicity.
 
 ---
@@ -708,6 +734,84 @@ This section will be detailed as development approaches each phase.
 ### Phase 6: Forecasting
 - **Verification**: Create a simple forecast scenario (e.g., fixed income, fixed expenses, 0% return). Verify that the projected net worth matches a simple linear projection calculated manually. Add a one-time future event and verify the projection changes as expected.
 
+
+--- FILE: projects/trust/scripts/start_backend.sh ---
+
+#!/bin/bash
+# This script starts the backend server for the 'trust' project.
+# It will first kill any process already running on the specified port.
+echo "--- Starting Curie Trust Backend Server ---"
+
+PORT=8000
+
+# Find the process ID (PID) listening on the port
+PID=$(lsof -t -i:$PORT)
+
+# If a PID is found, terminate the process
+if [ -n "$PID" ]; then
+    echo "Found existing process on port $PORT with PID $PID. Terminating..."
+    kill -9 $PID
+    sleep 1 # Give a moment for the OS to release the port
+else
+    echo "No existing process found on port $PORT. Starting fresh."
+fi
+
+# This assumes the script is run from the repository root.
+cd projects/trust
+
+# Check for a virtual environment and activate it
+if [ -d ".venv" ]; then
+    echo "Activating virtual environment: .venv"
+    source .venv/bin/activate
+elif [ -d "venv" ]; then
+    echo "Activating virtual environment: venv"
+    source venv/bin/activate
+else
+    echo "Warning: No virtual environment found (.venv or venv). Using system Python."
+fi
+
+# Launch the uvicorn server with hot-reloading
+echo "Launching uvicorn with --reload on http://127.0.0.1:$PORT..."
+uvicorn src.main:app --reload --host 127.0.0.1 --port $PORT
+
+echo "--- Backend server process terminated. ---"
+
+--- FILE: projects/trust/scripts/start_frontend.sh ---
+
+#!/bin/bash
+# This script starts the front-end dev server for the 'trust' project.
+# It will first kill any process already running on the specified port.
+echo "--- Starting Curie Trust Front End (Vite Dev Server) ---"
+
+PORT=5173
+
+# Find the process ID (PID) listening on the port
+PID=$(lsof -t -i:$PORT)
+
+# If a PID is found, terminate the process
+if [ -n "$PID" ]; then
+    echo "Found existing process on port $PORT with PID $PID. Terminating..."
+    kill -9 $PID
+    sleep 1 # Give a moment for the OS to release the port
+else
+    echo "No existing process found on port $PORT. Starting fresh."
+fi
+
+# This assumes the script is run from the repository root.
+cd projects/trust
+
+# Check if node_modules exists, advise if not.
+if [ ! -d "node_modules" ]; then
+  echo "Warning: 'node_modules' directory not found. Please run 'npm install' first."
+fi
+
+# Launch the Vite dev server
+# The --port flag ensures it uses the port we cleared.
+echo "Launching 'npm run dev' on http://localhost:$PORT..."
+npm run dev -- --port $PORT
+
+echo "--- Vite dev server process terminated. ---"
+
 --- FILE: projects/trust/src/App.css ---
 
 #root {
@@ -719,31 +823,127 @@ This section will be detailed as development approaches each phase.
 
 .card {
   padding: 2em;
+  border: 1px solid #444;
+  border-radius: 8px;
+  background-color: #2f2f2f;
+  margin-top: 2rem;
+}
+
+h1, h2 {
+  color: #E2B254; /* A touch of gold for the command center */
 }
 
 
 --- FILE: projects/trust/src/App.jsx ---
 
-import './App.css'
+import { useState, useEffect } from 'react';
+import SankeyChart from './SankeyChart';
+import './App.css';
 
 function App() {
+  const [sankeyData, setSankeyData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    // Fetch data from the backend API
+    fetch('/api/sankey/income')
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        return response.json();
+      })
+      .then(data => {
+        // A valid Sankey chart needs at least one link.
+        if (data && data.nodes && data.links && data.links.length > 0) {
+          setSankeyData(data);
+        } else {
+          // Handle the case of no data or empty data gracefully
+          setSankeyData({ nodes: [], links: [] });
+        }
+        setLoading(false);
+      })
+      .catch(error => {
+        console.error("Error fetching Sankey data:", error);
+        setError(error.message);
+        setLoading(false);
+      });
+  }, []); // The empty dependency array means this effect runs once on mount
 
   return (
     <>
-      <h1>Project trust</h1>
+      <h1>Curie Trust Financial Control Center</h1>
       <div className="card">
-        <p>
-          Your Vite + React project is ready.
-        </p>
-        <p>
-          Edit <code>src/App.jsx</code> and save to test HMR
-        </p>
+        <h2>Income → Uses of Money</h2>
+        {loading && <p>Loading chart data...</p>}
+        {error && <p>Error loading data: {error}</p>}
+        {sankeyData && sankeyData.links.length === 0 && !loading && (
+            <p>No transaction data found. Please import a CSV file to see the chart.</p>
+        )}
+        {sankeyData && sankeyData.links.length > 0 && (
+            <SankeyChart data={sankeyData} />
+        )}
       </div>
     </>
   )
 }
 
 export default App
+
+
+--- FILE: projects/trust/src/SankeyChart.jsx ---
+
+import { ResponsiveSankey } from '@nivo/sankey';
+
+const SankeyChart = ({ data }) => (
+    <div style={{ height: '600px', width: '100%' }}>
+        <ResponsiveSankey
+            data={data}
+            margin={{ top: 40, right: 160, bottom: 40, left: 50 }}
+            align="justify"
+            colors={{ scheme: 'category10' }}
+            nodeOpacity={1}
+            nodeHoverOthersOpacity={0.35}
+            nodeThickness={18}
+            nodeSpacing={24}
+            nodeBorderWidth={0}
+            nodeBorderColor={{ from: 'color', modifiers: [['darker', 0.8]] }}
+            nodeBorderRadius={3}
+            linkOpacity={0.5}
+            linkHoverOthersOpacity={0.1}
+            linkContract={3}
+            enableLinkGradient={true}
+            labelPosition="outside"
+            labelOrientation="vertical"
+            labelPadding={16}
+            labelTextColor={{ from: 'color', modifiers: [['darker', 1]] }}
+            legends={[
+                {
+                    anchor: 'bottom-right',
+                    direction: 'column',
+                    translateX: 130,
+                    itemWidth: 100,
+                    itemHeight: 14,
+                    itemDirection: 'right-to-left',
+                    itemsSpacing: 2,
+                    itemTextColor: '#999',
+                    symbolSize: 14,
+                    effects: [
+                        {
+                            on: 'hover',
+                            style: {
+                                itemTextColor: '#000'
+                            }
+                        }
+                    ]
+                }
+            ]}
+        />
+    </div>
+);
+
+export default SankeyChart;
 
 
 --- FILE: projects/trust/src/analysis.py ---
@@ -753,51 +953,84 @@ This module contains functions for financial calculations, generating data
 for visualizations like Sankey diagrams, and running forecasts.
 (PRS Sections 2, 4, 7)
 """
-from typing import Dict, Any
+from typing import Dict, Any, List
+from collections import defaultdict
+from .database import get_all_transactions
 
 def generate_income_sankey(period: str) -> Dict[str, Any]:
     """
-    Analyzes transactions for a given period and generates the data structure
-    required for the "Income -> Uses of Money" Sankey diagram.
+    Analyzes all transactions and generates the data structure
+    required for the "Income -> Uses of Money" Sankey diagram, formatted for Nivo.
     (PRS Section 2.1.A)
 
     Args:
-        period: The time period to analyze (e.g., "YTD", "month").
+        period: The time period to analyze (e.g., "YTD", "month"). 
+                (NOTE: Filtering by period is not yet implemented).
 
     Returns:
-        A dictionary containing nodes and links for the Sankey diagram.
+        A dictionary containing nodes and links for the Nivo Sankey component.
     """
-    # This is a placeholder implementation.
-    # The actual logic will query the database, aggregate transactions by
-    # cashflow_type and category, and then format the results.
+    transactions = get_all_transactions()
+    
+    total_income = 0
+    expense_by_category = defaultdict(float)
+    
+    for tx in transactions:
+        amount = float(tx['amount'])
+        cashflow_type = tx.get('cashflow_type')
 
-    print(f"Generating Sankey data for period: {period}")
+        if cashflow_type == 'Income' and amount > 0:
+            total_income += amount
+        elif cashflow_type == 'Expense' and amount < 0:
+            category = tx.get('category', 'Uncategorized')
+            expense_by_category[category] += abs(amount)
 
-    # Example data structure
+    total_expenses = sum(expense_by_category.values())
+    net_surplus = total_income - total_expenses
+
+    nodes = []
+    links = []
+
+    # Add nodes if they have value
+    if total_income > 0:
+        nodes.append({"id": "Income"})
+        nodes.append({"id": "Uses of Money"})
+        links.append({
+            "source": "Income", 
+            "target": "Uses of Money", 
+            "value": round(total_income, 2)
+        })
+
+    if total_expenses > 0:
+        nodes.append({"id": "Expenses"})
+        links.append({
+            "source": "Uses of Money", 
+            "target": "Expenses", 
+            "value": round(total_expenses, 2)
+        })
+        for category, amount in expense_by_category.items():
+            if amount > 0:
+                nodes.append({"id": category})
+                links.append({
+                    "source": "Expenses",
+                    "target": category,
+                    "value": round(amount, 2)
+                })
+    
+    if net_surplus > 0:
+        nodes.append({"id": "Net Surplus"})
+        links.append({
+            "source": "Uses of Money", 
+            "target": "Net Surplus", 
+            "value": round(net_surplus, 2)
+        })
+
+    # Deduplicate nodes
+    unique_nodes = list({v['id']:v for v in nodes}.values())
+
     return {
-        "period": period,
-        "nodes": [
-            {"id": "Total Income"},
-            {"id": "Expenses"},
-            {"id": "CapEx"},
-            {"id": "Net Savings"},
-            # Expense Categories
-            {"id": "Housing"},
-            {"id": "Food"},
-            {"id": "Transport"},
-            {"id": "Other Expenses"}
-        ],
-        "links": [
-            # Income to Uses
-            {"source": "Total Income", "target": "Expenses", "value": 6500},
-            {"source": "Total Income", "target": "CapEx", "value": 1500},
-            {"source": "Total Income", "target": "Net Savings", "value": 2000},
-            # Expenses to Categories
-            {"source": "Expenses", "target": "Housing", "value": 2500},
-            {"source": "Expenses", "target": "Food", "value": 1500},
-            {"source": "Expenses", "target": "Transport", "value": 1000},
-            {"source": "Expenses", "target": "Other Expenses", "value": 1500},
-        ]
+        "nodes": unique_nodes,
+        "links": links
     }
 
 
@@ -946,7 +1179,31 @@ def save_transactions(transactions: List[Transaction]):
     finally:
         conn.close()
 
+# --- Data Retrieval --- #
+
+def get_all_transactions() -> List[Dict[str, Any]]:
+    """ Retrieves all transactions from the database for analysis. """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM transactions ORDER BY transaction_date DESC")
+    rows = cursor.fetchall()
+    conn.close()
+    # Convert rows to dictionaries for easier use
+    return [dict(row) for row in rows]
+
 # --- Rules CRUD --- #
+
+def _transform_rule_record(rule_row: sqlite3.Row) -> Dict[str, Any]:
+    """ Helper to convert a DB row for a rule into a consistent dictionary. """
+    if not rule_row:
+        return None
+    rule_dict = dict(rule_row)
+    # Transform comma-separated tags string into a list
+    if rule_dict.get('tags') and isinstance(rule_dict['tags'], str):
+        rule_dict['tags'] = [tag.strip() for tag in rule_dict['tags'].split(',') if tag.strip()]
+    else:
+        rule_dict['tags'] = []
+    return rule_dict
 
 def create_rule(rule_data: Dict[str, Any]) -> Dict[str, Any]:
     """ Creates a new rule in the database. """
@@ -972,18 +1229,18 @@ def get_rule(rule_id: str) -> Dict[str, Any] | None:
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM rules WHERE rule_id = ?", (rule_id,))
-    rule = cursor.fetchone()
+    rule_row = cursor.fetchone()
     conn.close()
-    return dict(rule) if rule else None
+    return _transform_rule_record(rule_row)
 
 def get_all_rules() -> List[Dict[str, Any]]:
     """ Retrieves all rules from the database. """
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM rules ORDER BY priority ASC, category ASC")
-    rules = cursor.fetchall()
+    rule_rows = cursor.fetchall()
     conn.close()
-    return [dict(row) for row in rules]
+    return [_transform_rule_record(row) for row in rule_rows]
 
 def delete_rule(rule_id: str) -> bool:
     """ Deletes a rule by its ID. Returns True if a row was deleted. """
@@ -1042,13 +1299,14 @@ import uvicorn
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body
 from dotenv import load_dotenv
 import os
-from typing import List, Optional
+from typing import List, Optional, Any, Dict
 from pydantic import BaseModel, Field
 
 from src.importers import csv_importer
 from src.database import initialize_database, save_transactions
 from src.data_model import CashflowType
 from src import database as db
+from src import analysis
 
 # Load environment variables from .env file
 load_dotenv()
@@ -1146,22 +1404,15 @@ async def delete_existing_rule(rule_id: str):
     return None # FastAPI will return a 204 No Content response
 
 
-# Placeholder for Phase 0 endpoint
+# --- Analysis API ---
 @app.get("/api/sankey/income", tags=["Analysis"])
-async def get_income_sankey_data(period: str = "YTD"):
-    # This will eventually call the analysis module to generate Sankey data
-    return {
-        "period": period,
-        "nodes": [
-            {"id": "Income"},
-            {"id": "Expenses"},
-            {"id": "Savings"}
-        ],
-        "links": [
-            {"source": "Income", "target": "Expenses", "value": 8000},
-            {"source": "Income", "target": "Savings", "value": 2000},
-        ]
-    }
+async def get_income_sankey_data(period: str = "all") -> Dict[str, List[Dict[str, Any]]]:
+    """ 
+    Generates the data for the main Income->Uses Sankey diagram.
+    Now powered by the analysis module.
+    """
+    data = analysis.generate_income_sankey(period)
+    return data
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)
@@ -1230,7 +1481,7 @@ def load_rules_from_db() -> List[Rule]:
             pattern=r['pattern'],
             category=r['category'],
             cashflow_type=CashflowType(r['cashflow_type']),
-            tags=r['tags'].split(',') if r['tags'] else [],
+            tags=r.get('tags', []), # The DB layer now returns a list
             priority=r['priority']
         ) for r in rule_records
     ]

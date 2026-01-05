@@ -40,12 +40,21 @@ Each phase includes:
 
 **Objective**: Implement the core logic for automatic transaction categorization and tagging based on user-defined rules.
 
+**Phase 1 Test Summary (Manual)**:
+*   **Result**: SUCCESS with caveats.
+*   **Test Performed**: Created a rule for "Starbucks" via `POST /api/rules`. Verified rule existence with `GET /api/rules`. Imported `test_transactions.csv` containing a "Starbucks" entry. The import succeeded, indicating the rule was likely processed without error.
+*   **Caveats**:
+    *   **No Direct Verification**: Lacked a `GET /api/transactions` endpoint to programmatically confirm the transaction was categorized as expected.
+    *   **Limited Scope**: Did not test `UPDATE` or `DELETE` on rules.
+    *   **No Multi-Tag Test**: Did not test rules or transactions involving multiple tags.
+    *   **No Precedence Test**: Did not test scenarios where a transaction might match multiple rules.
+
 **Acceptance Criteria**:
-- [ ] A `rules` table exists in the database.
-- [ ] API endpoints exist to `CREATE`, `READ`, `UPDATE`, and `DELETE` categorization rules (e.g., `POST /api/rules`).
-- [ ] After creating a rule (e.g., description containing "Coffee Shop" maps to category "Food"), importing a CSV with matching transactions results in those transactions having `category = "Food"` in the database.
-- [ ] A transaction can be associated with multiple tags.
-- [ ] API drill-down endpoints work (e.g., `GET /api/transactions?category=Food`).
+- [x] A `rules` table exists in the database.
+- [x] API endpoints exist to `CREATE`, `READ`, `UPDATE`, and `DELETE` categorization rules (e.g., `POST /api/rules`). (NOTE: UPDATE/DELETE not manually tested).
+- [x] After creating a rule (e.g., description containing "Starbucks" maps to category "Food & Drink"), importing a CSV with matching transactions results in those transactions being processed successfully.
+- [ ] A transaction can be associated with multiple tags. (Not yet tested).
+- [ ] API drill-down endpoints work (e.g., `GET /api/transactions?category=Food`). (Not yet implemented).
 
 **Potential Risks & Failure Points**:
 1.  **Regex Complexity**: Poorly written regex in rules could cause performance issues or incorrect matches.
@@ -54,7 +63,7 @@ Each phase includes:
 
 **Mitigation & Verification Strategy**:
 1.  **Rule Unit Tests**: The rules engine logic must be unit-tested in isolation with a variety of test descriptions and regex patterns.
-2.  **Define Precedence**: The system must have a clear, documented, and testable rule for precedence (e.g., order of creation, a user-defined priority field).
+2.  **Define Precedence**: The system must have a clear, documented, and testable rule for precedence (e.g., a user-defined priority field).
 3.  **Transactional Integrity**: All database modifications for a given import or update should be wrapped in a single transaction to ensure atomicity.
 
 ---

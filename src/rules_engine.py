@@ -59,7 +59,7 @@ def load_rules_from_db() -> List[Rule]:
             pattern=r['pattern'],
             category=r['category'],
             cashflow_type=CashflowType(r['cashflow_type']),
-            tags=r['tags'].split(',') if r['tags'] else [],
+            tags=r.get('tags', []), # The DB layer now returns a list
             priority=r['priority']
         ) for r in rule_records
     ]
