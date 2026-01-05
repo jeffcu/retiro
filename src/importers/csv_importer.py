@@ -4,12 +4,13 @@ from datetime import datetime
 from decimal import Decimal
 import hashlib
 
-from ..data_model import Transaction
+from ..data_model import Transaction, CashflowType
 from ..rules_engine import apply_rules_to_transaction, load_rules_from_db
 
 def parse_standard_csv(file_contents: bytes, account_id: str) -> list[Transaction]:
     """
     Parses a standard CSV file with Date,Description,Amount columns.
+    Applies rules and provides a default classification if no rules match.
     (PRS Section 5)
     """
     transactions = []
@@ -31,7 +32,6 @@ def parse_standard_csv(file_contents: bytes, account_id: str) -> list[Transactio
             continue
 
         # Create a unique ID for the transaction (PRS Section 8 - dedupe)
-        # A simple hash of key fields is a good start.
         raw_data = f"{transaction_date}-{description}-{amount}-{account_id}"
         transaction_hash = hashlib.sha256(raw_data.encode('utf-8')).hexdigest()
 
@@ -44,8 +44,17 @@ def parse_standard_csv(file_contents: bytes, account_id: str) -> list[Transactio
             raw_data_hash=transaction_hash # Store for deduplication
         )
 
-        # Apply the rules engine to the newly created transaction
+        # 1. Apply the specific, user-defined rules first.
         tx = apply_rules_to_transaction(tx, rules)
+
+        # 2. If no rule matched, apply a default classification.
+        if tx.cashflow_type is None:
+            if tx.amount > 0:
+                tx.cashflow_type = CashflowType.INCOME
+                tx.category = 'Income' # Assign a default category
+            elif tx.amount < 0:
+                tx.cashflow_type = CashflowType.EXPENSE
+                # Default category for expenses will be 'Uncategorized' as handled by analysis
 
         transactions.append(tx)
 

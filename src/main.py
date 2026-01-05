@@ -2,6 +2,7 @@ import uvicorn
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body
 from dotenv import load_dotenv
 import os
+import traceback
 from typing import List, Optional, Any, Dict
 from pydantic import BaseModel, Field
 
@@ -114,8 +115,16 @@ async def get_income_sankey_data(period: str = "all") -> Dict[str, List[Dict[str
     Generates the data for the main Income->Uses Sankey diagram.
     Now powered by the analysis module.
     """
-    data = analysis.generate_income_sankey(period)
-    return data
+    try:
+        data = analysis.generate_income_sankey(period)
+        return data
+    except Exception as e:
+        # Log the full traceback to the backend console for diagnosis
+        print(f"\n---! ERROR IN /api/sankey/income ENDPOINT !---")
+        traceback.print_exc()
+        print(f"---! END OF ERROR TRACEBACK !---\n")
+        # Re-raise as a standard HTTPException to inform the client
+        raise HTTPException(status_code=500, detail=f"An internal error occurred in the analysis engine: {e}")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)

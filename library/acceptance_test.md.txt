@@ -1,88 +1,64 @@
-# Curie Trust - Acceptance Test Plan v1.0
+# Curie Trust - Acceptance Test Plan v1.1
 
 ## 1. Introduction
 
-This document outlines the acceptance criteria and testing strategy for each phase of the Curie Trust Financial Control Center project, as defined in the Project Requirements Specification (PRS), Section 10. The purpose is to ensure that each development phase delivers the intended functionality and meets quality standards before proceeding to the next.
-
-Each phase includes:
-- **Objective**: A high-level goal for the phase.
-- **Acceptance Criteria**: A checklist of testable outcomes required for completion.
-- **Potential Risks & Failure Points**: Likely areas where issues may arise.
-- **Mitigation & Verification Strategy**: How we will test for these issues and what to do if they are found.
+This document outlines the acceptance criteria and testing strategy for each phase of the Curie Trust Financial Control Center project, as defined in the revised Project Requirements Specification (PRS), Section 10. The plan follows a user-feature-centric approach, verifying that each vertical slice of functionality is complete and correct before proceeding.
 
 ---
 
-## 2. Phase 0: Transaction Import & Basic Sankey
+## 2. Phase 0: The Walking Skeleton
 
-**Objective**: Establish the foundational data ingestion pipeline. The system must accept a standard transaction CSV, and the backend must be able to initialize the database and serve a placeholder API endpoint.
+**Objective**: Establish the foundational data ingestion pipeline and prove the UI-to-Database connection is viable.
+
+**Result**: COMPLETED
+
+**Acceptance Criteria Met**:
+- [x] The application starts without errors (`start_backend.sh` and `start_frontend.sh`).
+- [x] On first run, a `data/trust.db` file is created with the `transactions` and `rules` tables.
+- [x] Sending a POST request to `/api/import/csv` with a sample CSV file returns a `200 OK` status.
+- [x] The frontend application loads and attempts to fetch data from `/api/sankey/income`.
+
+---
+
+## 3. Phase 1: The Dynamic Sankey
+
+**Objective**: Visualize real, user-imported data in the primary Income→Uses Sankey chart. This confirms the entire data flow from CSV to UI is working.
 
 **Acceptance Criteria**:
-- [x] The application starts without errors (`uvicorn src.main:app`).
-- [x] On first run, a `data/trust.db` file is created.
-- [x] Inspecting `trust.db` with an SQLite tool reveals a `transactions` table with the correct columns.
-- [x] Sending a POST request to `/api/import/csv` with a sample CSV file returns a `200 OK` status and a JSON response indicating the number of parsed transactions.
-- [x] Sending the same request with a non-CSV file returns a `400 Bad Request` error.
-- [x] Sending a GET request to `/api/sankey/income` returns a `200 OK` status with valid placeholder JSON data.
+- [ ] **Data Flow Test**: Start with a fresh, empty `data/trust.db` file.
+- [ ] **Import**: Use a tool like `curl` to POST the `data/sample_transactions.csv` file to the `/api/import/csv` endpoint.
+    - `curl -X POST -F "file=@data/sample_transactions.csv" -F "account_id=test_account" http://127.0.0.1:8000/api/import/csv`
+- [ ] **Verification**: The API should return a success message indicating 3 transactions were processed.
+- [ ] **Database Check**: Inspecting the `transactions` table in `trust.db` should show 3 records corresponding to the CSV file.
+- [ ] **UI Visualization**: Refreshing the web UI should display a Sankey chart with the following nodes and links:
+    - Node: "Income" (value: 2000.00)
+    - Node: "Expenses" (value: 120.75)
+    - Node: "Net Surplus" (value: 1879.25)
+    - Link: Income → Uses of Money (2000.00)
+    - Link: Uses of Money → Expenses (120.75)
+    - Link: Uses of Money → Net Surplus (1879.25)
+- [ ] **Categorization**: Because no rules exist, expenses should be grouped under "Uncategorized".
 
 **Potential Risks & Failure Points**:
-1.  **Database Initialization Failure**: Permissions issues or SQL syntax errors could prevent the database file or table from being created.
-2.  **CSV Parsing Logic is Brittle**: The initial parser may fail on common variations in CSVs (e.g., different line endings, encoding, header names).
-3.  **API Endpoint Misconfiguration**: FastAPI routes may not be set up correctly, leading to `404 Not Found` errors.
-
-**Mitigation & Verification Strategy**:
-1.  **DB Verification**: Manually delete `trust.db` and restart the app to confirm it's recreated. Use a command-line tool (`sqlite3`) to run `PRAGMA table_info(transactions);` and verify the schema.
-2.  **CSV Test Cases**: Create a small suite of test CSV files: one "perfect" file, one with different column orders, one with extra columns, and one with non-UTF-8 characters. The current test is manual; future phases may require automated unit tests for the importer.
-3.  **API Endpoint Testing**: Use `curl` or a tool like Postman to directly test the API endpoints, verifying headers, status codes, and response bodies.
+1.  **Analysis Logic Error**: The `analysis.py` module might miscalculate totals, leading to an incorrect chart.
+2.  **Data Serialization**: The backend might not format the JSON for the Nivo chart component correctly.
+3.  **Frontend State**: The React component might not re-render correctly after fetching the data.
 
 ---
 
-## 3. Phase 1: Rules Engine & Tagging
+## 4. Future Phases (High-Level Plan)
 
-**Objective**: Implement the core logic for automatic transaction categorization and tagging based on user-defined rules.
+### Phase 2: Interactive Drill-Downs & Rules Management
+- **Verification**: Create a rule via the API. Re-import the CSV. Verify the expense in the Sankey is now correctly categorized. Implement a `GET /api/transactions` endpoint and test that it can be used to fetch data for a specific category.
 
-**Phase 1 Test Summary (Manual)**:
-*   **Result**: SUCCESS with caveats.
-*   **Test Performed**: Created a rule for "Starbucks" via `POST /api/rules`. Verified rule existence with `GET /api/rules`. Imported `test_transactions.csv` containing a "Starbucks" entry. The import succeeded, indicating the rule was likely processed without error.
-*   **Caveats**:
-    *   **No Direct Verification**: Lacked a `GET /api/transactions` endpoint to programmatically confirm the transaction was categorized as expected.
-    *   **Limited Scope**: Did not test `UPDATE` or `DELETE` on rules.
-    *   **No Multi-Tag Test**: Did not test rules or transactions involving multiple tags.
-    *   **No Precedence Test**: Did not test scenarios where a transaction might match multiple rules.
+### Phase 3: Introducing Capital Expenditures (CapEx)
+- **Verification**: Manually flag a transaction as CapEx via an API call. Verify the primary Sankey updates to show a "CapEx" flow, and the "Expenses" flow is reduced.
 
-**Acceptance Criteria**:
-- [x] A `rules` table exists in the database.
-- [x] API endpoints exist to `CREATE`, `READ`, `UPDATE`, and `DELETE` categorization rules (e.g., `POST /api/rules`). (NOTE: UPDATE/DELETE not manually tested).
-- [x] After creating a rule (e.g., description containing "Starbucks" maps to category "Food & Drink"), importing a CSV with matching transactions results in those transactions being processed successfully.
-- [ ] A transaction can be associated with multiple tags. (Not yet tested).
-- [ ] API drill-down endpoints work (e.g., `GET /api/transactions?category=Food`). (Not yet implemented).
+### Phase 4: The Portfolio View
+- **Verification**: Import a holdings CSV. Test a new API endpoint that returns the list of holdings. The UI should display this list on a new Portfolio screen.
 
-**Potential Risks & Failure Points**:
-1.  **Regex Complexity**: Poorly written regex in rules could cause performance issues or incorrect matches.
-2.  **Rule Application Order**: It may be unclear which rule takes precedence if a transaction matches multiple rules.
-3.  **Data Integrity**: Updating a transaction's category/tags might fail or have unintended side effects.
-
-**Mitigation & Verification Strategy**:
-1.  **Rule Unit Tests**: The rules engine logic must be unit-tested in isolation with a variety of test descriptions and regex patterns.
-2.  **Define Precedence**: The system must have a clear, documented, and testable rule for precedence (e.g., a user-defined priority field).
-3.  **Transactional Integrity**: All database modifications for a given import or update should be wrapped in a single transaction to ensure atomicity.
-
----
-
-## 4. Subsequent Phases (High-Level Plan)
-
-This section will be detailed as development approaches each phase.
-
-### Phase 2: CapEx & Real Estate
-- **Verification**: Manually flag a transaction as CapEx. Verify it's removed from expense reports and that the corresponding asset's basis increases in an `assets` table. Check the Estate Flow Sankey data.
-
-### Phase 3: Holdings & Portfolio
-- **Verification**: Import a holdings CSV. Verify positions are created correctly in a `holdings` table. Verify the `price_history` table is created. Test API endpoints for portfolio composition.
-
-### Phase 4: Market Data Drip
-- **Verification**: Configure the Alpha Vantage API key. Manually trigger the fetch process. Verify the `price_history` table is populated with fresh quotes. Monitor application logs for evidence of hourly/EOD scheduled jobs. Test graceful failure by providing an invalid API key and observing logged errors.
-
-### Phase 5: Layered Returns
-- **Verification**: Manually create `FeeRecord` and `TaxRecord` entries via an API. Using a test portfolio with known values, verify that the calculated Gross, After-Fees, and After-Taxes returns match calculations performed in a separate spreadsheet.
+### Phase 5: Automated Market Data & Layered Returns
+- **Verification**: Manually trigger the market data fetch process. Verify prices are updated in the database. Verify the Portfolio screen now shows correct market values.
 
 ### Phase 6: Forecasting
-- **Verification**: Create a simple forecast scenario (e.g., fixed income, fixed expenses, 0% return). Verify that the projected net worth matches a simple linear projection calculated manually. Add a one-time future event and verify the projection changes as expected.
+- **Verification**: Create a simple forecast scenario via an API. Verify the projected net worth from the API matches a manual calculation.

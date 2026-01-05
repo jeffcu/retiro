@@ -372,16 +372,28 @@ As a local-first application, the primary security concerns are key management a
 
 ### 7. Phased Implementation Plan
 
-Development will follow the phased plan outlined in the PRS (Section 10) to ensure iterative delivery of value.
+Development will follow the user-feature centric plan outlined in the PRS (Section 10) to ensure iterative delivery of value.
 
-*   **Phase 0:** Transactions import + Sankey Income→Categories (basic)
-*   **Phase 1:** Rules engine + tags + drilldowns
-*   **Phase 2:** CapEx + Real Estate basis + Estate Flow Sankey
-*   **Phase 3:** Holdings snapshots + portfolio screens + quote cache
-*   **Phase 4:** Scheduled drip pricing (top 25 hourly, long tail EOD)
-*   **Phase 5:** Fees/taxes entry + layered returns + returns Sankey
-*   **Phase 6:** Forecast scenarios + planned CapEx events
+*   **Phase 0: The Walking Skeleton (Completed)**
+    *   Goal: Prove the end-to-end data pipeline is viable.
 
+*   **Phase 1: The Dynamic Sankey**
+    *   Goal: Visualize real, user-imported data in the primary Sankey chart.
+
+*   **Phase 2: Interactive Drill-Downs & Rules Management**
+    *   Goal: Allow users to inspect their data and manage categorization.
+
+*   **Phase 3: Introducing Capital Expenditures (CapEx)**
+    *   Goal: Differentiate consumption expenses from asset-building expenses.
+
+*   **Phase 4: The Portfolio View**
+    *   Goal: Establish initial portfolio tracking.
+
+*   **Phase 5: Automated Market Data & Layered Returns**
+    *   Goal: Automate portfolio pricing and introduce advanced return metrics.
+
+*   **Phase 6: Forecasting**
+    *   Goal: Provide future-looking financial projections.
 
 --- FILE: projects/trust/library/Trust Financial System.txt ---
 
@@ -483,7 +495,7 @@ Priority order:
 	•	Market value snapshots
 	•	Estate Flow Sankey
 
-4.5 Portfolio
+4..5 Portfolio
 	•	Value over time (snapshots + intraday updates)
 	•	Allocation and concentration
 	•	Return layer metrics:
@@ -621,15 +633,37 @@ All return views must label:
 
 ⸻
 
-10) Phased Delivery (Thin Threads)
+10) Phased Delivery (User-Feature Centric)
 
-Phase 0: Transactions import + Sankey Income→Categories (basic)
-Phase 1: Rules engine + tags + drilldowns
-Phase 2: CapEx + Real Estate basis + Estate Flow Sankey
-Phase 3: Holdings snapshots + portfolio screens + quote cache
-Phase 4: Scheduled drip pricing (top 25 hourly, long tail EOD)
-Phase 5: Fees/taxes entry + layered returns + returns Sankey
-Phase 6: Forecast scenarios + planned CapEx events
+Development will proceed in vertical slices, ensuring a tangible user-facing feature is delivered in each phase.
+
+Phase 0: The Walking Skeleton (Completed)
+	•	Goal: Prove the end-to-end data pipeline is viable.
+	•	Features: API-driven CSV import, data storage in SQLite, backend serves data, frontend renders a basic chart.
+
+Phase 1: The Dynamic Sankey
+	•	Goal: Visualize real, user-imported data in the primary Sankey chart.
+	•	Features: The Income→Uses Sankey chart on the home screen is driven by data from the imported transactions. Basic categorization rules are applied during import.
+
+Phase 2: Interactive Drill-Downs & Rules Management
+	•	Goal: Allow users to inspect their data and manage categorization.
+	•	Features: Clicking a node/link on the Sankey drills down to a list of underlying transactions. A UI is available to create, view, and delete categorization rules.
+
+Phase 3: Introducing Capital Expenditures (CapEx)
+	•	Goal: Differentiate consumption expenses from asset-building expenses and visualize the impact.
+	•	Features: Users can mark transactions as CapEx. The primary Sankey is updated to show the Income → Expenses / CapEx / Surplus split. A basic Real Estate screen shows asset basis.
+
+Phase 4: The Portfolio View
+	•	Goal: Establish the initial portfolio tracking capability.
+	•	Features: Import a holdings CSV. A new Portfolio screen displays a list of holdings and their current market value (via on-demand price fetches).
+
+Phase 5: Automated Market Data & Layered Returns
+	•	Goal: Automate portfolio pricing and introduce advanced return metrics.
+	•	Features: Implement the scheduled “drip” pricing service. The Portfolio screen displays Gross, After-Fee, and After-Tax returns, visualized in the Returns Sankey.
+
+Phase 6: Forecasting
+	•	Goal: Provide future-looking financial projections.
+	•	Features: A new Forecast screen allows users to create simple scenarios and see their projected net worth over time.
 
 ⸻
 
@@ -645,101 +679,77 @@ Phase 6: Forecast scenarios + planned CapEx events
 
 --- FILE: projects/trust/library/acceptance_test.md.txt ---
 
-# Curie Trust - Acceptance Test Plan v1.0
+# Curie Trust - Acceptance Test Plan v1.1
 
 ## 1. Introduction
 
-This document outlines the acceptance criteria and testing strategy for each phase of the Curie Trust Financial Control Center project, as defined in the Project Requirements Specification (PRS), Section 10. The purpose is to ensure that each development phase delivers the intended functionality and meets quality standards before proceeding to the next.
-
-Each phase includes:
-- **Objective**: A high-level goal for the phase.
-- **Acceptance Criteria**: A checklist of testable outcomes required for completion.
-- **Potential Risks & Failure Points**: Likely areas where issues may arise.
-- **Mitigation & Verification Strategy**: How we will test for these issues and what to do if they are found.
+This document outlines the acceptance criteria and testing strategy for each phase of the Curie Trust Financial Control Center project, as defined in the revised Project Requirements Specification (PRS), Section 10. The plan follows a user-feature-centric approach, verifying that each vertical slice of functionality is complete and correct before proceeding.
 
 ---
 
-## 2. Phase 0: Transaction Import & Basic Sankey
+## 2. Phase 0: The Walking Skeleton
 
-**Objective**: Establish the foundational data ingestion pipeline. The system must accept a standard transaction CSV, and the backend must be able to initialize the database and serve a placeholder API endpoint.
+**Objective**: Establish the foundational data ingestion pipeline and prove the UI-to-Database connection is viable.
+
+**Result**: COMPLETED
+
+**Acceptance Criteria Met**:
+- [x] The application starts without errors (`start_backend.sh` and `start_frontend.sh`).
+- [x] On first run, a `data/trust.db` file is created with the `transactions` and `rules` tables.
+- [x] Sending a POST request to `/api/import/csv` with a sample CSV file returns a `200 OK` status.
+- [x] The frontend application loads and attempts to fetch data from `/api/sankey/income`.
+
+---
+
+## 3. Phase 1: The Dynamic Sankey
+
+**Objective**: Visualize real, user-imported data in the primary Income→Uses Sankey chart. This confirms the entire data flow from CSV to UI is working.
 
 **Acceptance Criteria**:
-- [x] The application starts without errors (`uvicorn src.main:app`).
-- [x] On first run, a `data/trust.db` file is created.
-- [x] Inspecting `trust.db` with an SQLite tool reveals a `transactions` table with the correct columns.
-- [x] Sending a POST request to `/api/import/csv` with a sample CSV file returns a `200 OK` status and a JSON response indicating the number of parsed transactions.
-- [x] Sending the same request with a non-CSV file returns a `400 Bad Request` error.
-- [x] Sending a GET request to `/api/sankey/income` returns a `200 OK` status with valid placeholder JSON data.
+- [ ] **Data Flow Test**: Start with a fresh, empty `data/trust.db` file.
+- [ ] **Import**: Use a tool like `curl` to POST the `data/sample_transactions.csv` file to the `/api/import/csv` endpoint.
+    - `curl -X POST -F "file=@data/sample_transactions.csv" -F "account_id=test_account" http://127.0.0.1:8000/api/import/csv`
+- [ ] **Verification**: The API should return a success message indicating 3 transactions were processed.
+- [ ] **Database Check**: Inspecting the `transactions` table in `trust.db` should show 3 records corresponding to the CSV file.
+- [ ] **UI Visualization**: Refreshing the web UI should display a Sankey chart with the following nodes and links:
+    - Node: "Income" (value: 2000.00)
+    - Node: "Expenses" (value: 120.75)
+    - Node: "Net Surplus" (value: 1879.25)
+    - Link: Income → Uses of Money (2000.00)
+    - Link: Uses of Money → Expenses (120.75)
+    - Link: Uses of Money → Net Surplus (1879.25)
+- [ ] **Categorization**: Because no rules exist, expenses should be grouped under "Uncategorized".
 
 **Potential Risks & Failure Points**:
-1.  **Database Initialization Failure**: Permissions issues or SQL syntax errors could prevent the database file or table from being created.
-2.  **CSV Parsing Logic is Brittle**: The initial parser may fail on common variations in CSVs (e.g., different line endings, encoding, header names).
-3.  **API Endpoint Misconfiguration**: FastAPI routes may not be set up correctly, leading to `404 Not Found` errors.
-
-**Mitigation & Verification Strategy**:
-1.  **DB Verification**: Manually delete `trust.db` and restart the app to confirm it's recreated. Use a command-line tool (`sqlite3`) to run `PRAGMA table_info(transactions);` and verify the schema.
-2.  **CSV Test Cases**: Create a small suite of test CSV files: one "perfect" file, one with different column orders, one with extra columns, and one with non-UTF-8 characters. The current test is manual; future phases may require automated unit tests for the importer.
-3.  **API Endpoint Testing**: Use `curl` or a tool like Postman to directly test the API endpoints, verifying headers, status codes, and response bodies.
+1.  **Analysis Logic Error**: The `analysis.py` module might miscalculate totals, leading to an incorrect chart.
+2.  **Data Serialization**: The backend might not format the JSON for the Nivo chart component correctly.
+3.  **Frontend State**: The React component might not re-render correctly after fetching the data.
 
 ---
 
-## 3. Phase 1: Rules Engine & Tagging
+## 4. Future Phases (High-Level Plan)
 
-**Objective**: Implement the core logic for automatic transaction categorization and tagging based on user-defined rules.
+### Phase 2: Interactive Drill-Downs & Rules Management
+- **Verification**: Create a rule via the API. Re-import the CSV. Verify the expense in the Sankey is now correctly categorized. Implement a `GET /api/transactions` endpoint and test that it can be used to fetch data for a specific category.
 
-**Phase 1 Test Summary (Manual)**:
-*   **Result**: SUCCESS with caveats.
-*   **Test Performed**: Created a rule for "Starbucks" via `POST /api/rules`. Verified rule existence with `GET /api/rules`. Imported `test_transactions.csv` containing a "Starbucks" entry. The import succeeded, indicating the rule was likely processed without error.
-*   **Caveats**:
-    *   **No Direct Verification**: Lacked a `GET /api/transactions` endpoint to programmatically confirm the transaction was categorized as expected.
-    *   **Limited Scope**: Did not test `UPDATE` or `DELETE` on rules.
-    *   **No Multi-Tag Test**: Did not test rules or transactions involving multiple tags.
-    *   **No Precedence Test**: Did not test scenarios where a transaction might match multiple rules.
+### Phase 3: Introducing Capital Expenditures (CapEx)
+- **Verification**: Manually flag a transaction as CapEx via an API call. Verify the primary Sankey updates to show a "CapEx" flow, and the "Expenses" flow is reduced.
 
-**Acceptance Criteria**:
-- [x] A `rules` table exists in the database.
-- [x] API endpoints exist to `CREATE`, `READ`, `UPDATE`, and `DELETE` categorization rules (e.g., `POST /api/rules`). (NOTE: UPDATE/DELETE not manually tested).
-- [x] After creating a rule (e.g., description containing "Starbucks" maps to category "Food & Drink"), importing a CSV with matching transactions results in those transactions being processed successfully.
-- [ ] A transaction can be associated with multiple tags. (Not yet tested).
-- [ ] API drill-down endpoints work (e.g., `GET /api/transactions?category=Food`). (Not yet implemented).
+### Phase 4: The Portfolio View
+- **Verification**: Import a holdings CSV. Test a new API endpoint that returns the list of holdings. The UI should display this list on a new Portfolio screen.
 
-**Potential Risks & Failure Points**:
-1.  **Regex Complexity**: Poorly written regex in rules could cause performance issues or incorrect matches.
-2.  **Rule Application Order**: It may be unclear which rule takes precedence if a transaction matches multiple rules.
-3.  **Data Integrity**: Updating a transaction's category/tags might fail or have unintended side effects.
-
-**Mitigation & Verification Strategy**:
-1.  **Rule Unit Tests**: The rules engine logic must be unit-tested in isolation with a variety of test descriptions and regex patterns.
-2.  **Define Precedence**: The system must have a clear, documented, and testable rule for precedence (e.g., a user-defined priority field).
-3.  **Transactional Integrity**: All database modifications for a given import or update should be wrapped in a single transaction to ensure atomicity.
-
----
-
-## 4. Subsequent Phases (High-Level Plan)
-
-This section will be detailed as development approaches each phase.
-
-### Phase 2: CapEx & Real Estate
-- **Verification**: Manually flag a transaction as CapEx. Verify it's removed from expense reports and that the corresponding asset's basis increases in an `assets` table. Check the Estate Flow Sankey data.
-
-### Phase 3: Holdings & Portfolio
-- **Verification**: Import a holdings CSV. Verify positions are created correctly in a `holdings` table. Verify the `price_history` table is created. Test API endpoints for portfolio composition.
-
-### Phase 4: Market Data Drip
-- **Verification**: Configure the Alpha Vantage API key. Manually trigger the fetch process. Verify the `price_history` table is populated with fresh quotes. Monitor application logs for evidence of hourly/EOD scheduled jobs. Test graceful failure by providing an invalid API key and observing logged errors.
-
-### Phase 5: Layered Returns
-- **Verification**: Manually create `FeeRecord` and `TaxRecord` entries via an API. Using a test portfolio with known values, verify that the calculated Gross, After-Fees, and After-Taxes returns match calculations performed in a separate spreadsheet.
+### Phase 5: Automated Market Data & Layered Returns
+- **Verification**: Manually trigger the market data fetch process. Verify prices are updated in the database. Verify the Portfolio screen now shows correct market values.
 
 ### Phase 6: Forecasting
-- **Verification**: Create a simple forecast scenario (e.g., fixed income, fixed expenses, 0% return). Verify that the projected net worth matches a simple linear projection calculated manually. Add a one-time future event and verify the projection changes as expected.
-
+- **Verification**: Create a simple forecast scenario via an API. Verify the projected net worth from the API matches a manual calculation.
 
 --- FILE: projects/trust/scripts/start_backend.sh ---
 
 #!/bin/bash
 # This script starts the backend server for the 'trust' project.
 # It will first kill any process already running on the specified port.
+# This script is designed to be run from WITHIN the projects/trust directory.
 echo "--- Starting Curie Trust Backend Server ---"
 
 PORT=8000
@@ -755,9 +765,6 @@ if [ -n "$PID" ]; then
 else
     echo "No existing process found on port $PORT. Starting fresh."
 fi
-
-# This assumes the script is run from the repository root.
-cd projects/trust
 
 # Check for a virtual environment and activate it
 if [ -d ".venv" ]; then
@@ -776,11 +783,13 @@ uvicorn src.main:app --reload --host 127.0.0.1 --port $PORT
 
 echo "--- Backend server process terminated. ---"
 
+
 --- FILE: projects/trust/scripts/start_frontend.sh ---
 
 #!/bin/bash
 # This script starts the front-end dev server for the 'trust' project.
 # It will first kill any process already running on the specified port.
+# This script is designed to be run from WITHIN the projects/trust directory.
 echo "--- Starting Curie Trust Front End (Vite Dev Server) ---"
 
 PORT=5173
@@ -796,9 +805,6 @@ if [ -n "$PID" ]; then
 else
     echo "No existing process found on port $PORT. Starting fresh."
 fi
-
-# This assumes the script is run from the repository root.
-cd projects/trust
 
 # Check if node_modules exists, advise if not.
 if [ ! -d "node_modules" ]; then
@@ -961,6 +967,7 @@ def generate_income_sankey(period: str) -> Dict[str, Any]:
     """
     Analyzes all transactions and generates the data structure
     required for the "Income -> Uses of Money" Sankey diagram, formatted for Nivo.
+    This function is designed to be robust against incomplete or corrupt data.
     (PRS Section 2.1.A)
 
     Args:
@@ -976,25 +983,32 @@ def generate_income_sankey(period: str) -> Dict[str, Any]:
     expense_by_category = defaultdict(float)
     
     for tx in transactions:
-        amount = float(tx['amount'])
-        cashflow_type = tx.get('cashflow_type')
+        try:
+            # Defensively convert amount to float, handling potential data corruption.
+            amount = float(tx['amount'])
+            cashflow_type = tx.get('cashflow_type')
 
-        if cashflow_type == 'Income' and amount > 0:
-            total_income += amount
-        elif cashflow_type == 'Expense' and amount < 0:
-            category = tx.get('category', 'Uncategorized')
-            expense_by_category[category] += abs(amount)
+            if cashflow_type == 'Income' and amount > 0:
+                total_income += amount
+            elif cashflow_type == 'Expense' and amount < 0:
+                # CRITICAL FIX: Ensure category is never None. If tx['category'] is None or an empty string,
+                # default to 'Uncategorized'.
+                category = tx.get('category') or 'Uncategorized'
+                expense_by_category[category] += abs(amount)
+        except (ValueError, TypeError) as e:
+            # If a transaction has a non-numeric amount, skip it and warn.
+            # This prevents the entire API endpoint from crashing.
+            tx_id = tx.get('transaction_id', 'N/A')
+            print(f"WARNING: Skipping transaction {tx_id} due to invalid amount: {tx.get('amount')}. Error: {e}")
+            continue
 
     total_expenses = sum(expense_by_category.values())
     net_surplus = total_income - total_expenses
 
-    nodes = []
+    # Step 1: Build the links conditionally based on non-zero values.
     links = []
 
-    # Add nodes if they have value
     if total_income > 0:
-        nodes.append({"id": "Income"})
-        nodes.append({"id": "Uses of Money"})
         links.append({
             "source": "Income", 
             "target": "Uses of Money", 
@@ -1002,7 +1016,6 @@ def generate_income_sankey(period: str) -> Dict[str, Any]:
         })
 
     if total_expenses > 0:
-        nodes.append({"id": "Expenses"})
         links.append({
             "source": "Uses of Money", 
             "target": "Expenses", 
@@ -1010,7 +1023,6 @@ def generate_income_sankey(period: str) -> Dict[str, Any]:
         })
         for category, amount in expense_by_category.items():
             if amount > 0:
-                nodes.append({"id": category})
                 links.append({
                     "source": "Expenses",
                     "target": category,
@@ -1018,18 +1030,28 @@ def generate_income_sankey(period: str) -> Dict[str, Any]:
                 })
     
     if net_surplus > 0:
-        nodes.append({"id": "Net Surplus"})
         links.append({
             "source": "Uses of Money", 
             "target": "Net Surplus", 
             "value": round(net_surplus, 2)
         })
 
-    # Deduplicate nodes
-    unique_nodes = list({v['id']:v for v in nodes}.values())
+    # If there are no links, there is no chart to draw.
+    if not links:
+        return {"nodes": [], "links": []}
+
+    # Step 2: Derive the complete, unique set of nodes directly from the links.
+    # This guarantees that every source and target in a link has a corresponding node.
+    node_ids = set()
+    for link in links:
+        node_ids.add(link["source"])
+        node_ids.add(link["target"])
+
+    # Step 3: Create the node list for the API response.
+    nodes = [{"id": node_id} for node_id in sorted(list(node_ids))]
 
     return {
-        "nodes": unique_nodes,
+        "nodes": nodes,
         "links": links
     }
 
@@ -1086,24 +1108,18 @@ from src.data_model import Transaction
 # Per MDS, the database is a single file in the data/ directory.
 # We resolve the path to its absolute form to avoid ambiguity.
 DB_FILE = (Path(__file__).parent.parent / "data" / "trust.db").resolve()
+_schema_ensured = False
 
-def get_db_connection():
-    """ Establishes a connection to the SQLite database. """
-    # Ensure the data directory exists
-    DB_FILE.parent.mkdir(exist_ok=True)
-    
-    # Use the string representation of the path for sqlite3.connect
-    conn = sqlite3.connect(str(DB_FILE))
-    conn.row_factory = sqlite3.Row
-    return conn
+def _ensure_schema(conn: sqlite3.Connection):
+    """
+    Ensures the necessary tables exist in the database.
+    This is designed to be idempotent and safe to call.
+    """
+    global _schema_ensured
+    if _schema_ensured:
+        return
 
-def initialize_database():
-    """
-    Creates the necessary tables in the database if they don't already exist,
-    based on the schema defined in the MDS and src/data_model.py.
-    """
-    print(f"--- Initializing database at: {DB_FILE} ---")
-    conn = get_db_connection()
+    print("--- Verifying database schema... ---")
     cursor = conn.cursor()
 
     # Per Phase 0 requirements, create the 'transactions' table.
@@ -1137,6 +1153,27 @@ def initialize_database():
     """)
 
     conn.commit()
+    print("--- Database schema is OK. ---")
+    _schema_ensured = True
+
+def get_db_connection():
+    """ Establishes a connection to the SQLite database and ensures the schema is present. """
+    # Ensure the data directory exists
+    DB_FILE.parent.mkdir(exist_ok=True)
+    
+    # Use the string representation of the path for sqlite3.connect
+    conn = sqlite3.connect(str(DB_FILE))
+    conn.row_factory = sqlite3.Row
+    _ensure_schema(conn)
+    return conn
+
+def initialize_database():
+    """
+    Creates the necessary tables in the database if they don't already exist,
+    based on the schema defined in the MDS and src/data_model.py.
+    """
+    print(f"--- Initializing database at: {DB_FILE} ---")
+    conn = get_db_connection()
     conn.close()
     print("--- Database initialization complete. ---")
 
@@ -1159,10 +1196,10 @@ def save_transactions(transactions: List[Transaction]):
                  import_run_id, raw_data_hash
              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"""
     
-    # This data tuple must match the SQL columns exactly (12 items).
+    # For SQLite's REAL type, we must convert Python's Decimal to a float.
     data_to_insert = [
         (
-            t.transaction_id, t.account_id, t.transaction_date.isoformat(), t.amount, t.description,
+            t.transaction_id, t.account_id, t.transaction_date.isoformat(), float(t.amount), t.description,
             t.merchant, t.category, t.cashflow_type.value if t.cashflow_type else None,
             1 if t.is_transfer else 0, t.asset_id, t.import_run_id, t.raw_data_hash
         ) for t in transactions
@@ -1174,8 +1211,9 @@ def save_transactions(transactions: List[Transaction]):
         # The cursor.rowcount tells us how many rows were actually inserted/replaced.
         print(f"Successfully saved/updated {cursor.rowcount} transactions to the database.")
     except sqlite3.Error as e:
-        print(f"Database error: {e}")
+        print(f"Database error during transaction save: {e}")
         conn.rollback()
+        raise e  # Re-raise the exception to ensure the API endpoint fails correctly.
     finally:
         conn.close()
 
@@ -1299,6 +1337,7 @@ import uvicorn
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body
 from dotenv import load_dotenv
 import os
+import traceback
 from typing import List, Optional, Any, Dict
 from pydantic import BaseModel, Field
 
@@ -1411,8 +1450,16 @@ async def get_income_sankey_data(period: str = "all") -> Dict[str, List[Dict[str
     Generates the data for the main Income->Uses Sankey diagram.
     Now powered by the analysis module.
     """
-    data = analysis.generate_income_sankey(period)
-    return data
+    try:
+        data = analysis.generate_income_sankey(period)
+        return data
+    except Exception as e:
+        # Log the full traceback to the backend console for diagnosis
+        print(f"\n---! ERROR IN /api/sankey/income ENDPOINT !---")
+        traceback.print_exc()
+        print(f"---! END OF ERROR TRACEBACK !---\n")
+        # Re-raise as a standard HTTPException to inform the client
+        raise HTTPException(status_code=500, detail=f"An internal error occurred in the analysis engine: {e}")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)
@@ -1503,12 +1550,13 @@ from datetime import datetime
 from decimal import Decimal
 import hashlib
 
-from ..data_model import Transaction
+from ..data_model import Transaction, CashflowType
 from ..rules_engine import apply_rules_to_transaction, load_rules_from_db
 
 def parse_standard_csv(file_contents: bytes, account_id: str) -> list[Transaction]:
     """
     Parses a standard CSV file with Date,Description,Amount columns.
+    Applies rules and provides a default classification if no rules match.
     (PRS Section 5)
     """
     transactions = []
@@ -1530,7 +1578,6 @@ def parse_standard_csv(file_contents: bytes, account_id: str) -> list[Transactio
             continue
 
         # Create a unique ID for the transaction (PRS Section 8 - dedupe)
-        # A simple hash of key fields is a good start.
         raw_data = f"{transaction_date}-{description}-{amount}-{account_id}"
         transaction_hash = hashlib.sha256(raw_data.encode('utf-8')).hexdigest()
 
@@ -1543,8 +1590,17 @@ def parse_standard_csv(file_contents: bytes, account_id: str) -> list[Transactio
             raw_data_hash=transaction_hash # Store for deduplication
         )
 
-        # Apply the rules engine to the newly created transaction
+        # 1. Apply the specific, user-defined rules first.
         tx = apply_rules_to_transaction(tx, rules)
+
+        # 2. If no rule matched, apply a default classification.
+        if tx.cashflow_type is None:
+            if tx.amount > 0:
+                tx.cashflow_type = CashflowType.INCOME
+                tx.category = 'Income' # Assign a default category
+            elif tx.amount < 0:
+                tx.cashflow_type = CashflowType.EXPENSE
+                # Default category for expenses will be 'Uncategorized' as handled by analysis
 
         transactions.append(tx)
 

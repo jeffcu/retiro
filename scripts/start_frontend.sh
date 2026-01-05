@@ -1,6 +1,7 @@
 #!/bin/bash
 # This script starts the front-end dev server for the 'trust' project.
 # It will first kill any process already running on the specified port.
+# This script is designed to be run from WITHIN the projects/trust directory.
 echo "--- Starting Curie Trust Front End (Vite Dev Server) ---"
 
 PORT=5173
@@ -16,9 +17,6 @@ if [ -n "$PID" ]; then
 else
     echo "No existing process found on port $PORT. Starting fresh."
 fi
-
-# This assumes the script is run from the repository root.
-cd projects/trust
 
 # Check if node_modules exists, advise if not.
 if [ ! -d "node_modules" ]; then

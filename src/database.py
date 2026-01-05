@@ -7,24 +7,18 @@ from src.data_model import Transaction
 # Per MDS, the database is a single file in the data/ directory.
 # We resolve the path to its absolute form to avoid ambiguity.
 DB_FILE = (Path(__file__).parent.parent / "data" / "trust.db").resolve()
+_schema_ensured = False
 
-def get_db_connection():
-    """ Establishes a connection to the SQLite database. """
-    # Ensure the data directory exists
-    DB_FILE.parent.mkdir(exist_ok=True)
-    
-    # Use the string representation of the path for sqlite3.connect
-    conn = sqlite3.connect(str(DB_FILE))
-    conn.row_factory = sqlite3.Row
-    return conn
+def _ensure_schema(conn: sqlite3.Connection):
+    """
+    Ensures the necessary tables exist in the database.
+    This is designed to be idempotent and safe to call.
+    """
+    global _schema_ensured
+    if _schema_ensured:
+        return
 
-def initialize_database():
-    """
-    Creates the necessary tables in the database if they don't already exist,
-    based on the schema defined in the MDS and src/data_model.py.
-    """
-    print(f"--- Initializing database at: {DB_FILE} ---")
-    conn = get_db_connection()
+    print("--- Verifying database schema... ---")
     cursor = conn.cursor()
 
     # Per Phase 0 requirements, create the 'transactions' table.
@@ -58,6 +52,27 @@ def initialize_database():
     """)
 
     conn.commit()
+    print("--- Database schema is OK. ---")
+    _schema_ensured = True
+
+def get_db_connection():
+    """ Establishes a connection to the SQLite database and ensures the schema is present. """
+    # Ensure the data directory exists
+    DB_FILE.parent.mkdir(exist_ok=True)
+    
+    # Use the string representation of the path for sqlite3.connect
+    conn = sqlite3.connect(str(DB_FILE))
+    conn.row_factory = sqlite3.Row
+    _ensure_schema(conn)
+    return conn
+
+def initialize_database():
+    """
+    Creates the necessary tables in the database if they don't already exist,
+    based on the schema defined in the MDS and src/data_model.py.
+    """
+    print(f"--- Initializing database at: {DB_FILE} ---")
+    conn = get_db_connection()
     conn.close()
     print("--- Database initialization complete. ---")
 
@@ -80,10 +95,10 @@ def save_transactions(transactions: List[Transaction]):
                  import_run_id, raw_data_hash
              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"""
     
-    # This data tuple must match the SQL columns exactly (12 items).
+    # For SQLite's REAL type, we must convert Python's Decimal to a float.
     data_to_insert = [
         (
-            t.transaction_id, t.account_id, t.transaction_date.isoformat(), t.amount, t.description,
+            t.transaction_id, t.account_id, t.transaction_date.isoformat(), float(t.amount), t.description,
             t.merchant, t.category, t.cashflow_type.value if t.cashflow_type else None,
             1 if t.is_transfer else 0, t.asset_id, t.import_run_id, t.raw_data_hash
         ) for t in transactions
@@ -95,8 +110,9 @@ def save_transactions(transactions: List[Transaction]):
         # The cursor.rowcount tells us how many rows were actually inserted/replaced.
         print(f"Successfully saved/updated {cursor.rowcount} transactions to the database.")
     except sqlite3.Error as e:
-        print(f"Database error: {e}")
+        print(f"Database error during transaction save: {e}")
         conn.rollback()
+        raise e  # Re-raise the exception to ensure the API endpoint fails correctly.
     finally:
         conn.close()
 

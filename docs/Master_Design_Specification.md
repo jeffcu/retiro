@@ -96,12 +96,25 @@ As a local-first application, the primary security concerns are key management a
 
 ### 7. Phased Implementation Plan
 
-Development will follow the phased plan outlined in the PRS (Section 10) to ensure iterative delivery of value.
+Development will follow the user-feature centric plan outlined in the PRS (Section 10) to ensure iterative delivery of value.
 
-*   **Phase 0:** Transactions import + Sankey Income→Categories (basic)
-*   **Phase 1:** Rules engine + tags + drilldowns
-*   **Phase 2:** CapEx + Real Estate basis + Estate Flow Sankey
-*   **Phase 3:** Holdings snapshots + portfolio screens + quote cache
-*   **Phase 4:** Scheduled drip pricing (top 25 hourly, long tail EOD)
-*   **Phase 5:** Fees/taxes entry + layered returns + returns Sankey
-*   **Phase 6:** Forecast scenarios + planned CapEx events
+*   **Phase 0: The Walking Skeleton (Completed)**
+    *   Goal: Prove the end-to-end data pipeline is viable.
+
+*   **Phase 1: The Dynamic Sankey**
+    *   Goal: Visualize real, user-imported data in the primary Sankey chart.
+
+*   **Phase 2: Interactive Drill-Downs & Rules Management**
+    *   Goal: Allow users to inspect their data and manage categorization.
+
+*   **Phase 3: Introducing Capital Expenditures (CapEx)**
+    *   Goal: Differentiate consumption expenses from asset-building expenses.
+
+*   **Phase 4: The Portfolio View**
+    *   Goal: Establish initial portfolio tracking.
+
+*   **Phase 5: Automated Market Data & Layered Returns**
+    *   Goal: Automate portfolio pricing and introduce advanced return metrics.
+
+*   **Phase 6: Forecasting**
+    *   Goal: Provide future-looking financial projections.
