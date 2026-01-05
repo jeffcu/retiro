@@ -845,8 +845,9 @@ class Transaction:
 --- FILE: projects/trust/src/database.py ---
 
 import sqlite3
+import uuid
 from pathlib import Path
-from typing import List
+from typing import List, Dict, Any
 from src.data_model import Transaction
 
 # Per MDS, the database is a single file in the data/ directory.
@@ -890,6 +891,18 @@ def initialize_database():
     );
     """)
 
+    # Per Phase 1 requirements, create the 'rules' table.
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS rules (
+        rule_id TEXT PRIMARY KEY,
+        pattern TEXT NOT NULL,
+        category TEXT NOT NULL,
+        cashflow_type TEXT NOT NULL,
+        tags TEXT, -- Comma-separated list
+        priority INTEGER DEFAULT 100
+    );
+    """)
+
     conn.commit()
     conn.close()
     print("--- Database initialization complete. ---")
@@ -906,7 +919,8 @@ def save_transactions(transactions: List[Transaction]):
     cursor = conn.cursor()
     
     # The UNIQUE constraint on raw_data_hash will prevent duplicates on re-import.
-    sql = """INSERT OR IGNORE INTO transactions (
+    # Using INSERT OR REPLACE to allow re-importing and re-categorizing transactions.
+    sql = """INSERT OR REPLACE INTO transactions (
                  transaction_id, account_id, transaction_date, amount, description, 
                  merchant, category, cashflow_type, is_transfer, asset_id, 
                  import_run_id, raw_data_hash
@@ -924,13 +938,62 @@ def save_transactions(transactions: List[Transaction]):
     try:
         cursor.executemany(sql, data_to_insert)
         conn.commit()
-        # The cursor.rowcount tells us how many rows were actually inserted (not ignored).
-        print(f"Successfully saved {cursor.rowcount} new transactions to the database.")
+        # The cursor.rowcount tells us how many rows were actually inserted/replaced.
+        print(f"Successfully saved/updated {cursor.rowcount} transactions to the database.")
     except sqlite3.Error as e:
         print(f"Database error: {e}")
         conn.rollback()
     finally:
         conn.close()
+
+# --- Rules CRUD --- #
+
+def create_rule(rule_data: Dict[str, Any]) -> Dict[str, Any]:
+    """ Creates a new rule in the database. """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    rule_id = str(uuid.uuid4())
+    sql = """INSERT INTO rules (rule_id, pattern, category, cashflow_type, tags, priority)
+             VALUES (?, ?, ?, ?, ?, ?);"""
+    cursor.execute(sql, (
+        rule_id,
+        rule_data['pattern'],
+        rule_data['category'],
+        rule_data['cashflow_type'],
+        ','.join(rule_data.get('tags', [])),
+        rule_data.get('priority', 100)
+    ))
+    conn.commit()
+    conn.close()
+    return get_rule(rule_id)
+
+def get_rule(rule_id: str) -> Dict[str, Any] | None:
+    """ Retrieves a single rule by its ID. """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM rules WHERE rule_id = ?", (rule_id,))
+    rule = cursor.fetchone()
+    conn.close()
+    return dict(rule) if rule else None
+
+def get_all_rules() -> List[Dict[str, Any]]:
+    """ Retrieves all rules from the database. """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM rules ORDER BY priority ASC, category ASC")
+    rules = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rules]
+
+def delete_rule(rule_id: str) -> bool:
+    """ Deletes a rule by its ID. Returns True if a row was deleted. """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM rules WHERE rule_id = ?", (rule_id,))
+    deleted_count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return deleted_count > 0
 
 
 --- FILE: projects/trust/src/index.css ---
@@ -976,12 +1039,16 @@ ReactDOM.createRoot(document.getElementById('root')).render(
 --- FILE: projects/trust/src/main.py ---
 
 import uvicorn
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body
 from dotenv import load_dotenv
 import os
+from typing import List, Optional
+from pydantic import BaseModel, Field
 
 from src.importers import csv_importer
-from src.database import initialize_database, get_db_connection, save_transactions
+from src.database import initialize_database, save_transactions
+from src.data_model import CashflowType
+from src import database as db
 
 # Load environment variables from .env file
 load_dotenv()
@@ -991,6 +1058,18 @@ app = FastAPI(
     version="1.0",
 )
 
+# --- Pydantic Models for API data validation ---
+class RuleCreate(BaseModel):
+    pattern: str
+    category: str
+    cashflow_type: CashflowType
+    tags: Optional[List[str]] = []
+    priority: Optional[int] = 100
+
+class RuleResponse(RuleCreate):
+    rule_id: str
+
+# --- Event Handlers ---
 @app.on_event("startup")
 async def startup_event():
     print("API is starting up...")
@@ -1001,20 +1080,19 @@ async def startup_event():
     if not api_key or api_key == "YOUR_API_KEY_HERE":
         print("WARNING: ALPHA_VANTAGE_API_KEY is not set. Market data features will fail.")
 
+# --- API Endpoints ---
 
 @app.get("/")
 async def root():
     return {"message": "Curie Trust Financial Control Center API is running."}
 
 
-@app.post("/api/import/csv")
+@app.post("/api/import/csv", tags=["Import"])
 async def import_transactions_csv(account_id: str = Form(...), file: UploadFile = File(...)):
     """
-    Accepts a CSV file, parses it, and stores the transactions.
-    (PRS Section 5.2)
+    Accepts a CSV file, parses it, applies categorization rules, and stores the transactions.
+    (PRS Section 5.2, 5.3)
     """
-    # Using the filename extension is more robust than checking the content_type header,
-    # which can be inconsistent between different clients (like curl).
     if not file.filename or not file.filename.lower().endswith('.csv'):
         raise HTTPException(status_code=400, detail="Invalid file type. Please upload a CSV.")
 
@@ -1022,7 +1100,6 @@ async def import_transactions_csv(account_id: str = Form(...), file: UploadFile 
     try:
         transactions = csv_importer.parse_standard_csv(contents, account_id)
         
-        # Persist the parsed transactions to the database
         save_transactions(transactions)
         
         print(f"Successfully processed {len(transactions)} transactions for account {account_id}.")
@@ -1032,13 +1109,45 @@ async def import_transactions_csv(account_id: str = Form(...), file: UploadFile 
             "transaction_count": len(transactions)
         }
     except Exception as e:
-        # It's good practice to log the actual error for diagnostics
         print(f"ERROR processing file {file.filename}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to process CSV file: {e}")
 
 
+# --- Rules API --- (Phase 1)
+@app.post("/api/rules", response_model=RuleResponse, status_code=201, tags=["Rules"])
+async def create_new_rule(rule: RuleCreate):
+    """ Creates a new categorization rule. """
+    rule_dict = rule.dict()
+    # Convert enum to its string value for DB storage
+    rule_dict['cashflow_type'] = rule_dict['cashflow_type'].value
+    created_rule = db.create_rule(rule_dict)
+    return created_rule
+
+@app.get("/api/rules", response_model=List[RuleResponse], tags=["Rules"])
+async def get_all_rules():
+    """ Retrieves all categorization rules. """
+    rules = db.get_all_rules()
+    return rules
+
+@app.get("/api/rules/{rule_id}", response_model=RuleResponse, tags=["Rules"])
+async def get_specific_rule(rule_id: str):
+    """ Retrieves a single rule by its ID. """
+    rule = db.get_rule(rule_id)
+    if not rule:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    return rule
+
+@app.delete("/api/rules/{rule_id}", status_code=204, tags=["Rules"])
+async def delete_existing_rule(rule_id: str):
+    """ Deletes a rule by its ID. """
+    success = db.delete_rule(rule_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    return None # FastAPI will return a 204 No Content response
+
+
 # Placeholder for Phase 0 endpoint
-@app.get("/api/sankey/income")
+@app.get("/api/sankey/income", tags=["Analysis"])
 async def get_income_sankey_data(period: str = "YTD"):
     # This will eventually call the analysis module to generate Sankey data
     return {
@@ -1055,9 +1164,78 @@ async def get_income_sankey_data(period: str = "YTD"):
     }
 
 if __name__ == "__main__":
-    # Note: The command 'uvicorn src.main:app --reload' should be run from the project root.
-    # Running this file directly is not the intended use for a uvicorn server with reload.
     uvicorn.run(app, host="127.0.0.1", port=8000)
+
+
+--- FILE: projects/trust/src/rules_engine.py ---
+
+import re
+from dataclasses import dataclass, field
+from typing import List
+
+from .data_model import Transaction, CashflowType
+from .database import get_all_rules as db_get_all_rules
+
+
+@dataclass
+class Rule:
+    """ 
+    Represents a single categorization rule.
+    (PRS Section 5.3)
+    """
+    rule_id: str
+    pattern: str  # The regex pattern to match against the transaction description.
+    category: str
+    cashflow_type: CashflowType
+    tags: List[str] = field(default_factory=list)
+    priority: int = 100
+
+
+def apply_rules_to_transaction(transaction: Transaction, rules: List[Rule]) -> Transaction:
+    """
+    Applies a list of rules to a single transaction, modifying it in place.
+    The first rule that matches (by priority, then by order) wins.
+    """
+    # Sort rules by priority. Lower number means higher priority.
+    sorted_rules = sorted(rules, key=lambda r: r.priority)
+
+    for rule in sorted_rules:
+        try:
+            if re.search(rule.pattern, transaction.description, re.IGNORECASE):
+                print(f"Rule '{rule.pattern}' matched description '{transaction.description}'. Applying category '{rule.category}'.")
+                transaction.category = rule.category
+                transaction.cashflow_type = rule.cashflow_type
+                transaction.tags = list(set(transaction.tags + rule.tags)) # Merge and dedupe tags
+                
+                # Set is_transfer flag for convenience
+                if rule.cashflow_type == CashflowType.TRANSFER:
+                    transaction.is_transfer = True
+                
+                # First match wins, so we break.
+                break 
+        except re.error as e:
+            print(f"Skipping invalid regex pattern in rule {rule.rule_id}: '{rule.pattern}' - {e}")
+            continue
+
+    return transaction
+
+def load_rules_from_db() -> List[Rule]:
+    """
+    Loads all rules from the database and returns them as Rule objects.
+    """
+    rule_records = db_get_all_rules()
+    rules = [
+        Rule(
+            rule_id=r['rule_id'],
+            pattern=r['pattern'],
+            category=r['category'],
+            cashflow_type=CashflowType(r['cashflow_type']),
+            tags=r['tags'].split(',') if r['tags'] else [],
+            priority=r['priority']
+        ) for r in rule_records
+    ]
+    return rules
+
 
 --- FILE: projects/trust/src/importers/__init__.py ---
 
@@ -1075,6 +1253,7 @@ from decimal import Decimal
 import hashlib
 
 from ..data_model import Transaction
+from ..rules_engine import apply_rules_to_transaction, load_rules_from_db
 
 def parse_standard_csv(file_contents: bytes, account_id: str) -> list[Transaction]:
     """
@@ -1084,6 +1263,10 @@ def parse_standard_csv(file_contents: bytes, account_id: str) -> list[Transactio
     transactions = []
     file_stream = io.StringIO(file_contents.decode('utf-8'))
     reader = csv.DictReader(file_stream)
+
+    # Load all categorization rules from the database once per import.
+    rules = load_rules_from_db()
+    print(f"Loaded {len(rules)} rules for categorization.")
 
     for row in reader:
         # Basic data validation and cleaning
@@ -1100,16 +1283,19 @@ def parse_standard_csv(file_contents: bytes, account_id: str) -> list[Transactio
         raw_data = f"{transaction_date}-{description}-{amount}-{account_id}"
         transaction_hash = hashlib.sha256(raw_data.encode('utf-8')).hexdigest()
 
-        transactions.append(
-            Transaction(
-                transaction_id=transaction_hash,
-                account_id=account_id,
-                transaction_date=transaction_date,
-                amount=amount,
-                description=description,
-                raw_data_hash=transaction_hash # Store for deduplication
-            )
+        tx = Transaction(
+            transaction_id=transaction_hash,
+            account_id=account_id,
+            transaction_date=transaction_date,
+            amount=amount,
+            description=description,
+            raw_data_hash=transaction_hash # Store for deduplication
         )
+
+        # Apply the rules engine to the newly created transaction
+        tx = apply_rules_to_transaction(tx, rules)
+
+        transactions.append(tx)
 
     return transactions
 

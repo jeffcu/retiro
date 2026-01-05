@@ -1,6 +1,7 @@
 import sqlite3
+import uuid
 from pathlib import Path
-from typing import List
+from typing import List, Dict, Any
 from src.data_model import Transaction
 
 # Per MDS, the database is a single file in the data/ directory.
@@ -44,6 +45,18 @@ def initialize_database():
     );
     """)
 
+    # Per Phase 1 requirements, create the 'rules' table.
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS rules (
+        rule_id TEXT PRIMARY KEY,
+        pattern TEXT NOT NULL,
+        category TEXT NOT NULL,
+        cashflow_type TEXT NOT NULL,
+        tags TEXT, -- Comma-separated list
+        priority INTEGER DEFAULT 100
+    );
+    """)
+
     conn.commit()
     conn.close()
     print("--- Database initialization complete. ---")
@@ -60,7 +73,8 @@ def save_transactions(transactions: List[Transaction]):
     cursor = conn.cursor()
     
     # The UNIQUE constraint on raw_data_hash will prevent duplicates on re-import.
-    sql = """INSERT OR IGNORE INTO transactions (
+    # Using INSERT OR REPLACE to allow re-importing and re-categorizing transactions.
+    sql = """INSERT OR REPLACE INTO transactions (
                  transaction_id, account_id, transaction_date, amount, description, 
                  merchant, category, cashflow_type, is_transfer, asset_id, 
                  import_run_id, raw_data_hash
@@ -78,10 +92,59 @@ def save_transactions(transactions: List[Transaction]):
     try:
         cursor.executemany(sql, data_to_insert)
         conn.commit()
-        # The cursor.rowcount tells us how many rows were actually inserted (not ignored).
-        print(f"Successfully saved {cursor.rowcount} new transactions to the database.")
+        # The cursor.rowcount tells us how many rows were actually inserted/replaced.
+        print(f"Successfully saved/updated {cursor.rowcount} transactions to the database.")
     except sqlite3.Error as e:
         print(f"Database error: {e}")
         conn.rollback()
     finally:
         conn.close()
+
+# --- Rules CRUD --- #
+
+def create_rule(rule_data: Dict[str, Any]) -> Dict[str, Any]:
+    """ Creates a new rule in the database. """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    rule_id = str(uuid.uuid4())
+    sql = """INSERT INTO rules (rule_id, pattern, category, cashflow_type, tags, priority)
+             VALUES (?, ?, ?, ?, ?, ?);"""
+    cursor.execute(sql, (
+        rule_id,
+        rule_data['pattern'],
+        rule_data['category'],
+        rule_data['cashflow_type'],
+        ','.join(rule_data.get('tags', [])),
+        rule_data.get('priority', 100)
+    ))
+    conn.commit()
+    conn.close()
+    return get_rule(rule_id)
+
+def get_rule(rule_id: str) -> Dict[str, Any] | None:
+    """ Retrieves a single rule by its ID. """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM rules WHERE rule_id = ?", (rule_id,))
+    rule = cursor.fetchone()
+    conn.close()
+    return dict(rule) if rule else None
+
+def get_all_rules() -> List[Dict[str, Any]]:
+    """ Retrieves all rules from the database. """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM rules ORDER BY priority ASC, category ASC")
+    rules = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rules]
+
+def delete_rule(rule_id: str) -> bool:
+    """ Deletes a rule by its ID. Returns True if a row was deleted. """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM rules WHERE rule_id = ?", (rule_id,))
+    deleted_count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return deleted_count > 0
