@@ -2,37 +2,35 @@ import csv
 import io
 import hashlib
 from decimal import Decimal, InvalidOperation
-from typing import List
+from typing import List, Tuple, Dict, Any
 
 from ..data_model import Holding
 
 def _normalize_header(header: str) -> str:
-    """Cleans a CSV header for matching."""
+    """Cleans a CSV header for matching.""" 
     if not header:
         return ""
     # Lowercase, strip whitespace, remove spaces, and remove common special chars/suffixes
     return header.lower().strip().replace(' ', '').replace('($)', '').replace('_', '').replace('/', '')
 
-def parse_holdings_csv(file_contents: bytes, account_id: str) -> List[Holding]:
+def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Holding], Dict[str, Any]]:
     """
     Parses a holdings CSV, dynamically mapping common column names to the internal model.
     Handles UTF-8 with BOM and various header naming conventions.
+    Returns the holdings and a summary dictionary for auditing.
     """
     holdings = []
-    # Use 'utf-8-sig' to automatically handle the BOM character (\ufeff)
     try:
         file_stream = io.StringIO(file_contents.decode('utf-8-sig'))
     except UnicodeDecodeError:
-        # Fallback for non-UTF8 files
         file_stream = io.StringIO(file_contents.decode('latin-1'))
         
     reader = csv.DictReader(file_stream)
     
     if not reader.fieldnames:
         print("Warning: Holdings CSV file is empty or has no headers.")
-        return []
+        return [], {}
 
-    # Define canonical fields and their possible aliases
     HEADER_ALIASES = {
         'symbol': ['symbol', 'symbolcusip', 'ticker'],
         'quantity': ['quantity', 'shares', 'units'],
@@ -55,7 +53,7 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> List[Holding]:
         if field not in header_map:
             print(f"ERROR: Could not find a required column for '{field}' in CSV headers.")
             print(f"Available headers (normalized): {list(normalized_to_original.keys())}")
-            return []
+            return [], {}
 
     print(f"Mapped CSV headers: {header_map}")
     
@@ -67,7 +65,7 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> List[Holding]:
         try:
             symbol = row[symbol_key].strip().upper()
             if not symbol:
-                continue # Skip rows with no symbol value
+                continue
 
             quantity_key = header_map.get('quantity')
             raw_quantity = row.get(quantity_key, '0').strip().replace(',', '')
@@ -101,4 +99,12 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> List[Holding]:
         )
         holdings.append(holding)
     
-    return holdings
+    total_market_value = sum(h.market_value for h in holdings if h.market_value is not None)
+    total_cost_basis = sum(h.cost_basis for h in holdings if h.cost_basis is not None)
+    summary = {
+        "record_count": len(holdings),
+        "total_market_value": total_market_value,
+        "total_cost_basis": total_cost_basis
+    }
+
+    return holdings, summary

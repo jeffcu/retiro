@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import './DataImportView.css';
+import ImportSummary from './ImportSummary';
 
-const FileUploader = ({ title, importType }) => {
+const FileUploader = ({ title, importType, onUploadSuccess }) => {
     const [file, setFile] = useState(null);
     const [accountId, setAccountId] = useState('');
     const [message, setMessage] = useState('');
@@ -46,7 +47,8 @@ const FileUploader = ({ title, importType }) => {
 
             setMessage(result.message);
             setFile(null);
-            e.target.reset(); // Reset the form fields
+            e.target.reset();
+            onUploadSuccess(); // Call the callback on success
         } catch (err) {
             setMessage(`Error: ${err.message}`);
             setIsError(true);
@@ -89,14 +91,31 @@ const FileUploader = ({ title, importType }) => {
 };
 
 const DataImportView = () => {
+    const [refreshKey, setRefreshKey] = useState(0);
+
+    const handleUploadSuccess = () => {
+        setRefreshKey(prevKey => prevKey + 1); // Increment key to trigger refresh
+    };
+
     return (
-        <div className="card">
-            <h2>Data Importers</h2>
-            <div className="importer-container">
-                <FileUploader title="Import Transactions" importType="transactions" />
-                <FileUploader title="Import Portfolio Holdings" importType="holdings" />
+        <>
+            <div className="card">
+                <h2>Data Importers</h2>
+                <div className="importer-container">
+                    <FileUploader 
+                        title="Import Transactions" 
+                        importType="transactions" 
+                        onUploadSuccess={handleUploadSuccess} 
+                    />
+                    <FileUploader 
+                        title="Import Portfolio Holdings" 
+                        importType="holdings" 
+                        onUploadSuccess={handleUploadSuccess} 
+                    />
+                </div>
             </div>
-        </div>
+            <ImportSummary refreshKey={refreshKey} />
+        </>
     );
 };
 

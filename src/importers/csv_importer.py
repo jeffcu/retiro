@@ -4,7 +4,7 @@ import re
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 import hashlib
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict, Any
 
 from ..data_model import Transaction
 from ..rules_engine import apply_rules_to_transaction, load_rules_from_db
@@ -39,7 +39,6 @@ def _find_header_row(lines: List[str]) -> Optional[Tuple[List[str], int]]:
                     break # Don't count same keyword twice
 
         if found_keywords_count >= 2:
-            print(f"Found plausible header row at line {i + 1}: {row}")
             return row, i
             
     print("Warning: Could not automatically detect a header row. Returning None.")
@@ -56,7 +55,8 @@ def _clean_amount(amount_str: str) -> Decimal:
     if cleaned_str.startswith('(') and cleaned_str.endswith(')'):
         cleaned_str = '-' + cleaned_str[1:-1]
         
-    cleaned_str = re.sub(r'[\d.-]', '', cleaned_str)
+    # CORRECTED: This now removes non-numeric characters, preserving digits, dots, and minus signs.
+    cleaned_str = re.sub(r'[^\d.-]', '', cleaned_str)
     
     try:
         return Decimal(cleaned_str) if cleaned_str and cleaned_str != '.' and cleaned_str != '-' else Decimal('0')
@@ -64,10 +64,11 @@ def _clean_amount(amount_str: str) -> Decimal:
         print(f"Warning: Could not convert amount '{amount_str}' to a number. Treating as zero.")
         return Decimal('0')
 
-def parse_standard_csv(file_contents: bytes, account_id: str) -> list[Transaction]:
+def parse_standard_csv(file_contents: bytes, account_id: str) -> Tuple[list[Transaction], Dict[str, Any]]:
     """
     Parses a transaction CSV with flexible headers for Date, Description, Amount.
     Skips initial metadata rows to find the true header and handles various data formats.
+    Returns the transactions and a summary dictionary for auditing.
     """
     transactions = []
     
@@ -79,7 +80,7 @@ def parse_standard_csv(file_contents: bytes, account_id: str) -> list[Transactio
     lines = content_str.splitlines()
     if not lines:
         print("ERROR: CSV file is empty.")
-        return []
+        return [], {}
 
     header_info = _find_header_row(lines)
     
@@ -96,11 +97,11 @@ def parse_standard_csv(file_contents: bytes, account_id: str) -> list[Transactio
                 break
         else:
              print("ERROR: CSV file contains no data rows.")
-             return []
+             return [], {}
     
     if not header_row:
         print("ERROR: Could not determine header row.")
-        return []
+        return [], {}
 
     reader = csv.DictReader(data_lines, fieldnames=header_row)
 
@@ -130,13 +131,12 @@ def parse_standard_csv(file_contents: bytes, account_id: str) -> list[Transactio
     if missing_fields:
         print(f"ERROR: Could not find required columns for: {missing_fields}.")
         print(f"Available headers: {header_row}")
-        return []
+        return [], {}
     
     print(f"CSV Importer mapped headers: {header_map}")
 
     imported_count, skipped_count = 0, 0
     for row in reader:
-        # csv.DictReader can create rows with a None key for malformed CSVs
         if None in row:
             print(f"Skipping malformed row with extra columns: {row[None]}")
             skipped_count += 1
@@ -177,4 +177,11 @@ def parse_standard_csv(file_contents: bytes, account_id: str) -> list[Transactio
         imported_count += 1
 
     print(f"Parse complete. Imported: {imported_count}, Skipped: {skipped_count}.")
-    return transactions
+    
+    total_amount = sum(tx.amount for tx in transactions)
+    summary = {
+        "record_count": imported_count,
+        "total_amount": total_amount
+    }
+
+    return transactions, summary

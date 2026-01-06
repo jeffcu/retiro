@@ -49,7 +49,6 @@ def _ensure_schema(conn: sqlite3.Connection):
     );
     """)
 
-    # The canonical schema for the 'holdings' table.
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS holdings (
         holding_id TEXT PRIMARY KEY,
@@ -64,9 +63,19 @@ def _ensure_schema(conn: sqlite3.Connection):
     );
     """)
 
-    # --- Schema Migration for 'holdings' table ---
-    # Check for the existence of 'market_value' column and add it if missing.
-    # This ensures backward compatibility with older database files.
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS import_runs (
+        import_run_id TEXT PRIMARY KEY,
+        file_name TEXT NOT NULL,
+        import_type TEXT NOT NULL,
+        import_timestamp TEXT NOT NULL,
+        record_count INTEGER,
+        total_amount REAL,
+        total_market_value REAL,
+        total_cost_basis REAL
+    );
+    """)
+
     cursor.execute("PRAGMA table_info(holdings)")
     columns = [row[1] for row in cursor.fetchall()]
 
@@ -147,6 +156,36 @@ def save_holdings(holdings: List[Holding]):
     finally:
         conn.close()
 
+def save_import_run(run_data: Dict[str, Any]):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    sql = """INSERT INTO import_runs (
+                 import_run_id, file_name, import_type, import_timestamp,
+                 record_count, total_amount, total_market_value, total_cost_basis
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);"""
+    
+    data_tuple = (
+        run_data['import_run_id'],
+        run_data['file_name'],
+        run_data['import_type'],
+        run_data['import_timestamp'],
+        run_data.get('record_count'),
+        run_data.get('total_amount'),
+        run_data.get('total_market_value'),
+        run_data.get('total_cost_basis')
+    )
+    
+    try:
+        cursor.execute(sql, data_tuple)
+        conn.commit()
+        print(f"Successfully saved import run {run_data['import_run_id']}.")
+    except sqlite3.Error as e:
+        print(f"Database error during import run save: {e}")
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
 # --- Data Retrieval --- #
 
 def get_all_transactions() -> List[Dict[str, Any]]:
@@ -161,6 +200,14 @@ def get_all_holdings() -> List[Dict[str, Any]]:
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM holdings ORDER BY symbol ASC")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def get_all_import_runs() -> List[Dict[str, Any]]:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM import_runs ORDER BY import_timestamp DESC")
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
