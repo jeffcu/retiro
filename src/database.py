@@ -11,7 +11,7 @@ _schema_ensured = False
 
 def _ensure_schema(conn: sqlite3.Connection):
     """
-    Ensures the necessary tables exist in the database.
+    Ensures the necessary tables exist in the database and performs migrations.
     This is designed to be idempotent and safe to call.
     """
     global _schema_ensured
@@ -49,7 +49,7 @@ def _ensure_schema(conn: sqlite3.Connection):
     );
     """)
 
-    # UPDATED for Phase 4.5: Added market_value column
+    # The canonical schema for the 'holdings' table.
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS holdings (
         holding_id TEXT PRIMARY KEY,
@@ -63,6 +63,17 @@ def _ensure_schema(conn: sqlite3.Connection):
         UNIQUE(account_id, symbol)
     );
     """)
+
+    # --- Schema Migration for 'holdings' table ---
+    # Check for the existence of 'market_value' column and add it if missing.
+    # This ensures backward compatibility with older database files.
+    cursor.execute("PRAGMA table_info(holdings)")
+    columns = [row[1] for row in cursor.fetchall()]
+
+    if 'market_value' not in columns:
+        print("--- MIGRATING SCHEMA: Adding 'market_value' column to 'holdings' table. ---")
+        cursor.execute("ALTER TABLE holdings ADD COLUMN market_value REAL;")
+        print("--- MIGRATION COMPLETE. ---")
 
     conn.commit()
     print("--- Database schema is OK. ---")
@@ -116,7 +127,6 @@ def save_holdings(holdings: List[Holding]):
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    # UPDATED for Phase 4.5: Include market_value
     sql = """INSERT OR REPLACE INTO holdings (
                 holding_id, account_id, symbol, quantity, cost_basis, market_value
              ) VALUES (?, ?, ?, ?, ?, ?);"""
