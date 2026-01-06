@@ -38,7 +38,8 @@ def _reset_and_apply_defaults(transaction: Transaction) -> Transaction:
         transaction.category = 'Income'
     elif transaction.amount < 0:
         transaction.cashflow_type = CashflowType.EXPENSE
-        # 'Uncategorized' will be the effective category if no rule matches
+        # CORRECTED: Explicitly set default category for expenses.
+        transaction.category = 'Uncategorized'
 
     return transaction
 

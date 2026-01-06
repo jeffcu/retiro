@@ -64,10 +64,10 @@ def _clean_amount(amount_str: str) -> Decimal:
         print(f"Warning: Could not convert amount '{amount_str}' to a number. Treating as zero.")
         return Decimal('0')
 
-def parse_standard_csv(file_contents: bytes, account_id: str) -> Tuple[list[Transaction], Dict[str, Any]]:
+def parse_standard_csv(file_contents: bytes, account_id_fallback: str) -> Tuple[list[Transaction], Dict[str, Any]]:
     """
-    Parses a transaction CSV with flexible headers for Date, Description, Amount.
-    Skips initial metadata rows to find the true header and handles various data formats.
+    Parses a transaction CSV with flexible headers for Date, Description, Amount, and more.
+    Prioritizes data from the CSV (like account name) over form-submitted data.
     Returns the transactions and a summary dictionary for auditing.
     """
     transactions = []
@@ -112,6 +112,9 @@ def parse_standard_csv(file_contents: bytes, account_id: str) -> Tuple[list[Tran
         'date': ['date', 'posted', 'transactiondate'],
         'description': ['description', 'payee', 'merchant', 'details'],
         'amount': ['amount', 'price'],
+        'category': ['category', 'type'],
+        'institution': ['firmname', 'institution', 'firm', 'firm name'],
+        'account_name': ['accountname', 'account', 'account name'],
     }
     
     header_map = {}
@@ -119,6 +122,12 @@ def parse_standard_csv(file_contents: bytes, account_id: str) -> Tuple[list[Tran
 
     for canonical_name, aliases in HEADER_ALIASES.items():
         for alias in aliases:
+            # Normalize the alias for comparison
+            norm_alias = _normalize_header(alias)
+            if norm_alias in normalized_to_original:
+                header_map[canonical_name] = normalized_to_original[norm_alias]
+                break
+            # Fallback for direct matching
             for norm_header, orig_header in normalized_to_original.items():
                 if alias in norm_header:
                     header_map[canonical_name] = orig_header
@@ -158,19 +167,33 @@ def parse_standard_csv(file_contents: bytes, account_id: str) -> Tuple[list[Tran
 
             amount = _clean_amount(amount_str)
             
+            account_name_in_row = row.get(header_map.get('account_name'))
+            final_account_id = account_name_in_row.strip() if account_name_in_row else account_id_fallback
+
+            original_category = row.get(header_map.get('category'), '').strip()
+            institution = row.get(header_map.get('institution'), '').strip()
+
         except (ValueError, TypeError, KeyError) as e:
             print(f"Skipping row due to parsing error: {row} - {e}")
             skipped_count += 1
             continue
 
-        raw_data = f"{transaction_date}-{description}-{amount}-{account_id}"
+        raw_data = f"{transaction_date}-{description}-{amount}-{final_account_id}"
         transaction_hash = hashlib.sha256(raw_data.encode('utf-8')).hexdigest()
 
         tx = Transaction(
-            transaction_id=transaction_hash, account_id=account_id,
-            transaction_date=transaction_date, amount=amount,
-            description=description, raw_data_hash=transaction_hash
+            transaction_id=transaction_hash, 
+            account_id=final_account_id,
+            transaction_date=transaction_date, 
+            amount=amount,
+            description=description, 
+            raw_data_hash=transaction_hash,
+            institution=institution or None,
+            original_category=original_category or None
         )
+
+        if original_category:
+            tx.tags.append(original_category)
 
         tx = apply_rules_to_transaction(tx, rules)
         transactions.append(tx)

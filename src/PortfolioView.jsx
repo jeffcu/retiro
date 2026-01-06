@@ -1,6 +1,29 @@
 import { useState, useEffect } from 'react';
 import './PortfolioView.css';
 
+const PortfolioSummary = ({ holdings, formatCurrency }) => {
+    const totalMarketValue = holdings.reduce((sum, h) => sum + (h.market_value || 0), 0);
+    const totalCostBasis = holdings.reduce((sum, h) => sum + (h.cost_basis || 0), 0);
+
+    return (
+        <div className="summary-container">
+            <div className="summary-item">
+                <span className="label">Total Holdings</span>
+                <span className="value">{holdings.length}</span>
+            </div>
+            <div className="summary-item">
+                <span className="label">Total Cost Basis</span>
+                <span className="value">{formatCurrency(totalCostBasis)}</span>
+            </div>
+            <div className="summary-item">
+                <span className="label">Total Market Value</span>
+                <span className="value emphasis">{formatCurrency(totalMarketValue)}</span>
+            </div>
+        </div>
+    );
+};
+
+
 const PortfolioView = () => {
     const [holdings, setHoldings] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -39,7 +62,8 @@ const PortfolioView = () => {
 
     return (
         <div className="card">
-            <h2>Detailed Holdings</h2>
+            <h2>Holdings Overview</h2>
+            <PortfolioSummary holdings={holdings} formatCurrency={formatCurrency} />
             {holdings.length > 0 ? (
                 <div className="table-container">
                     <table>

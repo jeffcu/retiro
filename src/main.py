@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from decimal import Decimal
 
 from src.importers import csv_importer, holdings_importer
-from src.database import initialize_database, save_transactions, save_holdings
+from src.database import initialize_database, save_transactions
 from src.data_model import CashflowType
 from src import database as db
 from src import analysis
@@ -47,6 +47,10 @@ class RuleCreate(BaseModel):
 class RuleResponse(RuleCreate):
     rule_id: str
 
+class PurgeRequest(BaseModel):
+    target: str = Field(..., description="The database table to purge, e.g., 'transactions' or 'holdings'.")
+
+
 @app.on_event("startup")
 async def startup_event():
     print("API is starting up...")
@@ -67,6 +71,7 @@ async def import_transactions_csv(account_id: str = Form(...), file: UploadFile 
 
     contents = await file.read()
     try:
+        # The account_id from the form is now a fallback if not provided in the CSV
         transactions, summary = csv_importer.parse_standard_csv(contents, account_id)
         if transactions:
             save_transactions(transactions)
@@ -81,7 +86,7 @@ async def import_transactions_csv(account_id: str = Form(...), file: UploadFile 
         }
         db.save_import_run(run_data)
         
-        print(f"Successfully processed {len(transactions)} transactions for account {account_id}.")
+        print(f"Successfully processed {len(transactions)} transactions.")
         return {
             "message": f"Successfully imported and saved {len(transactions)} transactions.",
             "filename": file.filename,
@@ -97,11 +102,19 @@ async def import_holdings_csv(account_id: str = Form(...), file: UploadFile = Fi
     if not file.filename or not file.filename.lower().endswith('.csv'):
         raise HTTPException(status_code=400, detail="Invalid file type. Please upload a CSV.")
     
+    # CORRECTED: Sanitize the account_id at the API boundary to remove whitespace.
+    cleaned_account_id = account_id.strip()
+    if not cleaned_account_id:
+        raise HTTPException(status_code=400, detail="Account ID cannot be empty or just whitespace.")
+
     contents = await file.read()
     try:
-        holdings, summary = holdings_importer.parse_holdings_csv(contents, account_id)
-        if holdings:
-            save_holdings(holdings)
+        # Pass the cleaned_account_id to the parser so Holding objects are created cleanly.
+        holdings, summary, skipped, warnings = holdings_importer.parse_holdings_csv(contents, cleaned_account_id)
+        
+        # Pass the cleaned_account_id to the database function for the DELETE operation.
+        deleted, inserted = db.save_holdings_snapshot(holdings, cleaned_account_id)
+        print(f"Holdings snapshot saved for account '{cleaned_account_id}': {deleted} deleted, {inserted} inserted.")
 
         run_data = {
             "import_run_id": str(uuid.uuid4()),
@@ -115,9 +128,12 @@ async def import_holdings_csv(account_id: str = Form(...), file: UploadFile = Fi
         db.save_import_run(run_data)
 
         return {
-            "message": f"Successfully imported and saved {len(holdings)} holdings.",
+            "message": f"Import complete. Processed {summary.get('record_count', 0)} holdings.",
             "filename": file.filename,
-            "holdings_count": len(holdings)
+            "holdings_count": len(holdings),
+            "deleted_stale_holdings": deleted,
+            "skipped_rows": skipped,
+            "import_warnings": warnings
         }
     except Exception as e:
         print(f"ERROR processing holdings file {file.filename}: {e}")
@@ -183,11 +199,28 @@ async def get_portfolio_summary():
     """Calculates the total market value of all holdings."""
     try:
         holdings = db.get_all_holdings()
-        total_market_value = sum(h.get('market_value', 0) for h in holdings if h.get('market_value'))
+        # Robustly sum market value, ignoring any holdings where it is not set.
+        total_market_value = sum(h.get('market_value', 0) for h in holdings if h.get('market_value') is not None)
         return {"total_market_value": total_market_value}
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Failed to calculate portfolio summary.")
+
+@app.post("/api/data/purge", tags=["Admin"])
+async def purge_data(request: PurgeRequest):
+    """
+    [DANGEROUS] Purges all data from a specified table.
+    Currently supports 'transactions' and 'holdings'.
+    This is a permanent and irreversible action.
+    """
+    try:
+        result = db.purge_table_data(request.target)
+        return {"message": f"Successfully purged table: {request.target}", "details": result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"An internal error occurred during data purge: {e}")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)

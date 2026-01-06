@@ -934,6 +934,7 @@ import HomeView from './components/HomeView';
 import PortfolioView from './PortfolioView'; // Corrected Path
 import DataImportView from './components/DataImportView';
 import PlaceholderView from './components/PlaceholderView';
+import TransactionListView from './components/TransactionListView';
 import './App.css';
 
 function App() {
@@ -948,6 +949,7 @@ function App() {
       case 'Data & Settings':
         return <DataImportView />;
       case 'Cashflow':
+        return <TransactionListView />;
       case 'Projects/Tags':
       case 'Real Estate':
       case 'Forecast':
@@ -972,6 +974,38 @@ export default App;
 
 
 --- FILE: projects/trust/src/PortfolioView.css ---
+
+.summary-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1.5rem;
+    padding: 1rem;
+    background-color: var(--dark-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    margin-bottom: 2rem;
+}
+
+.summary-item {
+    display: flex;
+    flex-direction: column;
+}
+
+.summary-item .label {
+    font-size: 0.9em;
+    color: #aaa;
+    margin-bottom: 0.25rem;
+}
+
+.summary-item .value {
+    font-size: 1.8em;
+    font-weight: bold;
+    color: #fff;
+}
+
+.summary-item .value.emphasis {
+    color: var(--gold-accent);
+}
 
 .table-container {
     margin-top: 1rem;
@@ -1024,10 +1058,34 @@ export default App;
 }
 
 
+
 --- FILE: projects/trust/src/PortfolioView.jsx ---
 
 import { useState, useEffect } from 'react';
 import './PortfolioView.css';
+
+const PortfolioSummary = ({ holdings, formatCurrency }) => {
+    const totalMarketValue = holdings.reduce((sum, h) => sum + (h.market_value || 0), 0);
+    const totalCostBasis = holdings.reduce((sum, h) => sum + (h.cost_basis || 0), 0);
+
+    return (
+        <div className="summary-container">
+            <div className="summary-item">
+                <span className="label">Total Holdings</span>
+                <span className="value">{holdings.length}</span>
+            </div>
+            <div className="summary-item">
+                <span className="label">Total Cost Basis</span>
+                <span className="value">{formatCurrency(totalCostBasis)}</span>
+            </div>
+            <div className="summary-item">
+                <span className="label">Total Market Value</span>
+                <span className="value emphasis">{formatCurrency(totalMarketValue)}</span>
+            </div>
+        </div>
+    );
+};
+
 
 const PortfolioView = () => {
     const [holdings, setHoldings] = useState([]);
@@ -1067,7 +1125,8 @@ const PortfolioView = () => {
 
     return (
         <div className="card">
-            <h2>Detailed Holdings</h2>
+            <h2>Holdings Overview</h2>
+            <PortfolioSummary holdings={holdings} formatCurrency={formatCurrency} />
             {holdings.length > 0 ? (
                 <div className="table-container">
                     <table>
@@ -1232,7 +1291,8 @@ def generate_income_sankey(period: str) -> Dict[str, Any]:
             if cashflow_type == 'Income' and amount > 0:
                 total_income += amount
             elif cashflow_type == 'Expense' and amount < 0:
-                category = tx.get('category') or 'Uncategorized'
+                # Prioritize original_category, then rule-based category, then 'Uncategorized'
+                category = tx.get('original_category') or tx.get('category') or 'Uncategorized'
                 expense_by_category[category] += abs(amount)
             elif cashflow_type == 'Capital Expenditure' and amount < 0:
                 total_capex += abs(amount)
@@ -1337,6 +1397,8 @@ class Transaction:
     asset_id: str | None = None
     import_run_id: str | None = None
     raw_data_hash: str | None = None
+    institution: str | None = None
+    original_category: str | None = None
 
 
 @dataclass
@@ -1409,7 +1471,6 @@ def _ensure_schema(conn: sqlite3.Connection):
     );
     """)
 
-    # The canonical schema for the 'holdings' table.
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS holdings (
         holding_id TEXT PRIMARY KEY,
@@ -1424,16 +1485,37 @@ def _ensure_schema(conn: sqlite3.Connection):
     );
     """)
 
-    # --- Schema Migration for 'holdings' table ---
-    # Check for the existence of 'market_value' column and add it if missing.
-    # This ensures backward compatibility with older database files.
-    cursor.execute("PRAGMA table_info(holdings)")
-    columns = [row[1] for row in cursor.fetchall()]
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS import_runs (
+        import_run_id TEXT PRIMARY KEY,
+        file_name TEXT NOT NULL,
+        import_type TEXT NOT NULL,
+        import_timestamp TEXT NOT NULL,
+        record_count INTEGER,
+        total_amount REAL,
+        total_market_value REAL,
+        total_cost_basis REAL
+    );
+    """)
 
-    if 'market_value' not in columns:
-        print("--- MIGRATING SCHEMA: Adding 'market_value' column to 'holdings' table. ---")
+    # --- Schema Migrations ---
+    cursor.execute("PRAGMA table_info(holdings)")
+    holdings_cols = {row[1] for row in cursor.fetchall()}
+    if 'market_value' not in holdings_cols:
+        print("--- MIGRATING SCHEMA: Adding 'market_value' to 'holdings'. ---")
         cursor.execute("ALTER TABLE holdings ADD COLUMN market_value REAL;")
-        print("--- MIGRATION COMPLETE. ---")
+
+    cursor.execute("PRAGMA table_info(transactions)")
+    trans_cols = {row[1] for row in cursor.fetchall()}
+    if 'institution' not in trans_cols:
+        print("--- MIGRATING SCHEMA: Adding 'institution' to 'transactions'. ---")
+        cursor.execute("ALTER TABLE transactions ADD COLUMN institution TEXT;")
+    if 'original_category' not in trans_cols:
+        print("--- MIGRATING SCHEMA: Adding 'original_category' to 'transactions'. ---")
+        cursor.execute("ALTER TABLE transactions ADD COLUMN original_category TEXT;")
+    if 'tags' not in trans_cols:
+        print("--- MIGRATING SCHEMA: Adding 'tags' to 'transactions'. ---")
+        cursor.execute("ALTER TABLE transactions ADD COLUMN tags TEXT;")
 
     conn.commit()
     print("--- Database schema is OK. ---")
@@ -1461,13 +1543,14 @@ def save_transactions(transactions: List[Transaction]):
     sql = """INSERT OR REPLACE INTO transactions (
                  transaction_id, account_id, transaction_date, amount, description, 
                  merchant, category, cashflow_type, is_transfer, asset_id, 
-                 import_run_id, raw_data_hash
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"""
+                 import_run_id, raw_data_hash, institution, original_category, tags
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"""
     data_to_insert = [
         (
             t.transaction_id, t.account_id, t.transaction_date.isoformat(), float(t.amount), t.description,
             t.merchant, t.category, t.cashflow_type.value if t.cashflow_type else None,
-            1 if t.is_transfer else 0, t.asset_id, t.import_run_id, t.raw_data_hash
+            1 if t.is_transfer else 0, t.asset_id, t.import_run_id, t.raw_data_hash,
+            t.institution, t.original_category, ','.join(t.tags) if t.tags else None
         ) for t in transactions
     ]
     try:
@@ -1481,27 +1564,82 @@ def save_transactions(transactions: List[Transaction]):
     finally:
         conn.close()
 
-def save_holdings(holdings: List[Holding]):
-    if not holdings:
-        return
+def save_holdings_snapshot(holdings: List[Holding], account_id: str):
+    """
+    Saves a complete snapshot of holdings for a specific account.
+    This is a transactional operation that first deletes all existing holdings
+    for the account and then inserts the new ones.
+    (PRS Section 11: Idempotent Import)
+    """
+    cleaned_account_id = account_id.strip() # Defensively sanitize input
+    if not cleaned_account_id:
+        print("ERROR: Cannot save holdings snapshot without an account_id.")
+        return 0, 0
+
     conn = get_db_connection()
     cursor = conn.cursor()
+    deleted_count = 0
+    inserted_count = 0
 
-    sql = """INSERT OR REPLACE INTO holdings (
-                holding_id, account_id, symbol, quantity, cost_basis, market_value
-             ) VALUES (?, ?, ?, ?, ?, ?);"""
-    data_to_insert = [
-        (
-            h.holding_id, h.account_id, h.symbol, float(h.quantity), float(h.cost_basis),
-            float(h.market_value) if h.market_value is not None else None
-        ) for h in holdings
-    ]
     try:
-        cursor.executemany(sql, data_to_insert)
+        # Step 1: Delete existing holdings (CASE-INSENSITIVE & WHITESPACE-INSENSITIVE)
+        # CORRECTED: Use trim() and lower() to handle existing dirty data.
+        cursor.execute("DELETE FROM holdings WHERE trim(lower(account_id)) = trim(lower(?))", (cleaned_account_id,))
+        deleted_count = cursor.rowcount
+        print(f"Deleted {deleted_count} stale holdings for account '{cleaned_account_id}'.")
+
+        # Step 2: Insert the new holdings
+        if holdings:
+            sql = """INSERT INTO holdings (
+                        holding_id, account_id, symbol, quantity, cost_basis, market_value
+                     ) VALUES (?, ?, ?, ?, ?, ?);"""
+            # Note: The `h.account_id` in the holdings list is assumed to be cleaned
+            # at the API layer before this function is called.
+            data_to_insert = [
+                (
+                    h.holding_id, h.account_id, h.symbol, float(h.quantity), float(h.cost_basis),
+                    float(h.market_value) if h.market_value is not None else None
+                ) for h in holdings
+            ]
+            cursor.executemany(sql, data_to_insert)
+            inserted_count = cursor.rowcount
+            print(f"Inserted {inserted_count} new holdings for account '{cleaned_account_id}'.")
+
         conn.commit()
-        print(f"Successfully saved/updated {cursor.rowcount} holdings.")
     except sqlite3.Error as e:
-        print(f"Database error during holdings save: {e}")
+        print(f"Database error during holdings snapshot save: {e}")
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+    
+    return deleted_count, inserted_count
+
+def save_import_run(run_data: Dict[str, Any]):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    sql = """INSERT INTO import_runs (
+                 import_run_id, file_name, import_type, import_timestamp,
+                 record_count, total_amount, total_market_value, total_cost_basis
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);"""
+    
+    data_tuple = (
+        run_data['import_run_id'],
+        run_data['file_name'],
+        run_data['import_type'],
+        run_data['import_timestamp'],
+        run_data.get('record_count'),
+        run_data.get('total_amount'),
+        run_data.get('total_market_value'),
+        run_data.get('total_cost_basis')
+    )
+    
+    try:
+        cursor.execute(sql, data_tuple)
+        conn.commit()
+        print(f"Successfully saved import run {run_data['import_run_id']}.")
+    except sqlite3.Error as e:
+        print(f"Database error during import run save: {e}")
         conn.rollback()
         raise e
     finally:
@@ -1521,6 +1659,14 @@ def get_all_holdings() -> List[Dict[str, Any]]:
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM holdings ORDER BY symbol ASC")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def get_all_import_runs() -> List[Dict[str, Any]]:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM import_runs ORDER BY import_timestamp DESC")
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
@@ -1583,6 +1729,44 @@ def delete_rule(rule_id: str) -> bool:
     conn.close()
     return deleted_count > 0
 
+# --- Admin Utilities --- #
+
+SAFE_TO_PURGE = ["transactions", "holdings"]
+
+def purge_table_data(target_table: str) -> dict:
+    """
+    Deletes all data from a specified table if it's in the SAFE_TO_PURGE list.
+    This is a destructive operation.
+    """
+    if target_table not in SAFE_TO_PURGE:
+        raise ValueError(f"'{target_table}' is not a table that can be purged.")
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    deleted_count = 0
+    
+    try:
+        cursor.execute(f"SELECT COUNT(*) FROM {target_table}")
+        initial_count = cursor.fetchone()[0]
+
+        cursor.execute(f"DELETE FROM {target_table};")
+        deleted_count = cursor.rowcount
+        conn.commit()
+
+        print(f"Successfully purged {deleted_count} records from '{target_table}'.")
+        return {
+            "table": target_table,
+            "purged_records": deleted_count,
+            "initial_records": initial_count,
+            "status": "success"
+        }
+    except sqlite3.Error as e:
+        print(f"Database error during purge of '{target_table}': {e}")
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
 
 --- FILE: projects/trust/src/index.css ---
 
@@ -1627,6 +1811,8 @@ ReactDOM.createRoot(document.getElementById('root')).render(
 --- FILE: projects/trust/src/main.py ---
 
 import uvicorn
+import uuid
+from datetime import datetime, timezone
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -1637,13 +1823,12 @@ from pydantic import BaseModel, Field
 from decimal import Decimal
 
 from src.importers import csv_importer, holdings_importer
-from src.database import initialize_database, save_transactions, save_holdings
+from src.database import initialize_database, save_transactions
 from src.data_model import CashflowType
 from src import database as db
 from src import analysis
 from src import rules_engine
 
-# Load environment variables from .env file
 load_dotenv()
 
 app = FastAPI(
@@ -1651,10 +1836,9 @@ app = FastAPI(
     version="1.0",
 )
 
-# --- CORS Middleware ---
 origins = [
-    "http://localhost:5173",  # Vite dev server
-    "http://127.0.0.1:5173", # Also common
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
 ]
 
 app.add_middleware(
@@ -1665,8 +1849,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# --- Pydantic Models for API data validation ---
 class RuleCreate(BaseModel):
     pattern: str
     category: str
@@ -1677,7 +1859,10 @@ class RuleCreate(BaseModel):
 class RuleResponse(RuleCreate):
     rule_id: str
 
-# --- Event Handlers ---
+class PurgeRequest(BaseModel):
+    target: str = Field(..., description="The database table to purge, e.g., 'transactions' or 'holdings'.")
+
+
 @app.on_event("startup")
 async def startup_event():
     print("API is starting up...")
@@ -1687,12 +1872,9 @@ async def startup_event():
     if not api_key or api_key == "YOUR_API_KEY_HERE":
         print("WARNING: ALPHA_VANTAGE_API_KEY is not set. Market data features will fail.")
 
-# --- API Endpoints ---
-
 @app.get("/")
 async def root():
     return {"message": "Curie Trust Financial Control Center API is running."}
-
 
 @app.post("/api/import/transactions", tags=["Import"])
 async def import_transactions_csv(account_id: str = Form(...), file: UploadFile = File(...)):
@@ -1701,9 +1883,22 @@ async def import_transactions_csv(account_id: str = Form(...), file: UploadFile 
 
     contents = await file.read()
     try:
-        transactions = csv_importer.parse_standard_csv(contents, account_id)
-        save_transactions(transactions)
-        print(f"Successfully processed {len(transactions)} transactions for account {account_id}.")
+        # The account_id from the form is now a fallback if not provided in the CSV
+        transactions, summary = csv_importer.parse_standard_csv(contents, account_id)
+        if transactions:
+            save_transactions(transactions)
+        
+        run_data = {
+            "import_run_id": str(uuid.uuid4()),
+            "file_name": file.filename,
+            "import_type": "transactions",
+            "import_timestamp": datetime.now(timezone.utc).isoformat(),
+            "record_count": summary.get('record_count'),
+            "total_amount": float(summary.get('total_amount', 0.0))
+        }
+        db.save_import_run(run_data)
+        
+        print(f"Successfully processed {len(transactions)} transactions.")
         return {
             "message": f"Successfully imported and saved {len(transactions)} transactions.",
             "filename": file.filename,
@@ -1711,6 +1906,7 @@ async def import_transactions_csv(account_id: str = Form(...), file: UploadFile 
         }
     except Exception as e:
         print(f"ERROR processing file {file.filename}: {e}")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to process CSV file: {e}")
 
 @app.post("/api/import/holdings", tags=["Import"])
@@ -1718,20 +1914,52 @@ async def import_holdings_csv(account_id: str = Form(...), file: UploadFile = Fi
     if not file.filename or not file.filename.lower().endswith('.csv'):
         raise HTTPException(status_code=400, detail="Invalid file type. Please upload a CSV.")
     
+    # CORRECTED: Sanitize the account_id at the API boundary to remove whitespace.
+    cleaned_account_id = account_id.strip()
+    if not cleaned_account_id:
+        raise HTTPException(status_code=400, detail="Account ID cannot be empty or just whitespace.")
+
     contents = await file.read()
     try:
-        holdings = holdings_importer.parse_holdings_csv(contents, account_id)
-        save_holdings(holdings)
+        # Pass the cleaned_account_id to the parser so Holding objects are created cleanly.
+        holdings, summary, skipped, warnings = holdings_importer.parse_holdings_csv(contents, cleaned_account_id)
+        
+        # Pass the cleaned_account_id to the database function for the DELETE operation.
+        deleted, inserted = db.save_holdings_snapshot(holdings, cleaned_account_id)
+        print(f"Holdings snapshot saved for account '{cleaned_account_id}': {deleted} deleted, {inserted} inserted.")
+
+        run_data = {
+            "import_run_id": str(uuid.uuid4()),
+            "file_name": file.filename,
+            "import_type": "holdings",
+            "import_timestamp": datetime.now(timezone.utc).isoformat(),
+            "record_count": summary.get('record_count'),
+            "total_market_value": float(summary.get('total_market_value', 0.0)),
+            "total_cost_basis": float(summary.get('total_cost_basis', 0.0))
+        }
+        db.save_import_run(run_data)
+
         return {
-            "message": f"Successfully imported and saved {len(holdings)} holdings.",
+            "message": f"Import complete. Processed {summary.get('record_count', 0)} holdings.",
             "filename": file.filename,
-            "holdings_count": len(holdings)
+            "holdings_count": len(holdings),
+            "deleted_stale_holdings": deleted,
+            "skipped_rows": skipped,
+            "import_warnings": warnings
         }
     except Exception as e:
         print(f"ERROR processing holdings file {file.filename}: {e}")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to process holdings CSV file: {e}")
 
-# --- Rules API --- 
+@app.get("/api/import/runs", tags=["Import"])
+async def get_all_import_runs():
+    try:
+        return db.get_all_import_runs()
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Failed to retrieve import runs.")
+
 @app.post("/api/rules", response_model=RuleResponse, status_code=201, tags=["Rules"])
 async def create_new_rule(rule: RuleCreate):
     rule_dict = rule.dict()
@@ -1744,7 +1972,6 @@ async def get_all_rules():
     rules = db.get_all_rules()
     return rules
 
-# --- Data & Analysis API ---
 @app.get("/api/sankey/income", tags=["Analysis"])
 async def get_income_sankey_data(period: str = "all") -> Dict[str, List[Dict[str, Any]]]:
     try:
@@ -1784,11 +2011,28 @@ async def get_portfolio_summary():
     """Calculates the total market value of all holdings."""
     try:
         holdings = db.get_all_holdings()
-        total_market_value = sum(h.get('market_value', 0) for h in holdings if h.get('market_value'))
+        # Robustly sum market value, ignoring any holdings where it is not set.
+        total_market_value = sum(h.get('market_value', 0) for h in holdings if h.get('market_value') is not None)
         return {"total_market_value": total_market_value}
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Failed to calculate portfolio summary.")
+
+@app.post("/api/data/purge", tags=["Admin"])
+async def purge_data(request: PurgeRequest):
+    """
+    [DANGEROUS] Purges all data from a specified table.
+    Currently supports 'transactions' and 'holdings'.
+    This is a permanent and irreversible action.
+    """
+    try:
+        result = db.purge_table_data(request.target)
+        return {"message": f"Successfully purged table: {request.target}", "details": result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"An internal error occurred during data purge: {e}")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)
@@ -1836,7 +2080,8 @@ def _reset_and_apply_defaults(transaction: Transaction) -> Transaction:
         transaction.category = 'Income'
     elif transaction.amount < 0:
         transaction.cashflow_type = CashflowType.EXPENSE
-        # 'Uncategorized' will be the effective category if no rule matches
+        # CORRECTED: Explicitly set default category for expenses.
+        transaction.category = 'Uncategorized'
 
     return transaction
 
@@ -2012,8 +2257,9 @@ def recategorize_all_transactions() -> int:
 
 import { useState } from 'react';
 import './DataImportView.css';
+import ImportSummary from './ImportSummary';
 
-const FileUploader = ({ title, importType }) => {
+const FileUploader = ({ title, importType, onUploadSuccess }) => {
     const [file, setFile] = useState(null);
     const [accountId, setAccountId] = useState('');
     const [message, setMessage] = useState('');
@@ -2058,7 +2304,8 @@ const FileUploader = ({ title, importType }) => {
 
             setMessage(result.message);
             setFile(null);
-            e.target.reset(); // Reset the form fields
+            e.target.reset();
+            onUploadSuccess(); // Call the callback on success
         } catch (err) {
             setMessage(`Error: ${err.message}`);
             setIsError(true);
@@ -2101,14 +2348,31 @@ const FileUploader = ({ title, importType }) => {
 };
 
 const DataImportView = () => {
+    const [refreshKey, setRefreshKey] = useState(0);
+
+    const handleUploadSuccess = () => {
+        setRefreshKey(prevKey => prevKey + 1); // Increment key to trigger refresh
+    };
+
     return (
-        <div className="card">
-            <h2>Data Importers</h2>
-            <div className="importer-container">
-                <FileUploader title="Import Transactions" importType="transactions" />
-                <FileUploader title="Import Portfolio Holdings" importType="holdings" />
+        <>
+            <div className="card">
+                <h2>Data Importers</h2>
+                <div className="importer-container">
+                    <FileUploader 
+                        title="Import Transactions" 
+                        importType="transactions" 
+                        onUploadSuccess={handleUploadSuccess} 
+                    />
+                    <FileUploader 
+                        title="Import Portfolio Holdings" 
+                        importType="holdings" 
+                        onUploadSuccess={handleUploadSuccess} 
+                    />
+                </div>
             </div>
-        </div>
+            <ImportSummary refreshKey={refreshKey} />
+        </>
     );
 };
 
@@ -2233,6 +2497,179 @@ const HomeView = () => {
 };
 
 export default HomeView;
+
+
+--- FILE: projects/trust/src/components/ImportSummary.css ---
+
+.import-summary-container {
+    margin-top: 2rem;
+}
+
+.summary-tables-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 2rem;
+}
+
+@media (min-width: 1200px) {
+    .summary-tables-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+.summary-table-wrapper {
+    background-color: var(--dark-bg);
+    padding: 1rem;
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.summary-table-wrapper h3 {
+    margin-top: 0;
+    color: var(--gold-accent);
+}
+
+.summary-table-wrapper table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9em;
+}
+
+.summary-table-wrapper th, 
+.summary-table-wrapper td {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border-color);
+    text-align: left;
+}
+
+.summary-table-wrapper td:nth-child(3),
+.summary-table-wrapper td:nth-child(4),
+.summary-table-wrapper td:nth-child(5) {
+    text-align: right;
+}
+
+.summary-table-wrapper thead th {
+    background-color: var(--light-bg);
+    position: sticky;
+    top: 0;
+}
+
+.summary-table-wrapper tbody tr:hover {
+    background-color: var(--medium-bg);
+}
+
+
+--- FILE: projects/trust/src/components/ImportSummary.jsx ---
+
+import { useEffect, useState } from 'react';
+import './ImportSummary.css';
+
+const ImportSummary = ({ refreshKey }) => {
+    const [runs, setRuns] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+
+    useEffect(() => {
+        const fetchRuns = async () => {
+            try {
+                setLoading(true);
+                const response = await fetch('/api/import/runs');
+                if (!response.ok) {
+                    throw new Error(`HTTP Error: ${response.status}`);
+                }
+                const data = await response.json();
+                setRuns(data);
+            } catch (e) {
+                setError(e.message);
+                console.error("Failed to fetch import runs:", e);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        fetchRuns();
+    }, [refreshKey]); // Re-fetch when refreshKey changes
+
+    const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+    }).format(value || 0);
+
+    const formatDate = (isoString) => {
+        if (!isoString) return 'N/A';
+        return new Date(isoString).toLocaleString();
+    }
+
+    if (loading) return <p>Loading import history...</p>;
+    if (error) return <p>Error loading import history: {error}</p>;
+
+    const transactionRuns = runs.filter(r => r.import_type === 'transactions');
+    const holdingRuns = runs.filter(r => r.import_type === 'holdings');
+
+    return (
+        <div className="import-summary-container card">
+            <h2>Import History & Verification</h2>
+            {runs.length === 0 ? (
+                <p>No import history found.</p>
+            ) : (
+                <div className="summary-tables-grid">
+                    <div className="summary-table-wrapper">
+                        <h3>Transactions</h3>
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>File Name</th>
+                                    <th>Imported At</th>
+                                    <th>Rows</th>
+                                    <th>Total Amount</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {transactionRuns.map(run => (
+                                    <tr key={run.import_run_id}>
+                                        <td>{run.file_name}</td>
+                                        <td>{formatDate(run.import_timestamp)}</td>
+                                        <td>{run.record_count}</td>
+                                        <td>{formatCurrency(run.total_amount)}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                    <div className="summary-table-wrapper">
+                        <h3>Holdings</h3>
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>File Name</th>
+                                    <th>Imported At</th>
+                                    <th>Assets</th>
+                                    <th>Total Market Value</th>
+                                    <th>Total Cost Basis</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {holdingRuns.map(run => (
+                                    <tr key={run.import_run_id}>
+                                        <td>{run.file_name}</td>
+                                        <td>{formatDate(run.import_timestamp)}</td>
+                                        <td>{run.record_count}</td>
+                                        <td>{formatCurrency(run.total_market_value)}</td>
+                                        <td>{formatCurrency(run.total_cost_basis)}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
+export default ImportSummary;
 
 
 --- FILE: projects/trust/src/components/MockSankey.jsx ---
@@ -2406,6 +2843,137 @@ const PlaceholderView = ({ viewName }) => {
 export default PlaceholderView;
 
 
+--- FILE: projects/trust/src/components/TransactionListView.css ---
+
+.table-container {
+    margin-top: 1rem;
+    max-height: 70vh;
+    overflow-y: auto;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    text-align: left;
+}
+
+.table-container table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.table-container th, .table-container td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color);
+    text-align: left;
+    white-space: nowrap;
+}
+
+.table-container td:last-child {
+    text-align: right;
+    font-family: monospace;
+    font-size: 1.1em;
+}
+
+.table-container thead th {
+    background-color: var(--light-bg);
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.table-container tbody tr:nth-child(even) {
+    background-color: var(--dark-bg);
+}
+
+.table-container tbody tr:hover {
+    background-color: #4a4a4a;
+}
+
+
+--- FILE: projects/trust/src/components/TransactionListView.jsx ---
+
+import { useState, useEffect } from 'react';
+import './TransactionListView.css';
+
+const TransactionListView = () => {
+    const [transactions, setTransactions] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+
+    useEffect(() => {
+        const fetchTransactions = async () => {
+            try {
+                setLoading(true);
+                const response = await fetch('/api/transactions');
+                if (!response.ok) {
+                    throw new Error(`HTTP Error: ${response.status}`);
+                }
+                const data = await response.json();
+                setTransactions(data);
+            } catch (e) {
+                setError(e.message);
+                console.error("Failed to fetch transactions:", e);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        fetchTransactions();
+    }, []);
+
+    const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+    }).format(value || 0);
+
+    const formatDate = (dateString) => {
+        if (!dateString) return 'N/A';
+        return new Date(dateString).toLocaleDateString();
+    }
+
+    if (loading) return <p>Loading transactions...</p>;
+    if (error) return <p>Error loading transactions: {error}</p>;
+
+    return (
+        <div className="card">
+            <h2>All Transactions</h2>
+            {transactions.length > 0 ? (
+                <div className="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Account</th>
+                                <th>Institution</th>
+                                <th>Description</th>
+                                <th>Category</th>
+                                <th style={{ textAlign: 'right' }}>Amount</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {transactions.map(t => (
+                                <tr key={t.transaction_id}>
+                                    <td>{formatDate(t.transaction_date)}</td>
+                                    <td>{t.account_id}</td>
+                                    <td>{t.institution}</td>
+                                    <td>{t.description}</td>
+                                    <td>{t.original_category || t.category}</td>
+                                    <td style={{ color: t.amount > 0 ? 'var(--gold-accent)' : 'inherit' }}>
+                                        {formatCurrency(t.amount)}
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            ) : (
+                <p>No transactions found. Please import a transaction CSV file via the 'Data & Settings' screen.</p>
+            )}
+        </div>
+    );
+};
+
+export default TransactionListView;
+
+
 --- FILE: projects/trust/src/importers/__init__.py ---
 
 # This package will contain modules for importing and normalizing data
@@ -2421,7 +2989,7 @@ import re
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 import hashlib
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict, Any
 
 from ..data_model import Transaction
 from ..rules_engine import apply_rules_to_transaction, load_rules_from_db
@@ -2456,7 +3024,6 @@ def _find_header_row(lines: List[str]) -> Optional[Tuple[List[str], int]]:
                     break # Don't count same keyword twice
 
         if found_keywords_count >= 2:
-            print(f"Found plausible header row at line {i + 1}: {row}")
             return row, i
             
     print("Warning: Could not automatically detect a header row. Returning None.")
@@ -2473,7 +3040,8 @@ def _clean_amount(amount_str: str) -> Decimal:
     if cleaned_str.startswith('(') and cleaned_str.endswith(')'):
         cleaned_str = '-' + cleaned_str[1:-1]
         
-    cleaned_str = re.sub(r'[\d.-]', '', cleaned_str)
+    # CORRECTED: This now removes non-numeric characters, preserving digits, dots, and minus signs.
+    cleaned_str = re.sub(r'[^\d.-]', '', cleaned_str)
     
     try:
         return Decimal(cleaned_str) if cleaned_str and cleaned_str != '.' and cleaned_str != '-' else Decimal('0')
@@ -2481,10 +3049,11 @@ def _clean_amount(amount_str: str) -> Decimal:
         print(f"Warning: Could not convert amount '{amount_str}' to a number. Treating as zero.")
         return Decimal('0')
 
-def parse_standard_csv(file_contents: bytes, account_id: str) -> list[Transaction]:
+def parse_standard_csv(file_contents: bytes, account_id_fallback: str) -> Tuple[list[Transaction], Dict[str, Any]]:
     """
-    Parses a transaction CSV with flexible headers for Date, Description, Amount.
-    Skips initial metadata rows to find the true header and handles various data formats.
+    Parses a transaction CSV with flexible headers for Date, Description, Amount, and more.
+    Prioritizes data from the CSV (like account name) over form-submitted data.
+    Returns the transactions and a summary dictionary for auditing.
     """
     transactions = []
     
@@ -2496,7 +3065,7 @@ def parse_standard_csv(file_contents: bytes, account_id: str) -> list[Transactio
     lines = content_str.splitlines()
     if not lines:
         print("ERROR: CSV file is empty.")
-        return []
+        return [], {}
 
     header_info = _find_header_row(lines)
     
@@ -2513,11 +3082,11 @@ def parse_standard_csv(file_contents: bytes, account_id: str) -> list[Transactio
                 break
         else:
              print("ERROR: CSV file contains no data rows.")
-             return []
+             return [], {}
     
     if not header_row:
         print("ERROR: Could not determine header row.")
-        return []
+        return [], {}
 
     reader = csv.DictReader(data_lines, fieldnames=header_row)
 
@@ -2528,6 +3097,9 @@ def parse_standard_csv(file_contents: bytes, account_id: str) -> list[Transactio
         'date': ['date', 'posted', 'transactiondate'],
         'description': ['description', 'payee', 'merchant', 'details'],
         'amount': ['amount', 'price'],
+        'category': ['category', 'type'],
+        'institution': ['firmname', 'institution', 'firm', 'firm name'],
+        'account_name': ['accountname', 'account', 'account name'],
     }
     
     header_map = {}
@@ -2535,6 +3107,12 @@ def parse_standard_csv(file_contents: bytes, account_id: str) -> list[Transactio
 
     for canonical_name, aliases in HEADER_ALIASES.items():
         for alias in aliases:
+            # Normalize the alias for comparison
+            norm_alias = _normalize_header(alias)
+            if norm_alias in normalized_to_original:
+                header_map[canonical_name] = normalized_to_original[norm_alias]
+                break
+            # Fallback for direct matching
             for norm_header, orig_header in normalized_to_original.items():
                 if alias in norm_header:
                     header_map[canonical_name] = orig_header
@@ -2547,13 +3125,12 @@ def parse_standard_csv(file_contents: bytes, account_id: str) -> list[Transactio
     if missing_fields:
         print(f"ERROR: Could not find required columns for: {missing_fields}.")
         print(f"Available headers: {header_row}")
-        return []
+        return [], {}
     
     print(f"CSV Importer mapped headers: {header_map}")
 
     imported_count, skipped_count = 0, 0
     for row in reader:
-        # csv.DictReader can create rows with a None key for malformed CSVs
         if None in row:
             print(f"Skipping malformed row with extra columns: {row[None]}")
             skipped_count += 1
@@ -2575,26 +3152,47 @@ def parse_standard_csv(file_contents: bytes, account_id: str) -> list[Transactio
 
             amount = _clean_amount(amount_str)
             
+            account_name_in_row = row.get(header_map.get('account_name'))
+            final_account_id = account_name_in_row.strip() if account_name_in_row else account_id_fallback
+
+            original_category = row.get(header_map.get('category'), '').strip()
+            institution = row.get(header_map.get('institution'), '').strip()
+
         except (ValueError, TypeError, KeyError) as e:
             print(f"Skipping row due to parsing error: {row} - {e}")
             skipped_count += 1
             continue
 
-        raw_data = f"{transaction_date}-{description}-{amount}-{account_id}"
+        raw_data = f"{transaction_date}-{description}-{amount}-{final_account_id}"
         transaction_hash = hashlib.sha256(raw_data.encode('utf-8')).hexdigest()
 
         tx = Transaction(
-            transaction_id=transaction_hash, account_id=account_id,
-            transaction_date=transaction_date, amount=amount,
-            description=description, raw_data_hash=transaction_hash
+            transaction_id=transaction_hash, 
+            account_id=final_account_id,
+            transaction_date=transaction_date, 
+            amount=amount,
+            description=description, 
+            raw_data_hash=transaction_hash,
+            institution=institution or None,
+            original_category=original_category or None
         )
+
+        if original_category:
+            tx.tags.append(original_category)
 
         tx = apply_rules_to_transaction(tx, rules)
         transactions.append(tx)
         imported_count += 1
 
     print(f"Parse complete. Imported: {imported_count}, Skipped: {skipped_count}.")
-    return transactions
+    
+    total_amount = sum(tx.amount for tx in transactions)
+    summary = {
+        "record_count": imported_count,
+        "total_amount": total_amount
+    }
+
+    return transactions, summary
 
 
 --- FILE: projects/trust/src/importers/holdings_importer.py ---
@@ -2603,37 +3201,57 @@ import csv
 import io
 import hashlib
 from decimal import Decimal, InvalidOperation
-from typing import List
+from typing import List, Tuple, Dict, Any
 
 from ..data_model import Holding
 
 def _normalize_header(header: str) -> str:
-    """Cleans a CSV header for matching."""
+    """Cleans a CSV header for matching.""" 
     if not header:
         return ""
     # Lowercase, strip whitespace, remove spaces, and remove common special chars/suffixes
     return header.lower().strip().replace(' ', '').replace('($)', '').replace('_', '').replace('/', '')
 
-def parse_holdings_csv(file_contents: bytes, account_id: str) -> List[Holding]:
+def _clean_decimal(value_str: str, row_num: int, field_name: str, warnings: list) -> Decimal:
+    """Safely converts a string to a Decimal, logging warnings and defaulting to 0 on failure."""
+    if not value_str or not isinstance(value_str, str):
+        return Decimal('0')
+    
+    cleaned = value_str.strip().replace(',', '').replace('$', '')
+    if not cleaned or cleaned == '-':
+        return Decimal('0')
+        
+    try:
+        return Decimal(cleaned)
+    except InvalidOperation:
+        warnings.append({
+            "row_number": row_num,
+            "field": field_name,
+            "value": value_str,
+            "message": "Could not parse value as a number; defaulted to 0."
+        })
+        return Decimal('0')
+
+def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Holding], Dict[str, Any], List[Dict], List[Dict]]:
     """
     Parses a holdings CSV, dynamically mapping common column names to the internal model.
-    Handles UTF-8 with BOM and various header naming conventions.
+    It now returns successfully parsed holdings, a summary, a list of skipped rows, and a list of warnings.
     """
     holdings = []
-    # Use 'utf-8-sig' to automatically handle the BOM character (\ufeff)
+    skipped_rows = []
+    warnings = []
+
     try:
         file_stream = io.StringIO(file_contents.decode('utf-8-sig'))
     except UnicodeDecodeError:
-        # Fallback for non-UTF8 files
         file_stream = io.StringIO(file_contents.decode('latin-1'))
         
     reader = csv.DictReader(file_stream)
     
     if not reader.fieldnames:
         print("Warning: Holdings CSV file is empty or has no headers.")
-        return []
+        return [], {}, [], []
 
-    # Define canonical fields and their possible aliases
     HEADER_ALIASES = {
         'symbol': ['symbol', 'symbolcusip', 'ticker'],
         'quantity': ['quantity', 'shares', 'units'],
@@ -2645,49 +3263,58 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> List[Holding]:
     original_fieldnames = reader.fieldnames
     normalized_to_original = { _normalize_header(h): h for h in original_fieldnames }
 
+    # CORRECTED: More flexible header matching logic.
+    # Prioritize exact matches, then fall back to substring matches.
     for canonical_name, aliases in HEADER_ALIASES.items():
+        found = False
+        # 1. Try for an exact match of the normalized alias
         for alias in aliases:
             if alias in normalized_to_original:
                 header_map[canonical_name] = normalized_to_original[alias]
-                break 
+                found = True
+                break
+        if found:
+            continue
+
+        # 2. If no exact match, fall back to substring matching
+        for norm_header, orig_header in normalized_to_original.items():
+            if any(alias in norm_header for alias in aliases):
+                header_map[canonical_name] = orig_header
+                break
 
     required_fields = ['symbol', 'quantity']
     for field in required_fields:
         if field not in header_map:
-            print(f"ERROR: Could not find a required column for '{field}' in CSV headers.")
+            err_msg = f"ERROR: Could not find a required column for '{field}' in CSV headers."
+            print(err_msg)
             print(f"Available headers (normalized): {list(normalized_to_original.keys())}")
-            return []
+            # Return the error in the skipped_rows for visibility in the UI
+            skipped_rows.append({"row_number": 1, "row_data": original_fieldnames, "reason": err_msg})
+            return [], {}, skipped_rows, warnings
 
     print(f"Mapped CSV headers: {header_map}")
     
-    for row in reader:
+    for i, row in enumerate(reader):
+        row_num = i + 2 # 1-based index for header, then data rows
         symbol_key = header_map.get('symbol')
-        if not symbol_key or not row.get(symbol_key):
+
+        # A row is only skipped if its identifier (symbol) is missing.
+        if not symbol_key or not row.get(symbol_key) or not row.get(symbol_key).strip():
+            skipped_rows.append({"row_number": row_num, "row_data": row, "reason": "Symbol is missing or empty."})
             continue
 
-        try:
-            symbol = row[symbol_key].strip().upper()
-            if not symbol:
-                continue # Skip rows with no symbol value
+        symbol = row[symbol_key].strip().upper()
 
-            quantity_key = header_map.get('quantity')
-            raw_quantity = row.get(quantity_key, '0').strip().replace(',', '')
-            quantity = Decimal(raw_quantity if raw_quantity and raw_quantity != '-' else '0')
+        quantity_key = header_map.get('quantity')
+        quantity = _clean_decimal(row.get(quantity_key, '0'), row_num, 'quantity', warnings)
 
-            cost_basis_key = header_map.get('cost_basis')
-            raw_cost_basis = row.get(cost_basis_key, '0').strip().replace(',', '').replace('$', '')
-            cost_basis = Decimal(raw_cost_basis if raw_cost_basis and raw_cost_basis != '-' else '0')
-            
-            market_value = None
-            market_value_key = header_map.get('market_value')
-            if market_value_key and row.get(market_value_key):
-                raw_market_value = row[market_value_key].strip().replace(',', '').replace('$', '')
-                if raw_market_value and raw_market_value != '-':
-                    market_value = Decimal(raw_market_value)
+        cost_basis_key = header_map.get('cost_basis')
+        cost_basis = _clean_decimal(row.get(cost_basis_key, '0'), row_num, 'cost_basis', warnings)
         
-        except (InvalidOperation, ValueError, TypeError) as e:
-            print(f"Skipping row due to data conversion error: {row} - {e}")
-            continue
+        market_value = None
+        market_value_key = header_map.get('market_value')
+        if market_value_key and row.get(market_value_key):
+            market_value = _clean_decimal(row.get(market_value_key), row_num, 'market_value', warnings)
 
         raw_id = f"{account_id}-{symbol}"
         holding_id = hashlib.sha256(raw_id.encode('utf-8')).hexdigest()
@@ -2702,7 +3329,16 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> List[Holding]:
         )
         holdings.append(holding)
     
-    return holdings
+    total_market_value = sum(h.market_value for h in holdings if h.market_value is not None)
+    total_cost_basis = sum(h.cost_basis for h in holdings if h.cost_basis is not None)
+    summary = {
+        "record_count": len(holdings),
+        "total_market_value": total_market_value,
+        "total_cost_basis": total_cost_basis
+    }
+
+    return holdings, summary, skipped_rows, warnings
+
 
 --- AGENT MANIFEST FOR PROJECT: trust ---
 --- FILE: projects/trust/agent_manifests.json ---

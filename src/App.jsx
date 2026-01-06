@@ -4,6 +4,7 @@ import HomeView from './components/HomeView';
 import PortfolioView from './PortfolioView'; // Corrected Path
 import DataImportView from './components/DataImportView';
 import PlaceholderView from './components/PlaceholderView';
+import TransactionListView from './components/TransactionListView';
 import './App.css';
 
 function App() {
@@ -18,6 +19,7 @@ function App() {
       case 'Data & Settings':
         return <DataImportView />;
       case 'Cashflow':
+        return <TransactionListView />;
       case 'Projects/Tags':
       case 'Real Estate':
       case 'Forecast':

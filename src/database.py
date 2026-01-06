@@ -76,13 +76,24 @@ def _ensure_schema(conn: sqlite3.Connection):
     );
     """)
 
+    # --- Schema Migrations ---
     cursor.execute("PRAGMA table_info(holdings)")
-    columns = [row[1] for row in cursor.fetchall()]
-
-    if 'market_value' not in columns:
-        print("--- MIGRATING SCHEMA: Adding 'market_value' column to 'holdings' table. ---")
+    holdings_cols = {row[1] for row in cursor.fetchall()}
+    if 'market_value' not in holdings_cols:
+        print("--- MIGRATING SCHEMA: Adding 'market_value' to 'holdings'. ---")
         cursor.execute("ALTER TABLE holdings ADD COLUMN market_value REAL;")
-        print("--- MIGRATION COMPLETE. ---")
+
+    cursor.execute("PRAGMA table_info(transactions)")
+    trans_cols = {row[1] for row in cursor.fetchall()}
+    if 'institution' not in trans_cols:
+        print("--- MIGRATING SCHEMA: Adding 'institution' to 'transactions'. ---")
+        cursor.execute("ALTER TABLE transactions ADD COLUMN institution TEXT;")
+    if 'original_category' not in trans_cols:
+        print("--- MIGRATING SCHEMA: Adding 'original_category' to 'transactions'. ---")
+        cursor.execute("ALTER TABLE transactions ADD COLUMN original_category TEXT;")
+    if 'tags' not in trans_cols:
+        print("--- MIGRATING SCHEMA: Adding 'tags' to 'transactions'. ---")
+        cursor.execute("ALTER TABLE transactions ADD COLUMN tags TEXT;")
 
     conn.commit()
     print("--- Database schema is OK. ---")
@@ -110,13 +121,14 @@ def save_transactions(transactions: List[Transaction]):
     sql = """INSERT OR REPLACE INTO transactions (
                  transaction_id, account_id, transaction_date, amount, description, 
                  merchant, category, cashflow_type, is_transfer, asset_id, 
-                 import_run_id, raw_data_hash
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"""
+                 import_run_id, raw_data_hash, institution, original_category, tags
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"""
     data_to_insert = [
         (
             t.transaction_id, t.account_id, t.transaction_date.isoformat(), float(t.amount), t.description,
             t.merchant, t.category, t.cashflow_type.value if t.cashflow_type else None,
-            1 if t.is_transfer else 0, t.asset_id, t.import_run_id, t.raw_data_hash
+            1 if t.is_transfer else 0, t.asset_id, t.import_run_id, t.raw_data_hash,
+            t.institution, t.original_category, ','.join(t.tags) if t.tags else None
         ) for t in transactions
     ]
     try:
@@ -130,31 +142,56 @@ def save_transactions(transactions: List[Transaction]):
     finally:
         conn.close()
 
-def save_holdings(holdings: List[Holding]):
-    if not holdings:
-        return
+def save_holdings_snapshot(holdings: List[Holding], account_id: str):
+    """
+    Saves a complete snapshot of holdings for a specific account.
+    This is a transactional operation that first deletes all existing holdings
+    for the account and then inserts the new ones.
+    (PRS Section 11: Idempotent Import)
+    """
+    cleaned_account_id = account_id.strip() # Defensively sanitize input
+    if not cleaned_account_id:
+        print("ERROR: Cannot save holdings snapshot without an account_id.")
+        return 0, 0
+
     conn = get_db_connection()
     cursor = conn.cursor()
+    deleted_count = 0
+    inserted_count = 0
 
-    sql = """INSERT OR REPLACE INTO holdings (
-                holding_id, account_id, symbol, quantity, cost_basis, market_value
-             ) VALUES (?, ?, ?, ?, ?, ?);"""
-    data_to_insert = [
-        (
-            h.holding_id, h.account_id, h.symbol, float(h.quantity), float(h.cost_basis),
-            float(h.market_value) if h.market_value is not None else None
-        ) for h in holdings
-    ]
     try:
-        cursor.executemany(sql, data_to_insert)
+        # Step 1: Delete existing holdings (CASE-INSENSITIVE & WHITESPACE-INSENSITIVE)
+        # CORRECTED: Use trim() and lower() to handle existing dirty data.
+        cursor.execute("DELETE FROM holdings WHERE trim(lower(account_id)) = trim(lower(?))", (cleaned_account_id,))
+        deleted_count = cursor.rowcount
+        print(f"Deleted {deleted_count} stale holdings for account '{cleaned_account_id}'.")
+
+        # Step 2: Insert the new holdings
+        if holdings:
+            sql = """INSERT INTO holdings (
+                        holding_id, account_id, symbol, quantity, cost_basis, market_value
+                     ) VALUES (?, ?, ?, ?, ?, ?);"""
+            # Note: The `h.account_id` in the holdings list is assumed to be cleaned
+            # at the API layer before this function is called.
+            data_to_insert = [
+                (
+                    h.holding_id, h.account_id, h.symbol, float(h.quantity), float(h.cost_basis),
+                    float(h.market_value) if h.market_value is not None else None
+                ) for h in holdings
+            ]
+            cursor.executemany(sql, data_to_insert)
+            inserted_count = cursor.rowcount
+            print(f"Inserted {inserted_count} new holdings for account '{cleaned_account_id}'.")
+
         conn.commit()
-        print(f"Successfully saved/updated {cursor.rowcount} holdings.")
     except sqlite3.Error as e:
-        print(f"Database error during holdings save: {e}")
+        print(f"Database error during holdings snapshot save: {e}")
         conn.rollback()
         raise e
     finally:
         conn.close()
+    
+    return deleted_count, inserted_count
 
 def save_import_run(run_data: Dict[str, Any]):
     conn = get_db_connection()
@@ -269,3 +306,41 @@ def delete_rule(rule_id: str) -> bool:
     conn.commit()
     conn.close()
     return deleted_count > 0
+
+# --- Admin Utilities --- #
+
+SAFE_TO_PURGE = ["transactions", "holdings"]
+
+def purge_table_data(target_table: str) -> dict:
+    """
+    Deletes all data from a specified table if it's in the SAFE_TO_PURGE list.
+    This is a destructive operation.
+    """
+    if target_table not in SAFE_TO_PURGE:
+        raise ValueError(f"'{target_table}' is not a table that can be purged.")
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    deleted_count = 0
+    
+    try:
+        cursor.execute(f"SELECT COUNT(*) FROM {target_table}")
+        initial_count = cursor.fetchone()[0]
+
+        cursor.execute(f"DELETE FROM {target_table};")
+        deleted_count = cursor.rowcount
+        conn.commit()
+
+        print(f"Successfully purged {deleted_count} records from '{target_table}'.")
+        return {
+            "table": target_table,
+            "purged_records": deleted_count,
+            "initial_records": initial_count,
+            "status": "success"
+        }
+    except sqlite3.Error as e:
+        print(f"Database error during purge of '{target_table}': {e}")
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()

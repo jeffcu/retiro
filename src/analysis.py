@@ -35,7 +35,8 @@ def generate_income_sankey(period: str) -> Dict[str, Any]:
             if cashflow_type == 'Income' and amount > 0:
                 total_income += amount
             elif cashflow_type == 'Expense' and amount < 0:
-                category = tx.get('category') or 'Uncategorized'
+                # Prioritize original_category, then rule-based category, then 'Uncategorized'
+                category = tx.get('original_category') or tx.get('category') or 'Uncategorized'
                 expense_by_category[category] += abs(amount)
             elif cashflow_type == 'Capital Expenditure' and amount < 0:
                 total_capex += abs(amount)

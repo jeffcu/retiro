@@ -1,3 +1,35 @@
+.summary-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1.5rem;
+    padding: 1rem;
+    background-color: var(--dark-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    margin-bottom: 2rem;
+}
+
+.summary-item {
+    display: flex;
+    flex-direction: column;
+}
+
+.summary-item .label {
+    font-size: 0.9em;
+    color: #aaa;
+    margin-bottom: 0.25rem;
+}
+
+.summary-item .value {
+    font-size: 1.8em;
+    font-weight: bold;
+    color: #fff;
+}
+
+.summary-item .value.emphasis {
+    color: var(--gold-accent);
+}
+
 .table-container {
     margin-top: 1rem;
     max-height: 600px;
@@ -47,3 +79,4 @@
 .table-container tfoot td:first-child {
     text-align: right;
 }
+

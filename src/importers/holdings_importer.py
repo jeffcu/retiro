@@ -13,13 +13,36 @@ def _normalize_header(header: str) -> str:
     # Lowercase, strip whitespace, remove spaces, and remove common special chars/suffixes
     return header.lower().strip().replace(' ', '').replace('($)', '').replace('_', '').replace('/', '')
 
-def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Holding], Dict[str, Any]]:
+def _clean_decimal(value_str: str, row_num: int, field_name: str, warnings: list) -> Decimal:
+    """Safely converts a string to a Decimal, logging warnings and defaulting to 0 on failure."""
+    if not value_str or not isinstance(value_str, str):
+        return Decimal('0')
+    
+    cleaned = value_str.strip().replace(',', '').replace('$', '')
+    if not cleaned or cleaned == '-':
+        return Decimal('0')
+        
+    try:
+        return Decimal(cleaned)
+    except InvalidOperation:
+        warnings.append({
+            "row_number": row_num,
+            "field": field_name,
+            "value": value_str,
+            "message": "Could not parse value as a number; defaulted to 0."
+        })
+        return Decimal('0')
+
+def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Holding], Dict[str, Any], List[Dict], List[Dict]]:
     """
     Parses a holdings CSV, dynamically mapping common column names to the internal model.
-    Handles UTF-8 with BOM and various header naming conventions.
-    Returns the holdings and a summary dictionary for auditing.
+    This version now aggregates data for duplicate symbols within the same file,
+    summing quantity, cost basis, and market value.
     """
-    holdings = []
+    holdings_map = {} # Use a dictionary to handle aggregation of duplicate symbols.
+    skipped_rows = []
+    warnings = []
+
     try:
         file_stream = io.StringIO(file_contents.decode('utf-8-sig'))
     except UnicodeDecodeError:
@@ -29,7 +52,7 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Hold
     
     if not reader.fieldnames:
         print("Warning: Holdings CSV file is empty or has no headers.")
-        return [], {}
+        return [], {}, [], []
 
     HEADER_ALIASES = {
         'symbol': ['symbol', 'symbolcusip', 'ticker'],
@@ -42,62 +65,91 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Hold
     original_fieldnames = reader.fieldnames
     normalized_to_original = { _normalize_header(h): h for h in original_fieldnames }
 
+    # CORRECTED: More flexible header matching logic.
+    # Prioritize exact matches, then fall back to substring matches.
     for canonical_name, aliases in HEADER_ALIASES.items():
+        found = False
+        # 1. Try for an exact match of the normalized alias
         for alias in aliases:
             if alias in normalized_to_original:
                 header_map[canonical_name] = normalized_to_original[alias]
-                break 
+                found = True
+                break
+        if found:
+            continue
+
+        # 2. If no exact match, fall back to substring matching
+        for norm_header, orig_header in normalized_to_original.items():
+            if any(alias in norm_header for alias in aliases):
+                header_map[canonical_name] = orig_header
+                break
 
     required_fields = ['symbol', 'quantity']
     for field in required_fields:
         if field not in header_map:
-            print(f"ERROR: Could not find a required column for '{field}' in CSV headers.")
+            err_msg = f"ERROR: Could not find a required column for '{field}' in CSV headers."
+            print(err_msg)
             print(f"Available headers (normalized): {list(normalized_to_original.keys())}")
-            return [], {}
+            # Return the error in the skipped_rows for visibility in the UI
+            skipped_rows.append({"row_number": 1, "row_data": original_fieldnames, "reason": err_msg})
+            return [], {}, skipped_rows, warnings
 
     print(f"Mapped CSV headers: {header_map}")
     
-    for row in reader:
+    for i, row in enumerate(reader):
+        row_num = i + 2 # 1-based index for header, then data rows
         symbol_key = header_map.get('symbol')
-        if not symbol_key or not row.get(symbol_key):
+
+        # A row is only skipped if its identifier (symbol) is missing.
+        if not symbol_key or not row.get(symbol_key) or not row.get(symbol_key).strip():
+            skipped_rows.append({"row_number": row_num, "row_data": row, "reason": "Symbol is missing or empty."})
             continue
 
-        try:
-            symbol = row[symbol_key].strip().upper()
-            if not symbol:
-                continue
+        symbol = row[symbol_key].strip().upper()
 
-            quantity_key = header_map.get('quantity')
-            raw_quantity = row.get(quantity_key, '0').strip().replace(',', '')
-            quantity = Decimal(raw_quantity if raw_quantity and raw_quantity != '-' else '0')
+        quantity_key = header_map.get('quantity')
+        quantity = _clean_decimal(row.get(quantity_key, '0'), row_num, 'quantity', warnings)
 
-            cost_basis_key = header_map.get('cost_basis')
-            raw_cost_basis = row.get(cost_basis_key, '0').strip().replace(',', '').replace('$', '')
-            cost_basis = Decimal(raw_cost_basis if raw_cost_basis and raw_cost_basis != '-' else '0')
-            
-            market_value = None
-            market_value_key = header_map.get('market_value')
-            if market_value_key and row.get(market_value_key):
-                raw_market_value = row[market_value_key].strip().replace(',', '').replace('$', '')
-                if raw_market_value and raw_market_value != '-':
-                    market_value = Decimal(raw_market_value)
+        cost_basis_key = header_map.get('cost_basis')
+        cost_basis = _clean_decimal(row.get(cost_basis_key, '0'), row_num, 'cost_basis', warnings)
         
-        except (InvalidOperation, ValueError, TypeError) as e:
-            print(f"Skipping row due to data conversion error: {row} - {e}")
-            continue
+        market_value = None
+        market_value_key = header_map.get('market_value')
+        if market_value_key and row.get(market_value_key):
+            market_value = _clean_decimal(row.get(market_value_key), row_num, 'market_value', warnings)
 
-        raw_id = f"{account_id}-{symbol}"
-        holding_id = hashlib.sha256(raw_id.encode('utf-8')).hexdigest()
+        # --- AGGREGATION LOGIC ---
+        if symbol in holdings_map:
+            # Aggregate data for the existing symbol
+            existing_holding = holdings_map[symbol]
+            existing_holding.quantity += quantity
+            existing_holding.cost_basis += cost_basis
+            if existing_holding.market_value is not None and market_value is not None:
+                existing_holding.market_value += market_value
+            elif market_value is not None:
+                existing_holding.market_value = market_value
+            
+            warnings.append({
+                "row_number": row_num,
+                "field": "symbol",
+                "value": symbol,
+                "message": "Duplicate symbol found; values were aggregated."
+            })
+        else:
+            # Create a new holding entry
+            raw_id = f"{account_id}-{symbol}"
+            holding_id = hashlib.sha256(raw_id.encode('utf-8')).hexdigest()
+            
+            holdings_map[symbol] = Holding(
+                holding_id=holding_id,
+                account_id=account_id,
+                symbol=symbol,
+                quantity=quantity,
+                cost_basis=cost_basis,
+                market_value=market_value
+            )
 
-        holding = Holding(
-            holding_id=holding_id,
-            account_id=account_id,
-            symbol=symbol,
-            quantity=quantity,
-            cost_basis=cost_basis,
-            market_value=market_value
-        )
-        holdings.append(holding)
+    holdings = list(holdings_map.values())
     
     total_market_value = sum(h.market_value for h in holdings if h.market_value is not None)
     total_cost_basis = sum(h.cost_basis for h in holdings if h.cost_basis is not None)
@@ -107,4 +159,4 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Hold
         "total_cost_basis": total_cost_basis
     }
 
-    return holdings, summary
+    return holdings, summary, skipped_rows, warnings

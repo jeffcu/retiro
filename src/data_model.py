@@ -31,6 +31,8 @@ class Transaction:
     asset_id: str | None = None
     import_run_id: str | None = None
     raw_data_hash: str | None = None
+    institution: str | None = None
+    original_category: str | None = None
 
 
 @dataclass
