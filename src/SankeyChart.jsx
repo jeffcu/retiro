@@ -10,13 +10,22 @@ const SankeyChart = ({ data }) => {
         maximumFractionDigits: 2,
     }).format(value);
 
+    const handleNodeClick = (node, event) => {
+        // Placeholder for drill-down functionality (PRS 2.2)
+        const details = `Node Clicked:\nID: ${node.id}\nValue: ${formatValue(node.value)}`;
+        console.log(details);
+        alert(details);
+    };
+
     return (
-        <div style={{ height: '600px', width: '100%' }}>
+        // --- VISUAL REFINEMENT (User Request) --- //
+        // Added a light grey background to the chart container for better contrast.
+        <div style={{ height: '600px', width: '100%', backgroundColor: '#f5f5f5', borderRadius: '4px', padding: '1rem' }}>
             <ResponsiveSankey
                 data={data} 
-                margin={{ top: 40, right: 160, bottom: 40, left: 50 }}
+                margin={{ top: 20, right: 160, bottom: 20, left: 50 }}
                 align="justify"
-                colors={{ scheme: 'category10' }}
+                colors={{ scheme: 'category10' }} // A colorblind-safe, distinct palette
                 nodeOpacity={1}
                 nodeHoverOthersOpacity={0.35}
                 nodeThickness={18}
@@ -24,19 +33,23 @@ const SankeyChart = ({ data }) => {
                 nodeBorderWidth={0}
                 nodeBorderColor={{ from: 'color', modifiers: [['darker', 0.8]] }}
                 nodeBorderRadius={3}
-                linkOpacity={0.5}
+                
+                // Link/flow styling for light background
+                linkOpacity={0.6}
+                linkColor="#adadad" // Medium grey for good contrast on light bg
+                enableLinkGradient={false}
+
                 linkHoverOthersOpacity={0.1}
                 linkContract={3}
-                enableLinkGradient={true}
                 labelPosition="outside"
-                labelOrientation="vertical"
+                labelOrientation="horizontal"
                 labelPadding={16}
-                // --- VISIBILITY FIX --- //
-                // Set a static, light color for labels for high contrast on a dark background.
-                labelTextColor="#DDDDDD"
+                // Label color inverted for light background
+                labelTextColor="#333333"
+
+                onClick={handleNodeClick} // Added click handler for future drill-down
                 
-                // --- DIAGNOSTIC ENHANCEMENT --- //
-                // This new property adds a tooltip that displays the value when hovering over a link.
+                // Tooltip for links (flows)
                 linkTooltip={({ link }) => (
                     <div style={{
                         padding: '12px',
@@ -51,27 +64,23 @@ const SankeyChart = ({ data }) => {
                     </div>
                 )}
 
-                legends={[
-                    {
-                        anchor: 'bottom-right',
-                        direction: 'column',
-                        translateX: 130,
-                        itemWidth: 100,
-                        itemHeight: 14,
-                        itemDirection: 'right-to-left',
-                        itemsSpacing: 2,
-                        itemTextColor: '#999',
-                        symbolSize: 14,
-                        effects: [
-                            {
-                                on: 'hover',
-                                style: {
-                                    itemTextColor: '#fff'
-                                }
-                            }
-                        ]
-                    }
-                ]}
+                // Tooltip for nodes (bars) - Hardened to prevent crashes on bad data.
+                nodeTooltip={node => (
+                    <div style={{
+                        padding: '12px',
+                        background: '#fff',
+                        color: '#000',
+                        border: '1px solid #ccc',
+                        borderRadius: '3px',
+                    }}>
+                        <strong>{node.id}</strong>
+                        <br />
+                        {/* Defensive check: Ensure node.value is a number before formatting. */}
+                        {typeof node.value === 'number' ? formatValue(node.value) : 'N/A'}
+                    </div>
+                )}
+                
+                // legends prop removed to simplify the UI as per prior request.
             />
         </div>
     )

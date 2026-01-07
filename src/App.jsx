@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import NavBar from './components/NavBar';
+import SideBar from './components/SideBar';
 import HomeView from './components/HomeView';
-import PortfolioView from './PortfolioView'; // Corrected Path
+import PortfolioView from './PortfolioView';
 import DataImportView from './components/DataImportView';
 import PlaceholderView from './components/PlaceholderView';
 import TransactionListView from './components/TransactionListView';
@@ -31,7 +31,7 @@ function App() {
 
   return (
     <>
-      <NavBar activeView={activeView} setActiveView={setActiveView} />
+      <SideBar activeView={activeView} setActiveView={setActiveView} />
       <main className="main-content">
         <h1>{activeView}</h1>
         {renderView()}

@@ -1,6 +1,7 @@
 .net-worth-hero {
-    background-color: var(--medium-bg);
-    border: 1px solid var(--border-color);
+    background: linear-gradient(45deg, var(--gold-accent), #f7d794);
+    color: var(--dark-bg);
+    border: none;
     border-radius: 8px;
     padding: 1.5rem 2rem;
     margin-bottom: 2rem;
@@ -11,17 +12,21 @@
     margin-top: 0;
     border-bottom: none;
     padding-bottom: 0;
+    font-weight: 500;
+    opacity: 0.8;
+    color: var(--dark-bg);
 }
 
 .net-worth-hero .value {
     font-size: 3.5em;
     font-weight: bold;
-    color: #fff;
+    color: var(--dark-bg);
     margin: 0.5rem 0;
 }
 
 .net-worth-hero .timestamp {
     font-size: 0.9em;
-    color: #999;
+    color: var(--dark-bg);
+    opacity: 0.7;
     margin: 0;
 }

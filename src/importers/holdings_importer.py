@@ -55,7 +55,7 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Hold
         return [], {}, [], []
 
     HEADER_ALIASES = {
-        'symbol': ['symbol', 'symbolcusip', 'ticker'],
+        'symbol': ['symbol', 'ticker', 'symbolcusip'],
         'quantity': ['quantity', 'shares', 'units'],
         'cost_basis': ['costbasis', 'cost', 'totalcost', 'costbasis($)'],
         'market_value': ['marketvalue', 'value', 'totalvalue', 'value($)'],

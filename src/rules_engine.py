@@ -11,68 +11,76 @@ from . import database as db
 @dataclass
 class Rule:
     """ 
-    Represents a single categorization rule.
+    Represents a single v2 categorization rule.
     (PRS Section 5.3)
     """
     rule_id: str
-    pattern: str  # The regex pattern to match against the transaction description.
+    pattern: str
     category: str
     cashflow_type: CashflowType
     tags: List[str] = field(default_factory=list)
     priority: int = 100
-
-def _reset_and_apply_defaults(transaction: Transaction) -> Transaction:
-    """
-    Resets classification fields to their defaults before reapplying rules.
-    This is crucial for re-categorization when rules have been changed or deleted.
-    """
-    # Reset rule-derived fields
-    transaction.category = None
-    transaction.cashflow_type = None
-    transaction.tags = []
-    transaction.is_transfer = False
-
-    # Apply default classification based on amount
-    if transaction.amount > 0:
-        transaction.cashflow_type = CashflowType.INCOME
-        transaction.category = 'Income'
-    elif transaction.amount < 0:
-        transaction.cashflow_type = CashflowType.EXPENSE
-        # CORRECTED: Explicitly set default category for expenses.
-        transaction.category = 'Uncategorized'
-
-    return transaction
+    case_sensitive: bool = False
+    account_filter_mode: str = 'include'
+    account_filter_list: List[str] = field(default_factory=list)
 
 def apply_rules_to_transaction(transaction: Transaction, rules: List[Rule]) -> Transaction:
     """
     Applies a list of rules to a single transaction, modifying it in place.
-    The first rule that matches (by priority, then by order) wins.
+    The first rule that matches all conditions (by priority) wins.
+    If no rule matches, it falls back to the original category or a default.
     """
-    # First, reset the transaction to its default state
-    transaction = _reset_and_apply_defaults(transaction)
-
-    # Sort rules by priority. Lower number means higher priority.
     sorted_rules = sorted(rules, key=lambda r: r.priority)
+    rule_matched = False
+
+    # Reset volatile fields before rule application
+    transaction.tags = []
+    transaction.is_transfer = False
 
     for rule in sorted_rules:
+        # --- Condition 1: Account Filter ---
+        if rule.account_filter_list:
+            account_matches = any(acc.lower() == transaction.account_id.lower() for acc in rule.account_filter_list)
+            
+            if rule.account_filter_mode == 'include' and not account_matches:
+                continue # Skip: transaction account not in the include list
+            if rule.account_filter_mode == 'exclude' and account_matches:
+                continue # Skip: transaction account is in the exclude list
+
+        # --- Condition 2: Description Pattern ---
         try:
-            if re.search(rule.pattern, transaction.description, re.IGNORECASE):
+            flags = 0 if rule.case_sensitive else re.IGNORECASE
+            if re.search(rule.pattern, transaction.description, flags):
                 print(f"Rule '{rule.pattern}' matched description '{transaction.description}'. Applying category '{rule.category}'.")
                 transaction.category = rule.category
                 transaction.cashflow_type = rule.cashflow_type
                 transaction.tags = list(set(transaction.tags + rule.tags)) # Merge and dedupe tags
                 
-                # Set is_transfer flag for convenience
-                if rule.cashflow_type == CashflowType.TRANSFER:
-                    transaction.is_transfer = True
-                else:
-                    transaction.is_transfer = False
+                transaction.is_transfer = rule.cashflow_type == CashflowType.TRANSFER
                 
-                # First match wins, so we break.
-                break 
+                rule_matched = True
+                break # First match wins
         except re.error as e:
             print(f"Skipping invalid regex pattern in rule {rule.rule_id}: '{rule.pattern}' - {e}")
             continue
+
+    # --- Fallback Logic: If no rules matched --- #
+    if not rule_matched:
+        # If an original category was imported, it is the highest-priority fallback.
+        if transaction.original_category:
+            transaction.category = transaction.original_category
+            transaction.tags.append(transaction.original_category)
+
+        # Apply default cashflow type and category ONLY if they are not already set.
+        # This preserves the original category if it was set above.
+        if transaction.amount > 0:
+            transaction.cashflow_type = CashflowType.INCOME
+            if not transaction.category:
+                transaction.category = 'Income'
+        elif transaction.amount < 0:
+            transaction.cashflow_type = CashflowType.EXPENSE
+            if not transaction.category:
+                transaction.category = 'Uncategorized'
 
     return transaction
 
@@ -87,8 +95,11 @@ def load_rules_from_db() -> List[Rule]:
             pattern=r['pattern'],
             category=r['category'],
             cashflow_type=CashflowType(r['cashflow_type']),
-            tags=r.get('tags', []), # The DB layer now returns a list
-            priority=r['priority']
+            tags=r.get('tags', []),
+            priority=r['priority'],
+            case_sensitive=r.get('case_sensitive', False),
+            account_filter_mode=r.get('account_filter_mode', 'include'),
+            account_filter_list=r.get('account_filter_list', [])
         ) for r in rule_records
     ]
     return rules
@@ -100,12 +111,12 @@ def recategorize_all_transactions() -> int:
     """
     print("--- Starting global re-categorization process... ---")
     rules = load_rules_from_db()
-    transaction_dicts = db.get_all_transactions()
+    # UPDATED: Use the new get_transactions function
+    transaction_dicts = db.get_transactions()
     updated_transactions = []
 
     for tx_dict in transaction_dicts:
         # Convert dict from DB back into a Transaction object for processing
-        # This ensures type safety and consistency with the data model.
         tx_obj = Transaction(
             transaction_id=tx_dict['transaction_id'],
             account_id=tx_dict['account_id'],
@@ -115,7 +126,9 @@ def recategorize_all_transactions() -> int:
             merchant=tx_dict.get('merchant'),
             asset_id=tx_dict.get('asset_id'),
             import_run_id=tx_dict.get('import_run_id'),
-            raw_data_hash=tx_dict.get('raw_data_hash')
+            raw_data_hash=tx_dict.get('raw_data_hash'),
+            institution=tx_dict.get('institution'),
+            original_category=tx_dict.get('original_category')
         )
 
         # Apply the full rule set to the reconstituted transaction object

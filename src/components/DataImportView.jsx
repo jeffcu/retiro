@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import './DataImportView.css';
 import ImportSummary from './ImportSummary';
+import RulesEditor from './RulesEditor';
 
 const FileUploader = ({ title, importType, onUploadSuccess }) => {
     const [file, setFile] = useState(null);
@@ -90,10 +91,99 @@ const FileUploader = ({ title, importType, onUploadSuccess }) => {
     );
 };
 
+const AccountVisibilityManager = ({ onSettingsChanged }) => {
+    const [accounts, setAccounts] = useState([]);
+    const [visibility, setVisibility] = useState({});
+    const [isLoading, setIsLoading] = useState(true);
+    const [isSaving, setIsSaving] = useState(false);
+
+    useEffect(() => {
+        const fetchData = async () => {
+            try {
+                setIsLoading(true);
+                const [accountsRes, visibilityRes] = await Promise.all([
+                    fetch('/api/accounts'),
+                    fetch('/api/accounts/visibility')
+                ]);
+                if (!accountsRes.ok || !visibilityRes.ok) throw new Error("Failed to fetch account data");
+
+                const accountsData = await accountsRes.json();
+                const visibilityData = await visibilityRes.json();
+
+                setAccounts(accountsData);
+                // Ensure every account has a visibility setting, defaulting to true
+                const initialVisibility = accountsData.reduce((acc, accountId) => {
+                    acc[accountId] = visibilityData.hasOwnProperty(accountId) ? visibilityData[accountId] : true;
+                    return acc;
+                }, {});
+                setVisibility(initialVisibility);
+            } catch (error) {
+                console.error("Failed to fetch account settings", error);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        fetchData();
+    }, []);
+
+    const handleToggle = (accountId) => {
+        setVisibility(prev => ({ ...prev, [accountId]: !prev[accountId] }));
+    };
+
+    const handleSave = async () => {
+        setIsSaving(true);
+        try {
+            const response = await fetch('/api/accounts/visibility', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ settings: visibility }),
+            });
+            if (!response.ok) throw new Error('Failed to save settings');
+            alert('Visibility settings saved successfully!');
+            onSettingsChanged(); // Notify parent to refresh other components if needed
+        } catch (error) {
+            console.error("Failed to save visibility settings:", error);
+            alert(`Error: ${error.message}`);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    return (
+        <div className='visibility-manager-card'>
+            <h3>Account Visibility (for Sankey Chart)</h3>
+            {isLoading ? (
+                <p>Loading accounts...</p>
+            ) : (
+                <>
+                    <div className='account-list'>
+                        {accounts.map(accountId => (
+                            <div key={accountId} className='account-item'>
+                                <input 
+                                    type="checkbox" 
+                                    id={`vis-${accountId}`}
+                                    checked={visibility[accountId] || false}
+                                    onChange={() => handleToggle(accountId)}
+                                />
+                                <label htmlFor={`vis-${accountId}`}>{accountId}</label>
+                            </div>
+                        ))}
+                    </div>
+                    <div className='visibility-actions'>
+                        <button onClick={handleSave} disabled={isSaving}>
+                            {isSaving ? 'Saving...' : 'Save Settings'}
+                        </button>
+                    </div>
+                </>
+            )}
+        </div>
+    );
+};
+
 const DataImportView = () => {
     const [refreshKey, setRefreshKey] = useState(0);
 
-    const handleUploadSuccess = () => {
+    const handleRefresh = () => {
         setRefreshKey(prevKey => prevKey + 1); // Increment key to trigger refresh
     };
 
@@ -105,15 +195,17 @@ const DataImportView = () => {
                     <FileUploader 
                         title="Import Transactions" 
                         importType="transactions" 
-                        onUploadSuccess={handleUploadSuccess} 
+                        onUploadSuccess={handleRefresh} 
                     />
                     <FileUploader 
                         title="Import Portfolio Holdings" 
                         importType="holdings" 
-                        onUploadSuccess={handleUploadSuccess} 
+                        onUploadSuccess={handleRefresh} 
                     />
                 </div>
             </div>
+            <AccountVisibilityManager onSettingsChanged={handleRefresh} />
+            <RulesEditor />
             <ImportSummary refreshKey={refreshKey} />
         </>
     );

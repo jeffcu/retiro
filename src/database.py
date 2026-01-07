@@ -1,7 +1,7 @@
 import sqlite3
 import uuid
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 from src.data_model import Transaction, Holding
 
 # Per MDS, the database is a single file in the data/ directory.
@@ -75,6 +75,14 @@ def _ensure_schema(conn: sqlite3.Connection):
         total_cost_basis REAL
     );
     """)
+    
+    # --- NEW: Table for Account Visibility Settings --- #
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS account_visibility (
+        account_id TEXT PRIMARY KEY,
+        is_visible INTEGER NOT NULL DEFAULT 1
+    );
+    """)
 
     # --- Schema Migrations ---
     cursor.execute("PRAGMA table_info(holdings)")
@@ -94,6 +102,19 @@ def _ensure_schema(conn: sqlite3.Connection):
     if 'tags' not in trans_cols:
         print("--- MIGRATING SCHEMA: Adding 'tags' to 'transactions'. ---")
         cursor.execute("ALTER TABLE transactions ADD COLUMN tags TEXT;")
+
+    cursor.execute("PRAGMA table_info(rules)")
+    rules_cols = {row[1] for row in cursor.fetchall()}
+    if 'case_sensitive' not in rules_cols:
+        print("--- MIGRATING SCHEMA: Adding 'case_sensitive' to 'rules'. ---")
+        cursor.execute("ALTER TABLE rules ADD COLUMN case_sensitive INTEGER DEFAULT 0;")
+    if 'account_filter_mode' not in rules_cols:
+        print("--- MIGRATING SCHEMA: Adding 'account_filter_mode' to 'rules'. ---")
+        cursor.execute("ALTER TABLE rules ADD COLUMN account_filter_mode TEXT DEFAULT 'include';")
+    if 'account_filter_list' not in rules_cols:
+        print("--- MIGRATING SCHEMA: Adding 'account_filter_list' to 'rules'. ---")
+        cursor.execute("ALTER TABLE rules ADD COLUMN account_filter_list TEXT;")
+
 
     conn.commit()
     print("--- Database schema is OK. ---")
@@ -225,21 +246,80 @@ def save_import_run(run_data: Dict[str, Any]):
 
 # --- Data Retrieval --- #
 
-def get_all_transactions() -> List[Dict[str, Any]]:
+def _build_where_clause(filters: Dict, allowed_fields: List[str]) -> Tuple[str, List[Any]]:
+    """Helper to build a dynamic WHERE clause safely."""
+    clauses = []
+    params = []
+
+    if not filters:
+        return "", []
+
+    for key, value in filters.items():
+        if key not in allowed_fields:
+            continue
+        
+        if key in ['description', 'tags']:
+            clauses.append(f"{key} LIKE ?")
+            params.append(f"%{value}%")
+        else:
+            clauses.append(f"{key} = ?")
+            params.append(value)
+    
+    if not clauses:
+        return "", []
+
+    return f"WHERE {" AND ".join(clauses)}", params
+
+def get_transactions(filters: Dict[str, Any] = None, exclude_invisible: bool = False) -> List[Dict[str, Any]]:
+    """ 
+    Retrieves transactions, with options for filtering.
+    """
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM transactions ORDER BY transaction_date DESC")
+    
+    base_query = "SELECT * FROM transactions"
+    where_clauses = []
+    params = []
+
+    if exclude_invisible:
+        where_clauses.append("account_id NOT IN (SELECT account_id FROM account_visibility WHERE is_visible = 0)")
+
+    if filters:
+        allowed = ['category', 'account_id', 'institution', 'description', 'tags']
+        for key, value in filters.items():
+            if key in allowed:
+                if key in ['description', 'tags']:
+                    where_clauses.append(f"{key} LIKE ?")
+                    params.append(f'%{value}%')
+                else:
+                    where_clauses.append(f"{key} = ?")
+                    params.append(value)
+
+    if where_clauses:
+        base_query += " WHERE " + " AND ".join(where_clauses)
+
+    base_query += " ORDER BY transaction_date DESC"
+
+    cursor.execute(base_query, params)
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
 
-def get_all_holdings() -> List[Dict[str, Any]]:
+
+def get_holdings(filters: Dict[str, Any] = None) -> List[Dict[str, Any]]:
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM holdings ORDER BY symbol ASC")
+
+    allowed_fields = ['account_id', 'symbol']
+    where_clause, params = _build_where_clause(filters, allowed_fields)
+
+    query = f"SELECT * FROM holdings {where_clause} ORDER BY symbol ASC"
+    
+    cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
+
 
 def get_all_import_runs() -> List[Dict[str, Any]]:
     conn = get_db_connection()
@@ -249,31 +329,143 @@ def get_all_import_runs() -> List[Dict[str, Any]]:
     conn.close()
     return [dict(row) for row in rows]
 
+# --- Filter Options --- #
+
+def get_filter_options() -> Dict[str, List[str]]:
+    """Gets unique values for filter dropdowns."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    options = {}
+
+    cursor.execute("SELECT DISTINCT category FROM transactions WHERE category IS NOT NULL AND category != '' AND category != 'Uncategorized' ORDER BY category")
+    
+    fetched_rows = cursor.fetchall()
+    options['categories'] = [row['category'] for row in fetched_rows]
+
+    cursor.execute("SELECT DISTINCT account_id FROM transactions ORDER BY account_id")
+    options['accounts'] = [row['account_id'] for row in cursor.fetchall()]
+
+    cursor.execute("SELECT DISTINCT institution FROM transactions WHERE institution IS NOT NULL ORDER BY institution")
+    options['institutions'] = [row['institution'] for row in cursor.fetchall()]
+
+    conn.close()
+    return options
+
+
+# --- Aggregations for Charts --- #
+
+def get_latest_transaction_year() -> int | None:
+    """Finds the most recent year present in the transaction data."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT MAX(strftime('%Y', transaction_date)) as latest_year FROM transactions")
+    result = cursor.fetchone()
+    conn.close()
+    if result and result['latest_year']:
+        return int(result['latest_year'])
+    return None
+
+def get_cashflow_aggregation_by_month(year: int, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    allowed_fields = ['category', 'account_id', 'institution', 'description', 'tags']
+    where_clause, params = _build_where_clause(filters, allowed_fields)
+    
+    # Prepend year filter to where clause
+    if where_clause:
+        final_where = f"WHERE strftime('%Y', transaction_date) = ? AND ({where_clause[6:]})"
+    else:
+        final_where = f"WHERE strftime('%Y', transaction_date) = ?"
+
+    final_params = [str(year)] + params
+
+    query = f"""
+        SELECT 
+            CAST(strftime('%m', transaction_date) AS INTEGER) as month,
+            SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as income,
+            SUM(CASE WHEN amount < 0 AND cashflow_type = 'Expense' THEN amount ELSE 0 END) as expense
+        FROM transactions
+        {final_where}
+        GROUP BY month
+        ORDER BY month ASC
+    """
+
+    cursor.execute(query, final_params)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_holdings_aggregation_by_symbol(filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    allowed_fields = ['account_id', 'symbol']
+    where_clause, params = _build_where_clause(filters, allowed_fields)
+
+    query = f"""
+        SELECT
+            symbol,
+            SUM(market_value) as total_market_value
+        FROM holdings
+        {where_clause}
+        GROUP BY symbol
+        HAVING total_market_value > 0
+        ORDER BY total_market_value DESC
+        LIMIT 20
+    """
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
 # --- Rules CRUD --- #
 
 def _transform_rule_record(rule_row: sqlite3.Row) -> Dict[str, Any]:
     if not rule_row:
         return None
     rule_dict = dict(rule_row)
+    
     if rule_dict.get('tags') and isinstance(rule_dict['tags'], str):
         rule_dict['tags'] = [tag.strip() for tag in rule_dict['tags'].split(',') if tag.strip()]
     else:
         rule_dict['tags'] = []
+
+    if rule_dict.get('account_filter_list') and isinstance(rule_dict['account_filter_list'], str):
+        rule_dict['account_filter_list'] = [acc.strip() for acc in rule_dict['account_filter_list'].split(',') if acc.strip()]
+    else:
+        rule_dict['account_filter_list'] = []
+        
+    rule_dict['case_sensitive'] = bool(rule_dict.get('case_sensitive', 0))
+
     return rule_dict
 
 def create_rule(rule_data: Dict[str, Any]) -> Dict[str, Any]:
     conn = get_db_connection()
     cursor = conn.cursor()
     rule_id = str(uuid.uuid4())
-    sql = """INSERT INTO rules (rule_id, pattern, category, cashflow_type, tags, priority)
-             VALUES (?, ?, ?, ?, ?, ?);"""
+    sql = """INSERT INTO rules (
+                rule_id, pattern, category, cashflow_type, tags, priority, 
+                case_sensitive, account_filter_mode, account_filter_list
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);"""
+    
+    # Ensure lists are stored as comma-separated strings
+    tags_str = ','.join(rule_data.get('tags', []))
+    account_list_str = ','.join(rule_data.get('account_filter_list', []))
+    
     cursor.execute(sql, (
         rule_id,
         rule_data['pattern'],
         rule_data['category'],
         rule_data['cashflow_type'],
-        ','.join(rule_data.get('tags', [])),
-        rule_data.get('priority', 100)
+        tags_str,
+        rule_data.get('priority', 100),
+        1 if rule_data.get('case_sensitive') else 0,
+        rule_data.get('account_filter_mode', 'include'),
+        account_list_str
     ))
     conn.commit()
     new_rule_cursor = conn.cursor()
@@ -306,6 +498,53 @@ def delete_rule(rule_id: str) -> bool:
     conn.commit()
     conn.close()
     return deleted_count > 0
+
+# --- Account Management --- #
+
+def get_all_account_ids() -> List[str]:
+    """ Gets all unique account IDs, ensuring they exist in the visibility table. """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    # This query finds all accounts in transactions and inserts any new ones
+    # into the visibility table with a default of visible (1).
+    cursor.execute("""
+        INSERT OR IGNORE INTO account_visibility (account_id, is_visible)
+        SELECT DISTINCT account_id, 1 FROM transactions WHERE account_id IS NOT NULL;
+    """)
+    conn.commit()
+    
+    cursor.execute("SELECT account_id FROM account_visibility ORDER BY account_id ASC")
+    rows = cursor.fetchall()
+    conn.close()
+    return [row['account_id'] for row in rows]
+
+def get_account_visibility() -> Dict[str, bool]:
+    """ Returns a dictionary of all known accounts and their visibility status. """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT account_id, is_visible FROM account_visibility")
+    rows = cursor.fetchall()
+    conn.close()
+    return {row['account_id']: bool(row['is_visible']) for row in rows}
+
+def set_account_visibility(settings: Dict[str, bool]):
+    """ Persists visibility settings for multiple accounts. """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    data_to_upsert = [(acc, 1 if is_visible else 0) for acc, is_visible in settings.items()]
+    
+    try:
+        cursor.executemany("""
+            INSERT INTO account_visibility (account_id, is_visible) VALUES (?, ?)
+            ON CONFLICT(account_id) DO UPDATE SET is_visible = excluded.is_visible;
+        """, data_to_upsert)
+        conn.commit()
+        print(f"Updated visibility for {len(data_to_upsert)} accounts.")
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
 
 # --- Admin Utilities --- #
 

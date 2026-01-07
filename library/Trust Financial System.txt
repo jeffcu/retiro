@@ -1,4 +1,4 @@
-Curie Trust Financial Control Center — Project Requirements Specification (PRS) v1.0
+Curie Trust Financial Control Center — Project Requirements Specification (PRS) v1.1
 
 1) Mission
 
@@ -51,11 +51,11 @@ C) Portfolio Return Waterfall as Sankey (Portfolio Screen)
 3.1 Transaction Cashflow Types (Mutually Exclusive)
 
 Every transaction is exactly one:
-	•	Income
-	•	Expense (consumption)
-	•	Transfer (between trust-controlled accounts; net-zero)
-	•	CapEx (capital improvement; increases asset basis)
-	•	(Optional future) Investment transaction
+	•	Income: Money entering the trust's operational cash flow.
+	•	Expense (consumption): Money leaving the trust for goods/services.
+	•	Transfer (between trust-controlled accounts; net-zero for cash flow).
+	•	CapEx (capital improvement; increases asset basis).
+	•	Investment: A transaction affecting portfolio value but not operational cash flow (e.g., security purchases, sales, reinvested dividends). Investment-type transactions are excluded from the main Income→Uses Sankey.
 
 Expenses drive “spend/burn.”
 CapEx is excluded from “spend/burn” but included in net worth via asset basis.
@@ -115,7 +115,7 @@ Priority order:
 
 4.7 Data & Settings
 	•	CSV import, mapping profiles, dedupe logs
-	•	Rules editor (merchant→category/tags/type)
+	•	Filter Rules editor (see section 5.3)
 	•	Manual entry: fees, taxes, market value snapshots
 	•	Backup/restore
 
@@ -133,16 +133,28 @@ Priority order:
 	1.	Upload file(s) (drag/drop)
 	2.	Detect type via column heuristics
 	3.	Preview + mapping UI (first time per institution)
-	4.	Save Import Profile (mapping + sign rules + date formats)
+	4.	Save Import Profile (mapping + sign rules + date formats + Filter Rule Set)
 	5.	Normalize into internal schema
 	6.	Deduplicate (hash-based fallback)
 	7.	Produce import audit log + “what changed” summary
 
-5.3 Categorization & Type Assignment
-	•	Rules engine:
-	•	merchant/description regex → cashflow_type, category, tags
-	•	transfer detection rules (pair matching or known transfer descriptors)
-	•	Manual override always available; edits can generate “rule suggestions.”
+5.3 Categorization & Type Assignment (Filter Rules Engine v2)
+
+	•	The system uses "Rule Sets" tied to each Import Profile. A global rule set can act as a fallback.
+	•	Each rule consists of Conditions and an Action.
+	•	Rules are evaluated in order of priority. The first rule that matches all conditions is applied.
+
+	•	Rule Conditions:
+		•	Description Pattern: A string or regex to match against the transaction description.
+		•	Case Sensitive: A boolean flag for the description match.
+		•	Account Filter: An inclusion or exclusion list of account names for the rule to apply to.
+
+	•	Rule Action (sets one or more of the following):
+		•	Set Cashflow Type (to Income, Expense, Transfer, CapEx, or Investment)
+		•	Set Category
+		•	Add Tags
+
+	•	Manual override is always available; edits can generate “rule suggestions.”
 
 ⸻
 
@@ -221,6 +233,7 @@ All return views must label:
 	•	FeeRecord
 	•	TaxRecord
 	•	ImportProfile + ImportRun + ImportRowHash (dedupe/audit)
+	•	FilterRule (pattern, case_sensitive, account_filters, action, import_profile_id)
 
 ⸻
 
@@ -242,19 +255,19 @@ Phase 0: The Walking Skeleton (Completed)
 	•	Goal: Prove the end-to-end data pipeline is viable.
 	•	Features: API-driven CSV import, data storage in SQLite, backend serves data, frontend renders a basic chart.
 
-Phase 1: The Dynamic Sankey
+Phase 1: The Dynamic Sankey (Completed)
 	•	Goal: Visualize real, user-imported data in the primary Sankey chart.
 	•	Features: The Income→Uses Sankey chart on the home screen is driven by data from the imported transactions. Basic categorization rules are applied during import.
 
-Phase 2: Interactive Drill-Downs & Rules Management
+Phase 2: Interactive Drill-Downs & Rules Management (Completed)
 	•	Goal: Allow users to inspect their data and manage categorization.
 	•	Features: Clicking a node/link on the Sankey drills down to a list of underlying transactions. A UI is available to create, view, and delete categorization rules.
 
-Phase 3: Introducing Capital Expenditures (CapEx)
+Phase 3: Introducing Capital Expenditures (CapEx) (Completed)
 	•	Goal: Differentiate consumption expenses from asset-building expenses and visualize the impact.
 	•	Features: Users can mark transactions as CapEx. The primary Sankey is updated to show the Income → Expenses / CapEx / Surplus split. A basic Real Estate screen shows asset basis.
 
-Phase 4: The Portfolio View
+Phase 4: The Portfolio View (Completed)
 	•	Goal: Establish the initial portfolio tracking capability.
 	•	Features: Import a holdings CSV. A new Portfolio screen displays a list of holdings and their current market value (via on-demand price fetches).
 
@@ -262,7 +275,11 @@ Phase 5: Automated Market Data & Layered Returns
 	•	Goal: Automate portfolio pricing and introduce advanced return metrics.
 	•	Features: Implement the scheduled “drip” pricing service. The Portfolio screen displays Gross, After-Fee, and After-Tax returns, visualized in the Returns Sankey.
 
-Phase 6: Forecasting
+Phase 6: Advanced Rules Engine & Portfolio Separation
+	•	Goal: Implement the v2 rules engine to separate portfolio activity from cash flow.
+	•	Features: Update database and backend logic for conditional rules. Modify analysis engine to exclude 'Investment' type transactions from cash flow Sankey. Begin UI design for new rules editor.
+
+Phase 7: Forecasting
 	•	Goal: Provide future-looking financial projections.
 	•	Features: A new Forecast screen allows users to create simple scenarios and see their projected net worth over time.
 
@@ -270,6 +287,7 @@ Phase 6: Forecasting
 
 11) Acceptance Criteria (Key)
 	•	Home screen shows: Net Worth Hero + Income Sankey + Return Sankey with drilldowns.
+	•	The Income Sankey must exclude transactions marked with the 'Investment' cashflow type.
 	•	Importing the same CSV twice produces no duplicates.
 	•	A transaction can be tagged with multiple tags and contributes to both tag totals.
 	•	Marking a transaction as CapEx:

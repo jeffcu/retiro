@@ -216,6 +216,7 @@ coverage/
     "preview": "vite preview"
   },
   "dependencies": {
+    "@nivo/bar": "^0.87.0",
     "@nivo/core": "^0.87.0",
     "@nivo/sankey": "^0.87.0",
     "react": "^18.2.0",
@@ -228,6 +229,7 @@ coverage/
     "vite": "^4.4.5"
   }
 }
+
 
 --- FILE: projects/trust/requirements.txt ---
 
@@ -255,56 +257,6 @@ export default defineConfig({
     },
   },
 })
-
-
---- FILE: projects/trust/data/phase1_test_data.csv ---
-
-Date,Description,Amount
-2023-11-01,Starfleet Direct Deposit,5500.00
-2023-11-01,Federation Mortgage Corp,-2200.50
-2023-11-02,TRICITY UTILITIES,-155.75
-2023-11-03,Safeway Groceries #221,-245.30
-2023-11-05,AMAZON MKTPLACE PMTS,-89.99
-2023-11-06,Freelance Holo-novel Payment,750.00
-2023-11-07,Chevron Gas Station,-62.15
-2023-11-10,Replimat #4 - Dining,-45.00
-2023-11-12,Starfleet Fitness Center,-35.00
-2023-11-15,Sundry Purchases - Target,-112.88
-2023-11-18,Repairs - Home Depot,-350.00
-2023-11-20,MOVIE TICKET - GALAXY,-28.50
-2023-11-22,ATM WITHDRAWAL #9982,-100.00
-2023-11-25,Transfer to Savings, -500.00
-
-
---- FILE: projects/trust/data/sample_holdings.csv ---
-
-Symbol,Quantity,CostBasis
-VTSAX,100.5,5000.00
-AAPL,50,2500.75
-MSFT,25,4000.50
-
-
---- FILE: projects/trust/data/sample_holdings_valued.csv ---
-
-Symbol,Quantity,CostBasis,MarketValue
-VTSAX,100.5,5000.00,10552.50
-AAPL,50,2500.75,8500.00
-MSFT,25,4000.50,7500.25
-
-
---- FILE: projects/trust/data/sample_transactions.csv ---
-
-Date,Description,Amount
-2023-10-01,Paycheck,2000.00
-2023-10-02,Groceries,-75.50
-2023-10-03,Gas,-45.25
-
-
---- FILE: projects/trust/data/test_transactions.csv ---
-
-Date,Description,Amount
-2023-10-25,Starbucks Main St,-6.75
-2023-10-26,Office Supplies,-55.10
 
 
 --- FILE: projects/trust/docs/Master_Design_Specification.md ---
@@ -432,7 +384,7 @@ Development will follow the user-feature centric plan outlined in the PRS (Secti
 
 --- FILE: projects/trust/library/Trust Financial System.txt ---
 
-Curie Trust Financial Control Center — Project Requirements Specification (PRS) v1.0
+Curie Trust Financial Control Center — Project Requirements Specification (PRS) v1.1
 
 1) Mission
 
@@ -485,11 +437,11 @@ C) Portfolio Return Waterfall as Sankey (Portfolio Screen)
 3.1 Transaction Cashflow Types (Mutually Exclusive)
 
 Every transaction is exactly one:
-	•	Income
-	•	Expense (consumption)
-	•	Transfer (between trust-controlled accounts; net-zero)
-	•	CapEx (capital improvement; increases asset basis)
-	•	(Optional future) Investment transaction
+	•	Income: Money entering the trust's operational cash flow.
+	•	Expense (consumption): Money leaving the trust for goods/services.
+	•	Transfer (between trust-controlled accounts; net-zero for cash flow).
+	•	CapEx (capital improvement; increases asset basis).
+	•	Investment: A transaction affecting portfolio value but not operational cash flow (e.g., security purchases, sales, reinvested dividends). Investment-type transactions are excluded from the main Income→Uses Sankey.
 
 Expenses drive “spend/burn.”
 CapEx is excluded from “spend/burn” but included in net worth via asset basis.
@@ -549,7 +501,7 @@ Priority order:
 
 4.7 Data & Settings
 	•	CSV import, mapping profiles, dedupe logs
-	•	Rules editor (merchant→category/tags/type)
+	•	Filter Rules editor (see section 5.3)
 	•	Manual entry: fees, taxes, market value snapshots
 	•	Backup/restore
 
@@ -567,16 +519,28 @@ Priority order:
 	1.	Upload file(s) (drag/drop)
 	2.	Detect type via column heuristics
 	3.	Preview + mapping UI (first time per institution)
-	4.	Save Import Profile (mapping + sign rules + date formats)
+	4.	Save Import Profile (mapping + sign rules + date formats + Filter Rule Set)
 	5.	Normalize into internal schema
 	6.	Deduplicate (hash-based fallback)
 	7.	Produce import audit log + “what changed” summary
 
-5.3 Categorization & Type Assignment
-	•	Rules engine:
-	•	merchant/description regex → cashflow_type, category, tags
-	•	transfer detection rules (pair matching or known transfer descriptors)
-	•	Manual override always available; edits can generate “rule suggestions.”
+5.3 Categorization & Type Assignment (Filter Rules Engine v2)
+
+	•	The system uses "Rule Sets" tied to each Import Profile. A global rule set can act as a fallback.
+	•	Each rule consists of Conditions and an Action.
+	•	Rules are evaluated in order of priority. The first rule that matches all conditions is applied.
+
+	•	Rule Conditions:
+		•	Description Pattern: A string or regex to match against the transaction description.
+		•	Case Sensitive: A boolean flag for the description match.
+		•	Account Filter: An inclusion or exclusion list of account names for the rule to apply to.
+
+	•	Rule Action (sets one or more of the following):
+		•	Set Cashflow Type (to Income, Expense, Transfer, CapEx, or Investment)
+		•	Set Category
+		•	Add Tags
+
+	•	Manual override is always available; edits can generate “rule suggestions.”
 
 ⸻
 
@@ -655,6 +619,7 @@ All return views must label:
 	•	FeeRecord
 	•	TaxRecord
 	•	ImportProfile + ImportRun + ImportRowHash (dedupe/audit)
+	•	FilterRule (pattern, case_sensitive, account_filters, action, import_profile_id)
 
 ⸻
 
@@ -676,19 +641,19 @@ Phase 0: The Walking Skeleton (Completed)
 	•	Goal: Prove the end-to-end data pipeline is viable.
 	•	Features: API-driven CSV import, data storage in SQLite, backend serves data, frontend renders a basic chart.
 
-Phase 1: The Dynamic Sankey
+Phase 1: The Dynamic Sankey (Completed)
 	•	Goal: Visualize real, user-imported data in the primary Sankey chart.
 	•	Features: The Income→Uses Sankey chart on the home screen is driven by data from the imported transactions. Basic categorization rules are applied during import.
 
-Phase 2: Interactive Drill-Downs & Rules Management
+Phase 2: Interactive Drill-Downs & Rules Management (Completed)
 	•	Goal: Allow users to inspect their data and manage categorization.
 	•	Features: Clicking a node/link on the Sankey drills down to a list of underlying transactions. A UI is available to create, view, and delete categorization rules.
 
-Phase 3: Introducing Capital Expenditures (CapEx)
+Phase 3: Introducing Capital Expenditures (CapEx) (Completed)
 	•	Goal: Differentiate consumption expenses from asset-building expenses and visualize the impact.
 	•	Features: Users can mark transactions as CapEx. The primary Sankey is updated to show the Income → Expenses / CapEx / Surplus split. A basic Real Estate screen shows asset basis.
 
-Phase 4: The Portfolio View
+Phase 4: The Portfolio View (Completed)
 	•	Goal: Establish the initial portfolio tracking capability.
 	•	Features: Import a holdings CSV. A new Portfolio screen displays a list of holdings and their current market value (via on-demand price fetches).
 
@@ -696,7 +661,11 @@ Phase 5: Automated Market Data & Layered Returns
 	•	Goal: Automate portfolio pricing and introduce advanced return metrics.
 	•	Features: Implement the scheduled “drip” pricing service. The Portfolio screen displays Gross, After-Fee, and After-Tax returns, visualized in the Returns Sankey.
 
-Phase 6: Forecasting
+Phase 6: Advanced Rules Engine & Portfolio Separation
+	•	Goal: Implement the v2 rules engine to separate portfolio activity from cash flow.
+	•	Features: Update database and backend logic for conditional rules. Modify analysis engine to exclude 'Investment' type transactions from cash flow Sankey. Begin UI design for new rules editor.
+
+Phase 7: Forecasting
 	•	Goal: Provide future-looking financial projections.
 	•	Features: A new Forecast screen allows users to create simple scenarios and see their projected net worth over time.
 
@@ -704,6 +673,7 @@ Phase 6: Forecasting
 
 11) Acceptance Criteria (Key)
 	•	Home screen shows: Net Worth Hero + Income Sankey + Return Sankey with drilldowns.
+	•	The Income Sankey must exclude transactions marked with the 'Investment' cashflow type.
 	•	Importing the same CSV twice produces no duplicates.
 	•	A transaction can be tagged with multiple tags and contributes to both tag totals.
 	•	Marking a transaction as CapEx:
@@ -881,57 +851,73 @@ echo "--- Vite dev server process terminated. ---"
 --- FILE: projects/trust/src/App.css ---
 
 :root {
-  --dark-bg: #242424;
-  --medium-bg: #2f2f2f;
-  --light-bg: #3a3a3a;
+  --dark-bg: #1a1a1a;
+  --medium-bg: #242424;
+  --light-bg: #2f2f2f;
   --border-color: #444;
   --text-color: rgba(255, 255, 255, 0.87);
   --gold-accent: #E2B254;
+  --sidebar-width: 240px;
 }
 
 #root {
-  max-width: 1400px;
-  margin: 0 auto;
-  padding: 1rem;
   display: flex;
   flex-direction: row;
-  gap: 1rem;
+  min-height: 100vh;
+  background-color: var(--medium-bg);
 }
 
 .main-content {
   flex-grow: 1;
-  padding: 1rem;
+  padding: 2rem;
+  overflow-y: auto;
 }
 
 .card {
   padding: 1.5em;
   border: 1px solid var(--border-color);
   border-radius: 8px;
-  background-color: var(--medium-bg);
+  background-color: var(--dark-bg); /* Darker cards for contrast */
   margin-bottom: 2rem;
 }
 
-h1, h2 {
+.sankey-container-card {
+  background-color: #383838; /* A lighter grey, but still dark theme friendly */
+}
+
+.sankey-container-card h2 {
+  color: #E2B254; /* Gold accent for title in this special card */
+}
+
+
+h1 {
   color: var(--gold-accent);
+  margin-top: 0;
+  font-size: 2.2em;
+  font-weight: 500;
+  margin-bottom: 1.5rem;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 1rem;
+}
+
+
+h2 {
+  color: var(--text-color);
   text-align: left;
   padding-bottom: 0.5rem;
   border-bottom: 1px solid var(--border-color);
   margin-top: 0;
+  font-weight: 500;
 }
 
-.grid-container {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-  gap: 1.5rem;
-}
 
 
 --- FILE: projects/trust/src/App.jsx ---
 
 import { useState } from 'react';
-import NavBar from './components/NavBar';
+import SideBar from './components/SideBar';
 import HomeView from './components/HomeView';
-import PortfolioView from './PortfolioView'; // Corrected Path
+import PortfolioView from './PortfolioView';
 import DataImportView from './components/DataImportView';
 import PlaceholderView from './components/PlaceholderView';
 import TransactionListView from './components/TransactionListView';
@@ -961,7 +947,7 @@ function App() {
 
   return (
     <>
-      <NavBar activeView={activeView} setActiveView={setActiveView} />
+      <SideBar activeView={activeView} setActiveView={setActiveView} />
       <main className="main-content">
         <h1>{activeView}</h1>
         {renderView()}
@@ -1063,6 +1049,8 @@ export default App;
 
 import { useState, useEffect } from 'react';
 import './PortfolioView.css';
+import FilterPanel from './components/FilterPanel';
+import BarChart from './components/BarChart';
 
 const PortfolioSummary = ({ holdings, formatCurrency }) => {
     const totalMarketValue = holdings.reduce((sum, h) => sum + (h.market_value || 0), 0);
@@ -1086,31 +1074,45 @@ const PortfolioSummary = ({ holdings, formatCurrency }) => {
     );
 };
 
-
 const PortfolioView = () => {
     const [holdings, setHoldings] = useState([]);
+    const [chartData, setChartData] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
 
-    useEffect(() => {
-        const fetchHoldings = async () => {
-            try {
-                setLoading(true);
-                const response = await fetch('/api/holdings');
-                if (!response.ok) {
-                    throw new Error(`HTTP Error: ${response.status}`);
-                }
-                const data = await response.json();
-                setHoldings(data);
-            } catch (e) {
-                setError(e.message);
-                console.error("Failed to fetch holdings:", e);
-            } finally {
-                setLoading(false);
-            }
-        };
+    const filterConfig = [
+        { id: 'account_id', label: 'Account', type: 'select', optionsKey: 'accounts' },
+        { id: 'symbol', label: 'Symbol', type: 'text', placeholder: 'e.g., AAPL' },
+    ];
 
-        fetchHoldings();
+    const fetchData = async (filters = {}) => {
+        try {
+            setLoading(true);
+            const query = new URLSearchParams(filters).toString();
+
+            const [holdingsRes, chartRes] = await Promise.all([
+                fetch(`/api/holdings?${query}`),
+                fetch(`/api/analysis/portfolio-chart?${query}`)
+            ]);
+
+            if (!holdingsRes.ok) throw new Error(`HTTP Error (Holdings): ${holdingsRes.status}`);
+            if (!chartRes.ok) throw new Error(`HTTP Error (Chart): ${chartRes.status}`);
+
+            const holdingsData = await holdingsRes.json();
+            const chartData = await chartRes.json();
+
+            setHoldings(holdingsData);
+            setChartData(chartData);
+        } catch (e) {
+            setError(e.message);
+            console.error("Failed to fetch portfolio data:", e);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchData();
     }, []);
 
     const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
@@ -1120,48 +1122,74 @@ const PortfolioView = () => {
 
     const totalMarketValue = holdings.reduce((sum, h) => sum + (h.market_value || 0), 0);
 
-    if (loading) return <p>Loading portfolio...</p>;
     if (error) return <p>Error loading portfolio: {error}</p>;
 
     return (
-        <div className="card">
-            <h2>Holdings Overview</h2>
-            <PortfolioSummary holdings={holdings} formatCurrency={formatCurrency} />
-            {holdings.length > 0 ? (
-                <div className="table-container">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Symbol</th>
-                                <th>Account</th>
-                                <th>Quantity</th>
-                                <th>Cost Basis</th>
-                                <th>Market Value</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {holdings.map(h => (
-                                <tr key={h.holding_id}>
-                                    <td>{h.symbol}</td>
-                                    <td>{h.account_id}</td>
-                                    <td>{h.quantity.toFixed(4)}</td>
-                                    <td>{formatCurrency(h.cost_basis)}</td>
-                                    <td>{formatCurrency(h.market_value)}</td>
-                                </tr>
-                            ))}
-                        </tbody>
-                        <tfoot>
-                            <tr>
-                                <td colSpan="4">Total Market Value</td>
-                                <td>{formatCurrency(totalMarketValue)}</td>
-                            </tr>
-                        </tfoot>
-                    </table>
-                </div>
-            ) : (
-                <p>No holdings data found. Please import a holdings CSV file via the 'Data & Settings' screen.</p>
-            )}
-        </div>
+        <>
+            <FilterPanel config={filterConfig} onFilterSubmit={fetchData} />
+
+            <div className="card">
+                <h2>Filtered Results Summary</h2>
+                {loading ? (
+                    <p>Loading chart...</p>
+                ) : chartData.length > 0 ? (
+                    <BarChart 
+                        data={chartData}
+                        indexBy="id"
+                        keys={['value']}
+                        axisLeftLabel="Market Value"
+                        axisBottomLabel="Symbol"
+                    />
+                ) : (
+                    <p>No data matches the current filters.</p>
+                )}
+            </div>
+
+            <div className="card">
+                <h2>Holdings Details</h2>
+                {loading ? (
+                    <p>Loading holdings...</p>
+                ) : (
+                    <>
+                        <PortfolioSummary holdings={holdings} formatCurrency={formatCurrency} />
+                        {holdings.length > 0 ? (
+                            <div className="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Symbol</th>
+                                            <th>Account</th>
+                                            <th>Quantity</th>
+                                            <th>Cost Basis</th>
+                                            <th>Market Value</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {holdings.map(h => (
+                                            <tr key={h.holding_id}>
+                                                <td>{h.symbol}</td>
+                                                <td>{h.account_id}</td>
+                                                <td>{h.quantity.toFixed(4)}</td>
+                                                <td>{formatCurrency(h.cost_basis)}</td>
+                                                <td>{formatCurrency(h.market_value)}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                    <tfoot>
+                                        <tr>
+                                            <td colSpan="4">Total Market Value</td>
+                                            <td>{formatCurrency(totalMarketValue)}</td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                            </div>
+                        ) : (
+                            <p>No holdings data found for the current filter. Please import a holdings CSV file or adjust filters.</p>
+                        )}
+                    </>
+                )}
+            </div>
+        </>
     );
 };
 
@@ -1182,13 +1210,22 @@ const SankeyChart = ({ data }) => {
         maximumFractionDigits: 2,
     }).format(value);
 
+    const handleNodeClick = (node, event) => {
+        // Placeholder for drill-down functionality (PRS 2.2)
+        const details = `Node Clicked:\nID: ${node.id}\nValue: ${formatValue(node.value)}`;
+        console.log(details);
+        alert(details);
+    };
+
     return (
-        <div style={{ height: '600px', width: '100%' }}>
+        // --- VISUAL REFINEMENT (User Request) --- //
+        // Added a light grey background to the chart container for better contrast.
+        <div style={{ height: '600px', width: '100%', backgroundColor: '#f5f5f5', borderRadius: '4px', padding: '1rem' }}>
             <ResponsiveSankey
                 data={data} 
-                margin={{ top: 40, right: 160, bottom: 40, left: 50 }}
+                margin={{ top: 20, right: 160, bottom: 20, left: 50 }}
                 align="justify"
-                colors={{ scheme: 'category10' }}
+                colors={{ scheme: 'category10' }} // A colorblind-safe, distinct palette
                 nodeOpacity={1}
                 nodeHoverOthersOpacity={0.35}
                 nodeThickness={18}
@@ -1196,19 +1233,23 @@ const SankeyChart = ({ data }) => {
                 nodeBorderWidth={0}
                 nodeBorderColor={{ from: 'color', modifiers: [['darker', 0.8]] }}
                 nodeBorderRadius={3}
-                linkOpacity={0.5}
+                
+                // Link/flow styling for light background
+                linkOpacity={0.6}
+                linkColor="#adadad" // Medium grey for good contrast on light bg
+                enableLinkGradient={false}
+
                 linkHoverOthersOpacity={0.1}
                 linkContract={3}
-                enableLinkGradient={true}
                 labelPosition="outside"
-                labelOrientation="vertical"
+                labelOrientation="horizontal"
                 labelPadding={16}
-                // --- VISIBILITY FIX --- //
-                // Set a static, light color for labels for high contrast on a dark background.
-                labelTextColor="#DDDDDD"
+                // Label color inverted for light background
+                labelTextColor="#333333"
+
+                onClick={handleNodeClick} // Added click handler for future drill-down
                 
-                // --- DIAGNOSTIC ENHANCEMENT --- //
-                // This new property adds a tooltip that displays the value when hovering over a link.
+                // Tooltip for links (flows)
                 linkTooltip={({ link }) => (
                     <div style={{
                         padding: '12px',
@@ -1223,27 +1264,23 @@ const SankeyChart = ({ data }) => {
                     </div>
                 )}
 
-                legends={[
-                    {
-                        anchor: 'bottom-right',
-                        direction: 'column',
-                        translateX: 130,
-                        itemWidth: 100,
-                        itemHeight: 14,
-                        itemDirection: 'right-to-left',
-                        itemsSpacing: 2,
-                        itemTextColor: '#999',
-                        symbolSize: 14,
-                        effects: [
-                            {
-                                on: 'hover',
-                                style: {
-                                    itemTextColor: '#fff'
-                                }
-                            }
-                        ]
-                    }
-                ]}
+                // Tooltip for nodes (bars) - Hardened to prevent crashes on bad data.
+                nodeTooltip={node => (
+                    <div style={{
+                        padding: '12px',
+                        background: '#fff',
+                        color: '#000',
+                        border: '1px solid #ccc',
+                        borderRadius: '3px',
+                    }}>
+                        <strong>{node.id}</strong>
+                        <br />
+                        {/* Defensive check: Ensure node.value is a number before formatting. */}
+                        {typeof node.value === 'number' ? formatValue(node.value) : 'N/A'}
+                    </div>
+                )}
+                
+                // legends prop removed to simplify the UI as per prior request.
             />
         </div>
     )
@@ -1261,27 +1298,29 @@ for visualizations like Sankey diagrams, and running forecasts.
 """
 from typing import Dict, Any, List
 from collections import defaultdict
-from .database import get_all_transactions
+from datetime import datetime
+from .database import get_transactions, get_holdings_aggregation_by_symbol, get_cashflow_aggregation_by_month, get_latest_transaction_year
 
-def generate_income_sankey(period: str) -> Dict[str, Any]:
+def generate_income_sankey(period: str, exclude_invisible: bool = False) -> Dict[str, Any]:
     """
-    Analyzes all transactions and generates the data structure
-    required for the "Income -> Uses of Money" Sankey diagram, formatted for Nivo.
-    This function now differentiates between Expenses and Capital Expenditures.
+    Analyzes transactions to generate data for a simple Sankey diagram.
+    This version creates a flat structure: Income -> [Expense Categories].
     (PRS Section 2.1.A)
 
     Args:
-        period: The time period to analyze (e.g., "YTD", "month"). 
-                (NOTE: Filtering by period is not yet implemented).
+        period: The time period to analyze (NOTE: Not yet implemented).
+        exclude_invisible: If True, filters out transactions from accounts
+                           marked as not visible.
 
     Returns:
-        A dictionary containing nodes and links for the Nivo Sankey component.
+        A dictionary formatted for the Nivo Sankey component.
     """
-    transactions = get_all_transactions()
+    # UPDATED: Call the new filterable get_transactions function with no filters.
+    transactions = get_transactions(exclude_invisible=exclude_invisible)
     
-    total_income = 0
+    total_income = 0.0
     expense_by_category = defaultdict(float)
-    total_capex = 0
+    total_capex = 0.0
     
     for tx in transactions:
         try:
@@ -1291,75 +1330,91 @@ def generate_income_sankey(period: str) -> Dict[str, Any]:
             if cashflow_type == 'Income' and amount > 0:
                 total_income += amount
             elif cashflow_type == 'Expense' and amount < 0:
-                # Prioritize original_category, then rule-based category, then 'Uncategorized'
-                category = tx.get('original_category') or tx.get('category') or 'Uncategorized'
+                # Use the assigned category, or 'Uncategorized' if none exists
+                category = tx.get('category') or 'Uncategorized'
                 expense_by_category[category] += abs(amount)
             elif cashflow_type == 'Capital Expenditure' and amount < 0:
                 total_capex += abs(amount)
 
         except (ValueError, TypeError) as e:
             tx_id = tx.get('transaction_id', 'N/A')
+            # In a real application, this should be structured logging.
             print(f"WARNING: Skipping transaction {tx_id} due to invalid amount: {tx.get('amount')}. Error: {e}")
             continue
 
     total_expenses = sum(expense_by_category.values())
     net_surplus = total_income - total_expenses - total_capex
 
-    # Step 1: Build the links conditionally based on non-zero values.
+    nodes = [{"id": "Income"}]
     links = []
 
-    if total_income > 0:
-        links.append({
-            "source": "Income", 
-            "target": "Uses of Money", 
-            "value": round(total_income, 2)
-        })
+    # Add expense categories as nodes and create links from Income
+    for category, amount in expense_by_category.items():
+        if amount > 0:
+            nodes.append({"id": category})
+            links.append({"source": "Income", "target": category, "value": round(amount, 2)})
 
-    if total_expenses > 0:
-        links.append({
-            "source": "Uses of Money", 
-            "target": "Expenses", 
-            "value": round(total_expenses, 2)
-        })
-        for category, amount in expense_by_category.items():
-            if amount > 0:
-                links.append({
-                    "source": "Expenses",
-                    "target": category,
-                    "value": round(amount, 2)
-                })
-    
+    # Handle Capital Expenditure
     if total_capex > 0:
-        links.append({
-            "source": "Uses of Money",
-            "target": "Capital Expenditure",
-            "value": round(total_capex, 2)
-        })
-
+        nodes.append({"id": "Capital Expenditure"})
+        links.append({"source": "Income", "target": "Capital Expenditure", "value": round(total_capex, 2)})
+    
+    # Handle Net Surplus
     if net_surplus > 0:
-        links.append({
-            "source": "Uses of Money", 
-            "target": "Net Surplus", 
-            "value": round(net_surplus, 2)
-        })
+        nodes.append({"id": "Net Surplus"})
+        links.append({"source": "Income", "target": "Net Surplus", "value": round(net_surplus, 2)})
 
-    # If there are no links, there is no chart to draw.
+    # Deduplicate nodes just in case, though the build-up logic should prevent it.
+    unique_node_ids = {node['id'] for node in nodes}
+    final_nodes = [{"id": node_id} for node_id in sorted(list(unique_node_ids))]
+
     if not links:
         return {"nodes": [], "links": []}
 
-    # Step 2: Derive the complete, unique set of nodes directly from the links.
-    node_ids = set()
-    for link in links:
-        node_ids.add(link["source"])
-        node_ids.add(link["target"])
-
-    # Step 3: Create the node list for the API response.
-    nodes = [{"id": node_id} for node_id in sorted(list(node_ids))]
-
     return {
-        "nodes": nodes,
+        "nodes": final_nodes,
         "links": links
     }
+
+
+def prepare_cashflow_chart_data(filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Prepares monthly cashflow summary data for the frontend bar chart.
+    """
+    # Dynamically determine the year to display.
+    year_to_use = get_latest_transaction_year()
+    if not year_to_use:
+        year_to_use = datetime.now().year
+
+    data = get_cashflow_aggregation_by_month(year=year_to_use, filters=filters)
+
+    # The data comes in as a list of {'month', 'income', 'expense'}.
+    # We'll format it for Nivo.
+    return [
+        {
+            "month": f"{year_to_use}-{row['month']:02d}",
+            "Income": row['income'],
+            "Expense": abs(row['expense']) # Make expense positive for bar chart
+        }
+        for row in data
+    ]
+
+def prepare_portfolio_chart_data(filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Prepares portfolio summary data for the frontend bar chart.
+    """
+    # Aggregate market value by symbol based on filters.
+    data = get_holdings_aggregation_by_symbol(filters=filters)
+
+    # Format for Nivo bar chart: [{id: 'symbol', value: 12345}, ...]
+    return [
+        {
+            "id": row['symbol'],
+            "value": row['total_market_value']
+        }
+        for row in data
+    ]
+
 
 
 --- FILE: projects/trust/src/data_model.py ---
@@ -1423,7 +1478,7 @@ class Holding:
 import sqlite3
 import uuid
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 from src.data_model import Transaction, Holding
 
 # Per MDS, the database is a single file in the data/ directory.
@@ -1497,6 +1552,14 @@ def _ensure_schema(conn: sqlite3.Connection):
         total_cost_basis REAL
     );
     """)
+    
+    # --- NEW: Table for Account Visibility Settings --- #
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS account_visibility (
+        account_id TEXT PRIMARY KEY,
+        is_visible INTEGER NOT NULL DEFAULT 1
+    );
+    """)
 
     # --- Schema Migrations ---
     cursor.execute("PRAGMA table_info(holdings)")
@@ -1516,6 +1579,19 @@ def _ensure_schema(conn: sqlite3.Connection):
     if 'tags' not in trans_cols:
         print("--- MIGRATING SCHEMA: Adding 'tags' to 'transactions'. ---")
         cursor.execute("ALTER TABLE transactions ADD COLUMN tags TEXT;")
+
+    cursor.execute("PRAGMA table_info(rules)")
+    rules_cols = {row[1] for row in cursor.fetchall()}
+    if 'case_sensitive' not in rules_cols:
+        print("--- MIGRATING SCHEMA: Adding 'case_sensitive' to 'rules'. ---")
+        cursor.execute("ALTER TABLE rules ADD COLUMN case_sensitive INTEGER DEFAULT 0;")
+    if 'account_filter_mode' not in rules_cols:
+        print("--- MIGRATING SCHEMA: Adding 'account_filter_mode' to 'rules'. ---")
+        cursor.execute("ALTER TABLE rules ADD COLUMN account_filter_mode TEXT DEFAULT 'include';")
+    if 'account_filter_list' not in rules_cols:
+        print("--- MIGRATING SCHEMA: Adding 'account_filter_list' to 'rules'. ---")
+        cursor.execute("ALTER TABLE rules ADD COLUMN account_filter_list TEXT;")
+
 
     conn.commit()
     print("--- Database schema is OK. ---")
@@ -1647,21 +1723,80 @@ def save_import_run(run_data: Dict[str, Any]):
 
 # --- Data Retrieval --- #
 
-def get_all_transactions() -> List[Dict[str, Any]]:
+def _build_where_clause(filters: Dict, allowed_fields: List[str]) -> Tuple[str, List[Any]]:
+    """Helper to build a dynamic WHERE clause safely."""
+    clauses = []
+    params = []
+
+    if not filters:
+        return "", []
+
+    for key, value in filters.items():
+        if key not in allowed_fields:
+            continue
+        
+        if key in ['description', 'tags']:
+            clauses.append(f"{key} LIKE ?")
+            params.append(f"%{value}%")
+        else:
+            clauses.append(f"{key} = ?")
+            params.append(value)
+    
+    if not clauses:
+        return "", []
+
+    return f"WHERE {" AND ".join(clauses)}", params
+
+def get_transactions(filters: Dict[str, Any] = None, exclude_invisible: bool = False) -> List[Dict[str, Any]]:
+    """ 
+    Retrieves transactions, with options for filtering.
+    """
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM transactions ORDER BY transaction_date DESC")
+    
+    base_query = "SELECT * FROM transactions"
+    where_clauses = []
+    params = []
+
+    if exclude_invisible:
+        where_clauses.append("account_id NOT IN (SELECT account_id FROM account_visibility WHERE is_visible = 0)")
+
+    if filters:
+        allowed = ['category', 'account_id', 'institution', 'description', 'tags']
+        for key, value in filters.items():
+            if key in allowed:
+                if key in ['description', 'tags']:
+                    where_clauses.append(f"{key} LIKE ?")
+                    params.append(f'%{value}%')
+                else:
+                    where_clauses.append(f"{key} = ?")
+                    params.append(value)
+
+    if where_clauses:
+        base_query += " WHERE " + " AND ".join(where_clauses)
+
+    base_query += " ORDER BY transaction_date DESC"
+
+    cursor.execute(base_query, params)
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
 
-def get_all_holdings() -> List[Dict[str, Any]]:
+
+def get_holdings(filters: Dict[str, Any] = None) -> List[Dict[str, Any]]:
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM holdings ORDER BY symbol ASC")
+
+    allowed_fields = ['account_id', 'symbol']
+    where_clause, params = _build_where_clause(filters, allowed_fields)
+
+    query = f"SELECT * FROM holdings {where_clause} ORDER BY symbol ASC"
+    
+    cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
+
 
 def get_all_import_runs() -> List[Dict[str, Any]]:
     conn = get_db_connection()
@@ -1671,31 +1806,149 @@ def get_all_import_runs() -> List[Dict[str, Any]]:
     conn.close()
     return [dict(row) for row in rows]
 
+# --- Filter Options --- #
+
+def get_filter_options() -> Dict[str, List[str]]:
+    """Gets unique values for filter dropdowns."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    options = {}
+
+    # --- TRACE: Log the raw query result ---
+    # The previous query was too restrictive: "WHERE ... cashflow_type = 'Expense'"
+    # This caused the filter to be empty if no categorized expenses existed.
+    # The new query correctly pulls all unique categories regardless of type.
+    print("--- TRACE [database.py]: Querying for distinct transaction categories. ---")
+    cursor.execute("SELECT DISTINCT category FROM transactions WHERE category IS NOT NULL AND category != '' AND category != 'Uncategorized' ORDER BY category")
+    
+    fetched_rows = cursor.fetchall()
+    options['categories'] = [row['category'] for row in fetched_rows]
+    print(f"--- TRACE [database.py]: Found {len(options['categories'])} categories: {options['categories']} ---")
+
+    cursor.execute("SELECT DISTINCT account_id FROM transactions ORDER BY account_id")
+    options['accounts'] = [row['account_id'] for row in cursor.fetchall()]
+
+    cursor.execute("SELECT DISTINCT institution FROM transactions WHERE institution IS NOT NULL ORDER BY institution")
+    options['institutions'] = [row['institution'] for row in cursor.fetchall()]
+
+    conn.close()
+    return options
+
+
+# --- Aggregations for Charts --- #
+
+def get_latest_transaction_year() -> int | None:
+    """Finds the most recent year present in the transaction data."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT MAX(strftime('%Y', transaction_date)) as latest_year FROM transactions")
+    result = cursor.fetchone()
+    conn.close()
+    if result and result['latest_year']:
+        return int(result['latest_year'])
+    return None
+
+def get_cashflow_aggregation_by_month(year: int, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    allowed_fields = ['category', 'account_id', 'institution', 'description', 'tags']
+    where_clause, params = _build_where_clause(filters, allowed_fields)
+    
+    # Prepend year filter to where clause
+    if where_clause:
+        final_where = f"WHERE strftime('%Y', transaction_date) = ? AND ({where_clause[6:]})"
+    else:
+        final_where = f"WHERE strftime('%Y', transaction_date) = ?"
+
+    final_params = [str(year)] + params
+
+    query = f"""
+        SELECT 
+            CAST(strftime('%m', transaction_date) AS INTEGER) as month,
+            SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as income,
+            SUM(CASE WHEN amount < 0 AND cashflow_type = 'Expense' THEN amount ELSE 0 END) as expense
+        FROM transactions
+        {final_where}
+        GROUP BY month
+        ORDER BY month ASC
+    """
+
+    cursor.execute(query, final_params)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_holdings_aggregation_by_symbol(filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    allowed_fields = ['account_id', 'symbol']
+    where_clause, params = _build_where_clause(filters, allowed_fields)
+
+    query = f"""
+        SELECT
+            symbol,
+            SUM(market_value) as total_market_value
+        FROM holdings
+        {where_clause}
+        GROUP BY symbol
+        HAVING total_market_value > 0
+        ORDER BY total_market_value DESC
+        LIMIT 20
+    """
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
 # --- Rules CRUD --- #
 
 def _transform_rule_record(rule_row: sqlite3.Row) -> Dict[str, Any]:
     if not rule_row:
         return None
     rule_dict = dict(rule_row)
+    
     if rule_dict.get('tags') and isinstance(rule_dict['tags'], str):
         rule_dict['tags'] = [tag.strip() for tag in rule_dict['tags'].split(',') if tag.strip()]
     else:
         rule_dict['tags'] = []
+
+    if rule_dict.get('account_filter_list') and isinstance(rule_dict['account_filter_list'], str):
+        rule_dict['account_filter_list'] = [acc.strip() for acc in rule_dict['account_filter_list'].split(',') if acc.strip()]
+    else:
+        rule_dict['account_filter_list'] = []
+        
+    rule_dict['case_sensitive'] = bool(rule_dict.get('case_sensitive', 0))
+
     return rule_dict
 
 def create_rule(rule_data: Dict[str, Any]) -> Dict[str, Any]:
     conn = get_db_connection()
     cursor = conn.cursor()
     rule_id = str(uuid.uuid4())
-    sql = """INSERT INTO rules (rule_id, pattern, category, cashflow_type, tags, priority)
-             VALUES (?, ?, ?, ?, ?, ?);"""
+    sql = """INSERT INTO rules (
+                rule_id, pattern, category, cashflow_type, tags, priority, 
+                case_sensitive, account_filter_mode, account_filter_list
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);"""
+    
+    # Ensure lists are stored as comma-separated strings
+    tags_str = ','.join(rule_data.get('tags', []))
+    account_list_str = ','.join(rule_data.get('account_filter_list', []))
+    
     cursor.execute(sql, (
         rule_id,
         rule_data['pattern'],
         rule_data['category'],
         rule_data['cashflow_type'],
-        ','.join(rule_data.get('tags', [])),
-        rule_data.get('priority', 100)
+        tags_str,
+        rule_data.get('priority', 100),
+        1 if rule_data.get('case_sensitive') else 0,
+        rule_data.get('account_filter_mode', 'include'),
+        account_list_str
     ))
     conn.commit()
     new_rule_cursor = conn.cursor()
@@ -1728,6 +1981,53 @@ def delete_rule(rule_id: str) -> bool:
     conn.commit()
     conn.close()
     return deleted_count > 0
+
+# --- Account Management --- #
+
+def get_all_account_ids() -> List[str]:
+    """ Gets all unique account IDs, ensuring they exist in the visibility table. """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    # This query finds all accounts in transactions and inserts any new ones
+    # into the visibility table with a default of visible (1).
+    cursor.execute("""
+        INSERT OR IGNORE INTO account_visibility (account_id, is_visible)
+        SELECT DISTINCT account_id, 1 FROM transactions WHERE account_id IS NOT NULL;
+    """)
+    conn.commit()
+    
+    cursor.execute("SELECT account_id FROM account_visibility ORDER BY account_id ASC")
+    rows = cursor.fetchall()
+    conn.close()
+    return [row['account_id'] for row in rows]
+
+def get_account_visibility() -> Dict[str, bool]:
+    """ Returns a dictionary of all known accounts and their visibility status. """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT account_id, is_visible FROM account_visibility")
+    rows = cursor.fetchall()
+    conn.close()
+    return {row['account_id']: bool(row['is_visible']) for row in rows}
+
+def set_account_visibility(settings: Dict[str, bool]):
+    """ Persists visibility settings for multiple accounts. """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    data_to_upsert = [(acc, 1 if is_visible else 0) for acc, is_visible in settings.items()]
+    
+    try:
+        cursor.executemany("""
+            INSERT INTO account_visibility (account_id, is_visible) VALUES (?, ?)
+            ON CONFLICT(account_id) DO UPDATE SET is_visible = excluded.is_visible;
+        """, data_to_upsert)
+        conn.commit()
+        print(f"Updated visibility for {len(data_to_upsert)} accounts.")
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
 
 # --- Admin Utilities --- #
 
@@ -1787,10 +2087,6 @@ def purge_table_data(target_table: str) -> dict:
 
 body {
   margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
 }
 
 
@@ -1813,7 +2109,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
 import uvicorn
 import uuid
 from datetime import datetime, timezone
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body, Response, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import os
@@ -1855,12 +2151,18 @@ class RuleCreate(BaseModel):
     cashflow_type: CashflowType
     tags: Optional[List[str]] = []
     priority: Optional[int] = 100
+    case_sensitive: Optional[bool] = False
+    account_filter_mode: Optional[str] = 'include'
+    account_filter_list: Optional[List[str]] = []
 
 class RuleResponse(RuleCreate):
     rule_id: str
 
 class PurgeRequest(BaseModel):
     target: str = Field(..., description="The database table to purge, e.g., 'transactions' or 'holdings'.")
+
+class AccountVisibilitySettings(BaseModel):
+    settings: Dict[str, bool]
 
 
 @app.on_event("startup")
@@ -1972,22 +2274,68 @@ async def get_all_rules():
     rules = db.get_all_rules()
     return rules
 
+@app.delete("/api/rules/{rule_id}", status_code=204, tags=["Rules"])
+async def delete_rule_by_id(rule_id: str):
+    success = db.delete_rule(rule_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Rule not found.")
+    return Response(status_code=204) # Return empty response for success
+
 @app.get("/api/sankey/income", tags=["Analysis"])
 async def get_income_sankey_data(period: str = "all") -> Dict[str, List[Dict[str, Any]]]:
     try:
-        data = analysis.generate_income_sankey(period)
+        # This now implicitly uses the visibility settings stored in the DB
+        data = analysis.generate_income_sankey(period, exclude_invisible=True)
         return data
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"An internal error occurred in the analysis engine: {e}")
 
+# --- Filter Dependencies --- #
+# These functions gather filter parameters from the query string
+
+def get_transaction_filters(
+    category: Optional[str] = Query(None),
+    account_id: Optional[str] = Query(None),
+    institution: Optional[str] = Query(None),
+    description: Optional[str] = Query(None),
+    tags: Optional[str] = Query(None),
+) -> Dict[str, Any]:
+    filters = {
+        "category": category,
+        "account_id": account_id,
+        "institution": institution,
+        "description": description,
+        "tags": tags
+    }
+    return {k: v for k, v in filters.items() if v is not None}
+
+def get_holding_filters(
+    account_id: Optional[str] = Query(None),
+    symbol: Optional[str] = Query(None),
+) -> Dict[str, Any]:
+    filters = {
+        "account_id": account_id,
+        "symbol": symbol
+    }
+    return {k: v for k, v in filters.items() if v is not None}
+
 @app.get("/api/transactions", tags=["Data"])
-async def get_all_transactions_for_display():
+async def get_filtered_transactions(filters: Dict[str, Any] = Depends(get_transaction_filters)):
     try:
-        return db.get_all_transactions()
+        return db.get_transactions(filters)
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"An internal error occurred while fetching transactions: {e}")
+
+@app.get("/api/holdings", tags=["Data"])
+async def get_filtered_holdings(filters: Dict[str, Any] = Depends(get_holding_filters)):
+    try:
+        return db.get_holdings(filters)
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Failed to retrieve holdings.")
+
 
 @app.post("/api/transactions/recategorize", tags=["Processing"])
 async def trigger_recategorization():
@@ -1998,25 +2346,71 @@ async def trigger_recategorization():
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"An internal error occurred during re-categorization: {e}")
 
-@app.get("/api/holdings", tags=["Data"])
-async def get_all_holdings():
-    try:
-        return db.get_all_holdings()
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail="Failed to retrieve holdings.")
-
 @app.get("/api/portfolio/summary", tags=["Analysis"])
 async def get_portfolio_summary():
     """Calculates the total market value of all holdings."""
     try:
-        holdings = db.get_all_holdings()
+        holdings = db.get_holdings()
         # Robustly sum market value, ignoring any holdings where it is not set.
         total_market_value = sum(h.get('market_value', 0) for h in holdings if h.get('market_value') is not None)
         return {"total_market_value": total_market_value}
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Failed to calculate portfolio summary.")
+
+
+# --- NEW Endpoints for Filtering and Charts --- #
+
+@app.get("/api/filter-options", tags=["Filters"])
+async def get_filter_options():
+    try:
+        options = db.get_filter_options()
+        print(f"--- TRACE [main.py]: Sending filter options to frontend: {options} ---")
+        return options
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Failed to retrieve filter options.")
+
+@app.get("/api/analysis/cashflow-chart", tags=["Analysis"])
+async def get_cashflow_chart(filters: Dict[str, Any] = Depends(get_transaction_filters)):
+    try:
+        chart_data = analysis.prepare_cashflow_chart_data(filters)
+        return chart_data
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Failed to generate cashflow chart data.")
+
+@app.get("/api/analysis/portfolio-chart", tags=["Analysis"])
+async def get_portfolio_chart(filters: Dict[str, Any] = Depends(get_holding_filters)):
+    try:
+        chart_data = analysis.prepare_portfolio_chart_data(filters)
+        return chart_data
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Failed to generate portfolio chart data.")
+
+
+# --- Account Management --- #
+
+@app.get("/api/accounts", response_model=List[str], tags=["Accounts"])
+async def get_all_accounts():
+    """Returns a list of all unique account IDs known to the system."""
+    return db.get_all_account_ids()
+
+@app.get("/api/accounts/visibility", response_model=Dict[str, bool], tags=["Accounts"])
+async def get_visibility_settings():
+    """Returns the current visibility settings for all accounts."""
+    return db.get_account_visibility()
+
+@app.put("/api/accounts/visibility", status_code=204, tags=["Accounts"])
+async def update_visibility_settings(payload: AccountVisibilitySettings):
+    """Updates the visibility settings for one or more accounts."""
+    try:
+        db.set_account_visibility(payload.settings)
+        return Response(status_code=204)
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to update settings: {e}")
 
 @app.post("/api/data/purge", tags=["Admin"])
 async def purge_data(request: PurgeRequest):
@@ -2053,15 +2447,18 @@ from . import database as db
 @dataclass
 class Rule:
     """ 
-    Represents a single categorization rule.
+    Represents a single v2 categorization rule.
     (PRS Section 5.3)
     """
     rule_id: str
-    pattern: str  # The regex pattern to match against the transaction description.
+    pattern: str
     category: str
     cashflow_type: CashflowType
     tags: List[str] = field(default_factory=list)
     priority: int = 100
+    case_sensitive: bool = False
+    account_filter_mode: str = 'include'
+    account_filter_list: List[str] = field(default_factory=list)
 
 def _reset_and_apply_defaults(transaction: Transaction) -> Transaction:
     """
@@ -2080,7 +2477,6 @@ def _reset_and_apply_defaults(transaction: Transaction) -> Transaction:
         transaction.category = 'Income'
     elif transaction.amount < 0:
         transaction.cashflow_type = CashflowType.EXPENSE
-        # CORRECTED: Explicitly set default category for expenses.
         transaction.category = 'Uncategorized'
 
     return transaction
@@ -2088,29 +2484,34 @@ def _reset_and_apply_defaults(transaction: Transaction) -> Transaction:
 def apply_rules_to_transaction(transaction: Transaction, rules: List[Rule]) -> Transaction:
     """
     Applies a list of rules to a single transaction, modifying it in place.
-    The first rule that matches (by priority, then by order) wins.
+    The first rule that matches all conditions (by priority) wins.
     """
-    # First, reset the transaction to its default state
     transaction = _reset_and_apply_defaults(transaction)
 
-    # Sort rules by priority. Lower number means higher priority.
     sorted_rules = sorted(rules, key=lambda r: r.priority)
 
     for rule in sorted_rules:
+        # --- Condition 1: Account Filter ---
+        if rule.account_filter_list:
+            account_matches = any(acc.lower() == transaction.account_id.lower() for acc in rule.account_filter_list)
+            
+            if rule.account_filter_mode == 'include' and not account_matches:
+                continue # Skip: transaction account not in the include list
+            if rule.account_filter_mode == 'exclude' and account_matches:
+                continue # Skip: transaction account is in the exclude list
+
+        # --- Condition 2: Description Pattern ---
         try:
-            if re.search(rule.pattern, transaction.description, re.IGNORECASE):
+            flags = 0 if rule.case_sensitive else re.IGNORECASE
+            if re.search(rule.pattern, transaction.description, flags):
                 print(f"Rule '{rule.pattern}' matched description '{transaction.description}'. Applying category '{rule.category}'.")
                 transaction.category = rule.category
                 transaction.cashflow_type = rule.cashflow_type
                 transaction.tags = list(set(transaction.tags + rule.tags)) # Merge and dedupe tags
                 
-                # Set is_transfer flag for convenience
-                if rule.cashflow_type == CashflowType.TRANSFER:
-                    transaction.is_transfer = True
-                else:
-                    transaction.is_transfer = False
+                transaction.is_transfer = rule.cashflow_type == CashflowType.TRANSFER
                 
-                # First match wins, so we break.
+                # First match wins
                 break 
         except re.error as e:
             print(f"Skipping invalid regex pattern in rule {rule.rule_id}: '{rule.pattern}' - {e}")
@@ -2129,8 +2530,11 @@ def load_rules_from_db() -> List[Rule]:
             pattern=r['pattern'],
             category=r['category'],
             cashflow_type=CashflowType(r['cashflow_type']),
-            tags=r.get('tags', []), # The DB layer now returns a list
-            priority=r['priority']
+            tags=r.get('tags', []),
+            priority=r['priority'],
+            case_sensitive=r.get('case_sensitive', False),
+            account_filter_mode=r.get('account_filter_mode', 'include'),
+            account_filter_list=r.get('account_filter_list', [])
         ) for r in rule_records
     ]
     return rules
@@ -2142,12 +2546,12 @@ def recategorize_all_transactions() -> int:
     """
     print("--- Starting global re-categorization process... ---")
     rules = load_rules_from_db()
-    transaction_dicts = db.get_all_transactions()
+    # UPDATED: Use the new get_transactions function
+    transaction_dicts = db.get_transactions()
     updated_transactions = []
 
     for tx_dict in transaction_dicts:
         # Convert dict from DB back into a Transaction object for processing
-        # This ensures type safety and consistency with the data model.
         tx_obj = Transaction(
             transaction_id=tx_dict['transaction_id'],
             account_id=tx_dict['account_id'],
@@ -2157,7 +2561,9 @@ def recategorize_all_transactions() -> int:
             merchant=tx_dict.get('merchant'),
             asset_id=tx_dict.get('asset_id'),
             import_run_id=tx_dict.get('import_run_id'),
-            raw_data_hash=tx_dict.get('raw_data_hash')
+            raw_data_hash=tx_dict.get('raw_data_hash'),
+            institution=tx_dict.get('institution'),
+            original_category=tx_dict.get('original_category')
         )
 
         # Apply the full rule set to the reconstituted transaction object
@@ -2169,6 +2575,93 @@ def recategorize_all_transactions() -> int:
     
     print(f"--- Re-categorization complete. Processed {len(updated_transactions)} transactions. ---")
     return len(updated_transactions)
+
+
+--- FILE: projects/trust/src/components/BarChart.jsx ---
+
+import { ResponsiveBar } from '@nivo/bar';
+
+const BarChart = ({ data, indexBy, keys, axisLeftLabel, axisBottomLabel }) => {
+
+    const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
+    }).format(value);
+
+    return (
+        <div style={{ height: '350px' }}>
+            <ResponsiveBar
+                data={data}
+                keys={keys}
+                indexBy={indexBy}
+                margin={{ top: 20, right: 30, bottom: 60, left: 100 }}
+                padding={0.3}
+                valueScale={{ type: 'linear' }}
+                indexScale={{ type: 'band', round: true }}
+                colors={{ scheme: 'nivo' }}
+                borderColor={{ from: 'color', modifiers: [['darker', 1.6]] }}
+                axisTop={null}
+                axisRight={null}
+                axisBottom={{
+                    tickSize: 5,
+                    tickPadding: 5,
+                    tickRotation: 0,
+                    legend: axisBottomLabel,
+                    legendPosition: 'middle',
+                    legendOffset: 32,
+                }}
+                axisLeft={{
+                    tickSize: 5,
+                    tickPadding: 5,
+                    tickRotation: 0,
+                    legend: axisLeftLabel,
+                    legendPosition: 'middle',
+                    legendOffset: -80,
+                    format: formatCurrency
+                }}
+                labelSkipWidth={12}
+                labelSkipHeight={12}
+                labelTextColor={{ from: 'color', modifiers: [['darker', 1.6]] }}
+                legends={[]}
+                animate={true}
+                motionStiffness={90}
+                motionDamping={15}
+                tooltip={({ id, value, indexValue }) => (
+                    <div style={{
+                        padding: '12px',
+                        background: '#222',
+                        color: '#fff',
+                        border: '1px solid #333',
+                        borderRadius: '3px',
+                    }}>
+                        <strong>{indexValue}</strong><br />
+                        {id}: {formatCurrency(value)}
+                    </div>
+                )}
+                theme={{
+                    axis: {
+                        ticks: { text: { fill: '#bbb' } },
+                        legend: { text: { fill: '#bbb' } },
+                    },
+                    grid: {
+                        line: { stroke: '#444' }
+                    },
+                    tooltip: {
+                        container: {
+                            background: 'var(--dark-bg)',
+                            color: 'var(--text-color)',
+                            border: `1px solid var(--border-color)`
+                        }
+                    }
+                }}
+            />
+        </div>
+    );
+};
+
+export default BarChart;
 
 
 --- FILE: projects/trust/src/components/DataImportView.css ---
@@ -2252,12 +2745,75 @@ def recategorize_all_transactions() -> int:
     color: #f2a7a7;
 }
 
+/* --- Styles for AccountVisibilityManager --- */
+.visibility-manager-card {
+    background-color: var(--dark-bg);
+    padding: 1.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    margin-top: 2rem;
+}
+
+.visibility-manager-card h3 {
+    margin-top: 0;
+    color: var(--gold-accent);
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.5rem;
+}
+
+.account-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.account-item {
+    display: flex;
+    align-items: center;
+    background-color: var(--medium-bg);
+    padding: 0.5rem 0.75rem;
+    border-radius: 4px;
+}
+
+.account-item input[type="checkbox"] {
+    margin-right: 0.75rem;
+    width: 16px;
+    height: 16px;
+}
+
+.account-item label {
+    font-size: 0.9em;
+}
+
+.visibility-actions {
+    text-align: right;
+}
+
+.visibility-actions button {
+    background-color: var(--gold-accent);
+    color: var(--dark-bg);
+    border: none;
+    padding: 0.6rem 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.visibility-actions button:disabled {
+    background-color: #555;
+    cursor: not-allowed;
+}
+
 
 --- FILE: projects/trust/src/components/DataImportView.jsx ---
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import './DataImportView.css';
 import ImportSummary from './ImportSummary';
+import RulesEditor from './RulesEditor';
 
 const FileUploader = ({ title, importType, onUploadSuccess }) => {
     const [file, setFile] = useState(null);
@@ -2347,10 +2903,99 @@ const FileUploader = ({ title, importType, onUploadSuccess }) => {
     );
 };
 
+const AccountVisibilityManager = ({ onSettingsChanged }) => {
+    const [accounts, setAccounts] = useState([]);
+    const [visibility, setVisibility] = useState({});
+    const [isLoading, setIsLoading] = useState(true);
+    const [isSaving, setIsSaving] = useState(false);
+
+    useEffect(() => {
+        const fetchData = async () => {
+            try {
+                setIsLoading(true);
+                const [accountsRes, visibilityRes] = await Promise.all([
+                    fetch('/api/accounts'),
+                    fetch('/api/accounts/visibility')
+                ]);
+                if (!accountsRes.ok || !visibilityRes.ok) throw new Error("Failed to fetch account data");
+
+                const accountsData = await accountsRes.json();
+                const visibilityData = await visibilityRes.json();
+
+                setAccounts(accountsData);
+                // Ensure every account has a visibility setting, defaulting to true
+                const initialVisibility = accountsData.reduce((acc, accountId) => {
+                    acc[accountId] = visibilityData.hasOwnProperty(accountId) ? visibilityData[accountId] : true;
+                    return acc;
+                }, {});
+                setVisibility(initialVisibility);
+            } catch (error) {
+                console.error("Failed to fetch account settings", error);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        fetchData();
+    }, []);
+
+    const handleToggle = (accountId) => {
+        setVisibility(prev => ({ ...prev, [accountId]: !prev[accountId] }));
+    };
+
+    const handleSave = async () => {
+        setIsSaving(true);
+        try {
+            const response = await fetch('/api/accounts/visibility', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ settings: visibility }),
+            });
+            if (!response.ok) throw new Error('Failed to save settings');
+            alert('Visibility settings saved successfully!');
+            onSettingsChanged(); // Notify parent to refresh other components if needed
+        } catch (error) {
+            console.error("Failed to save visibility settings:", error);
+            alert(`Error: ${error.message}`);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    return (
+        <div className='visibility-manager-card'>
+            <h3>Account Visibility (for Sankey Chart)</h3>
+            {isLoading ? (
+                <p>Loading accounts...</p>
+            ) : (
+                <>
+                    <div className='account-list'>
+                        {accounts.map(accountId => (
+                            <div key={accountId} className='account-item'>
+                                <input 
+                                    type="checkbox" 
+                                    id={`vis-${accountId}`}
+                                    checked={visibility[accountId] || false}
+                                    onChange={() => handleToggle(accountId)}
+                                />
+                                <label htmlFor={`vis-${accountId}`}>{accountId}</label>
+                            </div>
+                        ))}
+                    </div>
+                    <div className='visibility-actions'>
+                        <button onClick={handleSave} disabled={isSaving}>
+                            {isSaving ? 'Saving...' : 'Save Settings'}
+                        </button>
+                    </div>
+                </>
+            )}
+        </div>
+    );
+};
+
 const DataImportView = () => {
     const [refreshKey, setRefreshKey] = useState(0);
 
-    const handleUploadSuccess = () => {
+    const handleRefresh = () => {
         setRefreshKey(prevKey => prevKey + 1); // Increment key to trigger refresh
     };
 
@@ -2362,15 +3007,17 @@ const DataImportView = () => {
                     <FileUploader 
                         title="Import Transactions" 
                         importType="transactions" 
-                        onUploadSuccess={handleUploadSuccess} 
+                        onUploadSuccess={handleRefresh} 
                     />
                     <FileUploader 
                         title="Import Portfolio Holdings" 
                         importType="holdings" 
-                        onUploadSuccess={handleUploadSuccess} 
+                        onUploadSuccess={handleRefresh} 
                     />
                 </div>
             </div>
+            <AccountVisibilityManager onSettingsChanged={handleRefresh} />
+            <RulesEditor />
             <ImportSummary refreshKey={refreshKey} />
         </>
     );
@@ -2379,11 +3026,149 @@ const DataImportView = () => {
 export default DataImportView;
 
 
+--- FILE: projects/trust/src/components/FilterPanel.css ---
+
+.filter-panel {
+    padding: 1.5rem;
+    background-color: var(--light-bg);
+    border-radius: 8px;
+    margin-bottom: 2rem;
+    border: 1px solid var(--border-color);
+}
+
+.filter-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 1rem;
+}
+
+.filter-item label {
+    display: block;
+    font-size: 0.9em;
+    margin-bottom: 0.25rem;
+    color: #ccc;
+}
+
+.filter-item input,
+.filter-item select {
+    width: 100%;
+    padding: 0.5rem;
+    background-color: var(--medium-bg);
+    border: 1px solid #666;
+    border-radius: 4px;
+    color: #fff;
+    box-sizing: border-box;
+}
+
+.filter-actions {
+    margin-top: 1.5rem;
+    text-align: right;
+}
+
+.filter-actions button {
+    background-color: var(--gold-accent);
+    color: var(--dark-bg);
+    border: none;
+    padding: 0.6rem 1.5rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.filter-actions button:hover {
+    opacity: 0.9;
+}
+
+
+--- FILE: projects/trust/src/components/FilterPanel.jsx ---
+
+import { useState, useEffect } from 'react';
+import './FilterPanel.css';
+
+const FilterPanel = ({ config, onFilterSubmit }) => {
+    const [filterState, setFilterState] = useState({});
+    const [options, setOptions] = useState({});
+
+    useEffect(() => {
+        // Initialize filter state from config
+        const initialState = config.reduce((acc, item) => {
+            acc[item.id] = '';
+            return acc;
+        }, {});
+        setFilterState(initialState);
+
+        // Fetch options for select dropdowns
+        const fetchOptions = async () => {
+            try {
+                const response = await fetch('/api/filter-options');
+                if (!response.ok) throw new Error('Failed to fetch filter options');
+                const data = await response.json();
+                // --- TRACE: Log received options to browser console ---
+                console.log('--- TRACE [FilterPanel.jsx]: Received filter options from API:', data);
+                setOptions(data);
+            } catch (error) {
+                console.error(error);
+            }
+        };
+        fetchOptions();
+    }, [config]);
+
+    const handleChange = (e) => {
+        const { name, value } = e.target;
+        setFilterState(prev => ({ ...prev, [name]: value }));
+    };
+
+    const handleSubmit = (e) => {
+        e.preventDefault();
+        // Remove empty filters before submitting
+        const activeFilters = Object.fromEntries(
+            Object.entries(filterState).filter(([_, value]) => value !== '' && value !== 'All')
+        );
+        onFilterSubmit(activeFilters);
+    };
+
+    return (
+        <form onSubmit={handleSubmit} className="filter-panel">
+            <div className="filter-grid">
+                {config.map(item => (
+                    <div key={item.id} className="filter-item">
+                        <label htmlFor={item.id}>{item.label}</label>
+                        {item.type === 'select' ? (
+                            <select id={item.id} name={item.id} value={filterState[item.id] || ''} onChange={handleChange}>
+                                <option value="">All</option>
+                                {(options[item.optionsKey] || []).map(opt => (
+                                    <option key={opt} value={opt}>{opt}</option>
+                                ))}
+                            </select>
+                        ) : (
+                            <input
+                                type="text"
+                                id={item.id}
+                                name={item.id}
+                                placeholder={item.placeholder}
+                                value={filterState[item.id] || ''}
+                                onChange={handleChange}
+                            />
+                        )}
+                    </div>
+                ))}
+            </div>
+            <div className="filter-actions">
+                <button type="submit">Apply Filters</button>
+            </div>
+        </form>
+    );
+};
+
+export default FilterPanel;
+
+
 --- FILE: projects/trust/src/components/HomeView.css ---
 
 .net-worth-hero {
-    background-color: var(--medium-bg);
-    border: 1px solid var(--border-color);
+    background: linear-gradient(45deg, var(--gold-accent), #f7d794);
+    color: var(--dark-bg);
+    border: none;
     border-radius: 8px;
     padding: 1.5rem 2rem;
     margin-bottom: 2rem;
@@ -2394,18 +3179,22 @@ export default DataImportView;
     margin-top: 0;
     border-bottom: none;
     padding-bottom: 0;
+    font-weight: 500;
+    opacity: 0.8;
+    color: var(--dark-bg);
 }
 
 .net-worth-hero .value {
     font-size: 3.5em;
     font-weight: bold;
-    color: #fff;
+    color: var(--dark-bg);
     margin: 0.5rem 0;
 }
 
 .net-worth-hero .timestamp {
     font-size: 0.9em;
-    color: #999;
+    color: var(--dark-bg);
+    opacity: 0.7;
     margin: 0;
 }
 
@@ -2457,7 +3246,8 @@ const NetWorthHero = () => {
 };
 
 const HomeView = () => {
-    const [incomeSankeyData, setIncomeSankeyData] = useState(null);
+    const [incomeSankeyData, setIncomeSankeyData] = useState({ nodes: [], links: [] });
+    const [sankeyLoading, setSankeyLoading] = useState(true);
 
     useEffect(() => {
         const fetchSankeyData = async () => {
@@ -2468,29 +3258,33 @@ const HomeView = () => {
                 setIncomeSankeyData(data);
             } catch (error) {
                 console.error(error);
+            } finally {
+                setSankeyLoading(false);
             }
         };
         fetchSankeyData();
     }, []);
 
-    const isChartVisible = incomeSankeyData && incomeSankeyData.links.length > 0;
+    const isChartVisible = !sankeyLoading && incomeSankeyData && incomeSankeyData.links.length > 0;
 
     return (
         <>
             <NetWorthHero />
-            <div className="grid-container">
-                <div className="card">
-                    <h2>Income → Uses of Money</h2>
-                    {isChartVisible ? (
-                        <SankeyChart data={incomeSankeyData} />
-                    ) : (
-                        <p>No transaction data found for this chart.</p>
-                    )}
-                </div>
-                <div className="card">
-                    <h2>Portfolio Return Waterfall</h2>
-                    <MockSankey type="returns" />
-                </div>
+            
+            <div className="card sankey-container-card"> {/* Added class for specific styling */}
+                <h2>Income → Uses of Money</h2>
+                {sankeyLoading ? (
+                    <p>Loading chart data...</p>
+                ) : isChartVisible ? (
+                    <SankeyChart data={incomeSankeyData} />
+                ) : (
+                    <p>No transaction data available. Please import a transactions CSV file.</p>
+                )}
+            </div>
+            
+            <div className="card">
+                <h2>Portfolio Return Waterfall</h2>
+                <MockSankey type="returns" />
             </div>
         </>
     );
@@ -2721,96 +3515,6 @@ const MockSankey = ({ type }) => {
 export default MockSankey;
 
 
---- FILE: projects/trust/src/components/NavBar.css ---
-
-.navbar {
-    width: 220px;
-    min-width: 220px;
-    background-color: var(--medium-bg);
-    border-right: 1px solid var(--border-color);
-    height: 100vh;
-    padding: 1rem;
-    box-sizing: border-box;
-}
-
-.logo {
-    font-size: 1.5em;
-    font-weight: bold;
-    color: var(--gold-accent);
-    padding-bottom: 1rem;
-    margin-bottom: 1rem;
-    border-bottom: 1px solid var(--border-color);
-}
-
-.navbar ul {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-}
-
-.navbar li {
-    padding: 0.75rem 1rem;
-    margin-bottom: 0.5rem;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: background-color 0.2s ease;
-}
-
-.navbar li:hover {
-    background-color: var(--light-bg);
-}
-
-.navbar li.active {
-    background-color: var(--gold-accent);
-    color: var(--dark-bg);
-    font-weight: bold;
-}
-
-
---- FILE: projects/trust/src/components/NavBar.jsx ---
-
-import './NavBar.css';
-
-const NavItem = ({ name, activeView, setActiveView }) => (
-    <li 
-        className={activeView === name ? 'active' : ''}
-        onClick={() => setActiveView(name)}
-    >
-        {name}
-    </li>
-);
-
-const NavBar = ({ activeView, setActiveView }) => {
-    const navItems = [
-        'Home',
-        'Cashflow',
-        'Portfolio',
-        'Projects/Tags',
-        'Real Estate',
-        'Forecast',
-        'Data & Settings',
-    ];
-
-    return (
-        <nav className="navbar">
-            <div className="logo">Curie Trust</div>
-            <ul>
-                {navItems.map(item => (
-                    <NavItem 
-                        key={item} 
-                        name={item} 
-                        activeView={activeView} 
-                        setActiveView={setActiveView} 
-                    />
-                ))}
-            </ul>
-        </nav>
-    );
-};
-
-export default NavBar;
-
-
 --- FILE: projects/trust/src/components/PlaceholderView.css ---
 
 .placeholder-card {
@@ -2841,6 +3545,473 @@ const PlaceholderView = ({ viewName }) => {
 };
 
 export default PlaceholderView;
+
+
+--- FILE: projects/trust/src/components/RulesEditor.css ---
+
+.rules-editor-card {
+    background-color: var(--light-bg);
+    padding: 1.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    margin-top: 2rem;
+}
+
+.rules-editor-card h3 {
+    margin-top: 0;
+    color: var(--text-color);
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.5rem;
+}
+
+.rule-form {
+    display: grid;
+    grid-template-columns: 2fr 1fr 1fr 1fr;
+    gap: 1rem;
+    align-items: flex-end;
+    margin-bottom: 1.5rem;
+}
+
+.form-group {
+    margin-bottom: 0;
+}
+
+.form-group.span-2 {
+    grid-column: span 2;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-size: 0.9em;
+}
+
+.form-group input,
+.form-group select {
+    width: 100%;
+    padding: 0.5rem;
+    background-color: var(--medium-bg);
+    border: 1px solid #666;
+    border-radius: 4px;
+    color: #fff;
+    box-sizing: border-box;
+}
+
+.account-filter-group {
+    display: flex;
+    gap: 0.5rem;
+}
+.account-filter-group select {
+    flex-basis: 40%;
+}
+.account-filter-group input {
+    flex-grow: 1;
+}
+
+.checkbox-group {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    padding-top: 1rem; /* align with other labels */
+}
+
+.checkbox-group input[type="checkbox"] {
+    width: auto;
+    margin-right: 0.5rem;
+}
+
+.add-rule-btn {
+    grid-column: 4 / 5;
+    background-color: var(--gold-accent);
+    color: var(--dark-bg);
+    border: none;
+    padding: 0.6rem 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.form-actions {
+    display: flex;
+    gap: 1rem;
+    margin-top: 1.5rem;
+    border-top: 1px solid var(--border-color);
+    padding-top: 1.5rem;
+}
+
+.form-actions button {
+    background-color: var(--gold-accent);
+    color: var(--dark-bg);
+    border: none;
+    padding: 0.6rem 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.form-actions button.secondary {
+    background-color: #555;
+    color: #fff;
+}
+
+
+.rules-table {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.rules-table table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.rules-table th, .rules-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color);
+    text-align: left;
+    font-size: 0.9em;
+}
+
+.rules-table thead th {
+    background-color: var(--light-bg);
+    position: sticky;
+    top: 0;
+}
+
+.rules-table td.actions-cell {
+    width: 1%;
+    text-align: center;
+}
+
+.rules-table td.pattern-cell {
+    font-family: monospace;
+}
+
+.rules-table td.conditions-cell {
+    font-size: 0.8em;
+    color: #ccc;
+}
+
+.condition-tag {
+    display: inline-block;
+    background-color: var(--medium-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 2px 6px;
+    margin-right: 4px;
+    white-space: nowrap;
+}
+
+.rules-table .delete-btn {
+    background: none;
+    border: none;
+    color: #ff6b6b;
+    cursor: pointer;
+    font-size: 1.1em;
+}
+
+.rules-table .delete-btn:hover {
+    color: #ff4747;
+}
+
+
+--- FILE: projects/trust/src/components/RulesEditor.jsx ---
+
+import { useState, useEffect } from 'react';
+import './RulesEditor.css';
+
+const RulesEditor = () => {
+    const [rules, setRules] = useState([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [error, setError] = useState(null);
+    
+    const initialFormState = {
+        pattern: '',
+        category: '',
+        cashflow_type: 'Expense',
+        tags: '',
+        case_sensitive: false,
+        account_filter_mode: 'include',
+        account_filter_list: '',
+    };
+    const [formState, setFormState] = useState(initialFormState);
+
+    const fetchRules = async () => {
+        try {
+            setIsLoading(true);
+            const response = await fetch('/api/rules');
+            if (!response.ok) throw new Error('Failed to fetch rules');
+            const data = await response.json();
+            setRules(data);
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchRules();
+    }, []);
+
+    const handleInputChange = (e) => {
+        const { name, value, type, checked } = e.target;
+        setFormState(prevState => ({ 
+            ...prevState, 
+            [name]: type === 'checkbox' ? checked : value 
+        }));
+    };
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        const ruleData = {
+            ...formState,
+            tags: formState.tags.split(',').map(t => t.trim()).filter(Boolean),
+            account_filter_list: formState.account_filter_list.split(',').map(a => a.trim()).filter(Boolean),
+        };
+
+        try {
+            const response = await fetch('/api/rules', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(ruleData),
+            });
+            if (!response.ok) {
+                const errData = await response.json();
+                throw new Error(errData.detail || 'Failed to create rule');
+            }
+            fetchRules();
+            setFormState(initialFormState);
+        } catch (err) {
+            alert(`Error creating rule: ${err.message}`);
+        }
+    };
+
+    const handleDelete = async (ruleId) => {
+        if (!confirm('Are you sure you want to delete this rule permanently?')) return;
+        try {
+            const response = await fetch(`/api/rules/${ruleId}`, { method: 'DELETE' });
+            if (!response.ok) throw new Error('Failed to delete rule');
+            fetchRules(); // Refresh the list
+        } catch (err) {
+            alert(`Error deleting rule: ${err.message}`);
+        }
+    };
+
+    const handleRecategorize = async () => {
+        if (!confirm('This will re-apply all rules to all transactions. This can take a moment. Continue?')) return;
+        try {
+            const response = await fetch('/api/transactions/recategorize', { method: 'POST' });
+            if (!response.ok) throw new Error('Recategorization failed');
+            const result = await response.json();
+            alert(result.message);
+        } catch (err) {
+            alert(`Error: ${err.message}`);
+        }
+    }
+
+    return (
+        <div className="rules-editor-card">
+            <h3>Categorization Rules Engine v2</h3>
+            <form onSubmit={handleSubmit} className="rule-form">
+                {/* Row 1: Core Pattern and Action */}
+                <div className="form-group span-2">
+                    <label>IF Description contains (Pattern/Regex)</label>
+                    <input type="text" name="pattern" value={formState.pattern} onChange={handleInputChange} placeholder="e.g., safeway|amazon" required />
+                </div>
+                <div className="form-group">
+                    <label>THEN set Category to</label>
+                    <input type="text" name="category" value={formState.category} onChange={handleInputChange} placeholder="e.g., Groceries" required />
+                </div>
+                <div className="form-group">
+                    <label>Set Cashflow Type to</label>
+                    <select name="cashflow_type" value={formState.cashflow_type} onChange={handleInputChange}>
+                        <option value="Expense">Expense</option>
+                        <option value="Income">Income</option>
+                        <option value="Transfer">Transfer</option>
+                        <option value="Capital Expenditure">Capital Expenditure</option>
+                        <option value="Investment">Investment</option>
+                    </select>
+                </div>
+
+                {/* Row 2: Advanced Filters */}
+                <div className="form-group span-2">
+                     <label>AND Account is</label>
+                     <div className='account-filter-group'>
+                        <select name="account_filter_mode" value={formState.account_filter_mode} onChange={handleInputChange}>
+                            <option value="include">INCLUDED in list</option>
+                            <option value="exclude">EXCLUDED from list</option>
+                        </select>
+                        <input type="text" name="account_filter_list" value={formState.account_filter_list} onChange={handleInputChange} placeholder="checking, savings (optional, comma-separated)" />
+                     </div>
+                </div>
+                <div className="form-group">
+                    <label>Add Tags (optional)</label>
+                    <input type="text" name="tags" value={formState.tags} onChange={handleInputChange} placeholder="vacation, travel2024" />
+                </div>
+                <div className="form-group checkbox-group">
+                    <input type="checkbox" id="case_sensitive" name="case_sensitive" checked={formState.case_sensitive} onChange={handleInputChange} />
+                    <label htmlFor="case_sensitive">Case-Sensitive Match</label>
+                </div>
+
+                <button type="submit" className='add-rule-btn'>Add Rule</button>
+            </form>
+
+            <h4>Existing Rules</h4>
+            <div className="rules-table">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Pattern</th>
+                            <th>Conditions</th>
+                            <th>Category</th>
+                            <th>Type</th>
+                            <th>Tags</th>
+                            <th className="actions-cell"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {isLoading ? (
+                            <tr><td colSpan="6">Loading rules...</td></tr>
+                        ) : rules.map(rule => (
+                            <tr key={rule.rule_id}>
+                                <td className='pattern-cell'>{rule.pattern}</td>
+                                <td className='conditions-cell'>
+                                    {rule.case_sensitive && <span className='condition-tag'>Case-Sensitive</span>}
+                                    {rule.account_filter_list && rule.account_filter_list.length > 0 && 
+                                        <span className='condition-tag'>
+                                            Account {rule.account_filter_mode === 'include' ? 'IN' : 'NOT IN'} [{rule.account_filter_list.join(', ')}]
+                                        </span>
+                                    }
+                                </td>
+                                <td>{rule.category}</td>
+                                <td>{rule.cashflow_type}</td>
+                                <td>{rule.tags.join(', ')}</td>
+                                <td className="actions-cell">
+                                    <button className="delete-btn" onClick={() => handleDelete(rule.rule_id)} title="Delete Rule">🗑️</button>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+
+            <div className="form-actions">
+                <button onClick={handleRecategorize} className="secondary">Re-categorize All Transactions</button>
+            </div>
+        </div>
+    );
+};
+
+export default RulesEditor;
+
+
+--- FILE: projects/trust/src/components/SideBar.css ---
+
+.sidebar {
+    width: var(--sidebar-width);
+    background-color: #1a1a1a; /* Use var(--dark-bg) but explicit for clarity */
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--border-color);
+}
+
+.logo {
+    font-size: 1.6em;
+    font-weight: bold;
+    color: var(--gold-accent);
+    padding: 1.5rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.sidebar ul {
+    list-style: none;
+    padding: 0;
+    margin: 1rem 0;
+    flex-grow: 1;
+}
+
+.sidebar li {
+    padding: 0.9rem 1.5rem;
+    cursor: pointer;
+    border-left: 4px solid transparent;
+    transition: background-color 0.2s ease, border-color 0.2s ease;
+    color: var(--text-color);
+    opacity: 0.7;
+    font-weight: 500;
+}
+
+.sidebar li:hover {
+    background-color: var(--medium-bg);
+    opacity: 1;
+}
+
+.sidebar li.active {
+    border-left: 4px solid var(--gold-accent);
+    color: var(--gold-accent);
+    background-color: var(--medium-bg);
+    opacity: 1;
+}
+
+.sidebar-footer {
+    padding: 1rem 1.5rem;
+    font-size: 0.8em;
+    color: #888;
+    text-align: center;
+    margin-top: auto;
+}
+
+
+--- FILE: projects/trust/src/components/SideBar.jsx ---
+
+import './SideBar.css';
+
+const NavItem = ({ name, activeView, setActiveView }) => (
+    <li
+        className={activeView === name ? 'active' : ''}
+        onClick={() => setActiveView(name)}
+    >
+        {name}
+    </li>
+);
+
+const SideBar = ({ activeView, setActiveView }) => {
+    const navItems = [
+        'Home',
+        'Cashflow',
+        'Portfolio',
+        'Projects/Tags',
+        'Real Estate',
+        'Forecast',
+        'Data & Settings',
+    ];
+
+    return (
+        <nav className="sidebar">
+            <div className="logo">
+                Curie Trust
+            </div>
+            <ul>
+                {navItems.map(item => (
+                    <NavItem
+                        key={item}
+                        name={item}
+                        activeView={activeView}
+                        setActiveView={setActiveView}
+                    />
+                ))}
+            </ul>
+            <div className="sidebar-footer">
+                <p>v0.0.1</p>
+            </div>
+        </nav>
+    );
+};
+
+export default SideBar;
 
 
 --- FILE: projects/trust/src/components/TransactionListView.css ---
@@ -2890,33 +4061,53 @@ export default PlaceholderView;
 
 --- FILE: projects/trust/src/components/TransactionListView.jsx ---
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import './TransactionListView.css';
+import FilterPanel from './FilterPanel';
+import BarChart from './BarChart';
 
 const TransactionListView = () => {
     const [transactions, setTransactions] = useState([]);
+    const [chartData, setChartData] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
 
-    useEffect(() => {
-        const fetchTransactions = async () => {
-            try {
-                setLoading(true);
-                const response = await fetch('/api/transactions');
-                if (!response.ok) {
-                    throw new Error(`HTTP Error: ${response.status}`);
-                }
-                const data = await response.json();
-                setTransactions(data);
-            } catch (e) {
-                setError(e.message);
-                console.error("Failed to fetch transactions:", e);
-            } finally {
-                setLoading(false);
-            }
-        };
+    const filterConfig = [
+        { id: 'category', label: 'Category', type: 'select', optionsKey: 'categories' },
+        { id: 'account_id', label: 'Account', type: 'select', optionsKey: 'accounts' },
+        { id: 'institution', label: 'Institution', type: 'select', optionsKey: 'institutions' },
+        { id: 'description', label: 'Description Contains', type: 'text', placeholder: 'e.g., Amazon' },
+        { id: 'tags', label: 'Tag Contains', type: 'text', placeholder: 'e.g., vacation' },
+    ];
 
-        fetchTransactions();
+    const fetchData = async (filters = {}) => {
+        try {
+            setLoading(true);
+            const query = new URLSearchParams(filters).toString();
+
+            const [transactionsRes, chartRes] = await Promise.all([
+                fetch(`/api/transactions?${query}`),
+                fetch(`/api/analysis/cashflow-chart?${query}`)
+            ]);
+
+            if (!transactionsRes.ok) throw new Error(`HTTP Error (Transactions): ${transactionsRes.status}`);
+            if (!chartRes.ok) throw new Error(`HTTP Error (Chart): ${chartRes.status}`);
+
+            const transactionsData = await transactionsRes.json();
+            const chartData = await chartRes.json();
+
+            setTransactions(transactionsData);
+            setChartData(chartData);
+        } catch (e) {
+            setError(e.message);
+            console.error("Failed to fetch transaction data:", e);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchData(); // Initial fetch with no filters
     }, []);
 
     const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
@@ -2929,45 +4120,67 @@ const TransactionListView = () => {
         return new Date(dateString).toLocaleDateString();
     }
 
-    if (loading) return <p>Loading transactions...</p>;
     if (error) return <p>Error loading transactions: {error}</p>;
 
     return (
-        <div className="card">
-            <h2>All Transactions</h2>
-            {transactions.length > 0 ? (
-                <div className="table-container">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Date</th>
-                                <th>Account</th>
-                                <th>Institution</th>
-                                <th>Description</th>
-                                <th>Category</th>
-                                <th style={{ textAlign: 'right' }}>Amount</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {transactions.map(t => (
-                                <tr key={t.transaction_id}>
-                                    <td>{formatDate(t.transaction_date)}</td>
-                                    <td>{t.account_id}</td>
-                                    <td>{t.institution}</td>
-                                    <td>{t.description}</td>
-                                    <td>{t.original_category || t.category}</td>
-                                    <td style={{ color: t.amount > 0 ? 'var(--gold-accent)' : 'inherit' }}>
-                                        {formatCurrency(t.amount)}
-                                    </td>
+        <>
+            <FilterPanel config={filterConfig} onFilterSubmit={fetchData} />
+
+            <div className="card">
+                <h2>Monthly Summary</h2>
+                {loading ? (
+                    <p>Loading chart...</p>
+                ) : chartData.length > 0 ? (
+                    <BarChart 
+                        data={chartData}
+                        indexBy="month"
+                        keys={['Income', 'Expense']}
+                        axisLeftLabel="Amount ($)"
+                        axisBottomLabel="Month"
+                    />
+                ) : (
+                    <p>No data available for chart with current filters.</p>
+                )}
+            </div>
+
+            <div className="card">
+                <h2>Transaction Details</h2>
+                {loading ? (
+                    <p>Loading transactions...</p>
+                ) : transactions.length > 0 ? (
+                    <div className="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Account</th>
+                                    <th>Institution</th>
+                                    <th>Description</th>
+                                    <th>Category</th>
+                                    <th style={{ textAlign: 'right' }}>Amount</th>
                                 </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-            ) : (
-                <p>No transactions found. Please import a transaction CSV file via the 'Data & Settings' screen.</p>
-            )}
-        </div>
+                            </thead>
+                            <tbody>
+                                {transactions.map(t => (
+                                    <tr key={t.transaction_id}>
+                                        <td>{formatDate(t.transaction_date)}</td>
+                                        <td>{t.account_id}</td>
+                                        <td>{t.institution}</td>
+                                        <td>{t.description}</td>
+                                        <td>{t.category}</td>
+                                        <td style={{ color: t.amount > 0 ? 'var(--gold-accent)' : 'inherit' }}>
+                                            {formatCurrency(t.amount)}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                ) : (
+                    <p>No transactions found for the current filter. Please import a transaction CSV file or adjust filters.</p>
+                )}
+            </div>
+        </>
     );
 };
 
@@ -3235,9 +4448,10 @@ def _clean_decimal(value_str: str, row_num: int, field_name: str, warnings: list
 def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Holding], Dict[str, Any], List[Dict], List[Dict]]:
     """
     Parses a holdings CSV, dynamically mapping common column names to the internal model.
-    It now returns successfully parsed holdings, a summary, a list of skipped rows, and a list of warnings.
+    This version now aggregates data for duplicate symbols within the same file,
+    summing quantity, cost basis, and market value.
     """
-    holdings = []
+    holdings_map = {} # Use a dictionary to handle aggregation of duplicate symbols.
     skipped_rows = []
     warnings = []
 
@@ -3253,7 +4467,7 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Hold
         return [], {}, [], []
 
     HEADER_ALIASES = {
-        'symbol': ['symbol', 'symbolcusip', 'ticker'],
+        'symbol': ['symbol', 'ticker', 'symbolcusip'],
         'quantity': ['quantity', 'shares', 'units'],
         'cost_basis': ['costbasis', 'cost', 'totalcost', 'costbasis($)'],
         'market_value': ['marketvalue', 'value', 'totalvalue', 'value($)'],
@@ -3316,18 +4530,38 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Hold
         if market_value_key and row.get(market_value_key):
             market_value = _clean_decimal(row.get(market_value_key), row_num, 'market_value', warnings)
 
-        raw_id = f"{account_id}-{symbol}"
-        holding_id = hashlib.sha256(raw_id.encode('utf-8')).hexdigest()
+        # --- AGGREGATION LOGIC ---
+        if symbol in holdings_map:
+            # Aggregate data for the existing symbol
+            existing_holding = holdings_map[symbol]
+            existing_holding.quantity += quantity
+            existing_holding.cost_basis += cost_basis
+            if existing_holding.market_value is not None and market_value is not None:
+                existing_holding.market_value += market_value
+            elif market_value is not None:
+                existing_holding.market_value = market_value
+            
+            warnings.append({
+                "row_number": row_num,
+                "field": "symbol",
+                "value": symbol,
+                "message": "Duplicate symbol found; values were aggregated."
+            })
+        else:
+            # Create a new holding entry
+            raw_id = f"{account_id}-{symbol}"
+            holding_id = hashlib.sha256(raw_id.encode('utf-8')).hexdigest()
+            
+            holdings_map[symbol] = Holding(
+                holding_id=holding_id,
+                account_id=account_id,
+                symbol=symbol,
+                quantity=quantity,
+                cost_basis=cost_basis,
+                market_value=market_value
+            )
 
-        holding = Holding(
-            holding_id=holding_id,
-            account_id=account_id,
-            symbol=symbol,
-            quantity=quantity,
-            cost_basis=cost_basis,
-            market_value=market_value
-        )
-        holdings.append(holding)
+    holdings = list(holdings_map.values())
     
     total_market_value = sum(h.market_value for h in holdings if h.market_value is not None)
     total_cost_basis = sum(h.cost_basis for h in holdings if h.cost_basis is not None)

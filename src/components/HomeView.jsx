@@ -43,7 +43,8 @@ const NetWorthHero = () => {
 };
 
 const HomeView = () => {
-    const [incomeSankeyData, setIncomeSankeyData] = useState(null);
+    const [incomeSankeyData, setIncomeSankeyData] = useState({ nodes: [], links: [] });
+    const [sankeyLoading, setSankeyLoading] = useState(true);
 
     useEffect(() => {
         const fetchSankeyData = async () => {
@@ -54,29 +55,33 @@ const HomeView = () => {
                 setIncomeSankeyData(data);
             } catch (error) {
                 console.error(error);
+            } finally {
+                setSankeyLoading(false);
             }
         };
         fetchSankeyData();
     }, []);
 
-    const isChartVisible = incomeSankeyData && incomeSankeyData.links.length > 0;
+    const isChartVisible = !sankeyLoading && incomeSankeyData && incomeSankeyData.links.length > 0;
 
     return (
         <>
             <NetWorthHero />
-            <div className="grid-container">
-                <div className="card">
-                    <h2>Income → Uses of Money</h2>
-                    {isChartVisible ? (
-                        <SankeyChart data={incomeSankeyData} />
-                    ) : (
-                        <p>No transaction data found for this chart.</p>
-                    )}
-                </div>
-                <div className="card">
-                    <h2>Portfolio Return Waterfall</h2>
-                    <MockSankey type="returns" />
-                </div>
+            
+            <div className="card sankey-container-card"> {/* Added class for specific styling */}
+                <h2>Income → Uses of Money</h2>
+                {sankeyLoading ? (
+                    <p>Loading chart data...</p>
+                ) : isChartVisible ? (
+                    <SankeyChart data={incomeSankeyData} />
+                ) : (
+                    <p>No transaction data available. Please import a transactions CSV file.</p>
+                )}
+            </div>
+            
+            <div className="card">
+                <h2>Portfolio Return Waterfall</h2>
+                <MockSankey type="returns" />
             </div>
         </>
     );

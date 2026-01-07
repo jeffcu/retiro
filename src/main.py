@@ -1,7 +1,7 @@
 import uvicorn
 import uuid
 from datetime import datetime, timezone
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body, Response, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import os
@@ -43,12 +43,18 @@ class RuleCreate(BaseModel):
     cashflow_type: CashflowType
     tags: Optional[List[str]] = []
     priority: Optional[int] = 100
+    case_sensitive: Optional[bool] = False
+    account_filter_mode: Optional[str] = 'include'
+    account_filter_list: Optional[List[str]] = []
 
 class RuleResponse(RuleCreate):
     rule_id: str
 
 class PurgeRequest(BaseModel):
     target: str = Field(..., description="The database table to purge, e.g., 'transactions' or 'holdings'.")
+
+class AccountVisibilitySettings(BaseModel):
+    settings: Dict[str, bool]
 
 
 @app.on_event("startup")
@@ -160,22 +166,68 @@ async def get_all_rules():
     rules = db.get_all_rules()
     return rules
 
+@app.delete("/api/rules/{rule_id}", status_code=204, tags=["Rules"])
+async def delete_rule_by_id(rule_id: str):
+    success = db.delete_rule(rule_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Rule not found.")
+    return Response(status_code=204) # Return empty response for success
+
 @app.get("/api/sankey/income", tags=["Analysis"])
 async def get_income_sankey_data(period: str = "all") -> Dict[str, List[Dict[str, Any]]]:
     try:
-        data = analysis.generate_income_sankey(period)
+        # This now implicitly uses the visibility settings stored in the DB
+        data = analysis.generate_income_sankey(period, exclude_invisible=True)
         return data
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"An internal error occurred in the analysis engine: {e}")
 
+# --- Filter Dependencies --- #
+# These functions gather filter parameters from the query string
+
+def get_transaction_filters(
+    category: Optional[str] = Query(None),
+    account_id: Optional[str] = Query(None),
+    institution: Optional[str] = Query(None),
+    description: Optional[str] = Query(None),
+    tags: Optional[str] = Query(None),
+) -> Dict[str, Any]:
+    filters = {
+        "category": category,
+        "account_id": account_id,
+        "institution": institution,
+        "description": description,
+        "tags": tags
+    }
+    return {k: v for k, v in filters.items() if v is not None}
+
+def get_holding_filters(
+    account_id: Optional[str] = Query(None),
+    symbol: Optional[str] = Query(None),
+) -> Dict[str, Any]:
+    filters = {
+        "account_id": account_id,
+        "symbol": symbol
+    }
+    return {k: v for k, v in filters.items() if v is not None}
+
 @app.get("/api/transactions", tags=["Data"])
-async def get_all_transactions_for_display():
+async def get_filtered_transactions(filters: Dict[str, Any] = Depends(get_transaction_filters)):
     try:
-        return db.get_all_transactions()
+        return db.get_transactions(filters)
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"An internal error occurred while fetching transactions: {e}")
+
+@app.get("/api/holdings", tags=["Data"])
+async def get_filtered_holdings(filters: Dict[str, Any] = Depends(get_holding_filters)):
+    try:
+        return db.get_holdings(filters)
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Failed to retrieve holdings.")
+
 
 @app.post("/api/transactions/recategorize", tags=["Processing"])
 async def trigger_recategorization():
@@ -186,25 +238,70 @@ async def trigger_recategorization():
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"An internal error occurred during re-categorization: {e}")
 
-@app.get("/api/holdings", tags=["Data"])
-async def get_all_holdings():
-    try:
-        return db.get_all_holdings()
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail="Failed to retrieve holdings.")
-
 @app.get("/api/portfolio/summary", tags=["Analysis"])
 async def get_portfolio_summary():
     """Calculates the total market value of all holdings."""
     try:
-        holdings = db.get_all_holdings()
+        holdings = db.get_holdings()
         # Robustly sum market value, ignoring any holdings where it is not set.
         total_market_value = sum(h.get('market_value', 0) for h in holdings if h.get('market_value') is not None)
         return {"total_market_value": total_market_value}
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Failed to calculate portfolio summary.")
+
+
+# --- NEW Endpoints for Filtering and Charts --- #
+
+@app.get("/api/filter-options", tags=["Filters"])
+async def get_filter_options():
+    try:
+        options = db.get_filter_options()
+        return options
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Failed to retrieve filter options.")
+
+@app.get("/api/analysis/cashflow-chart", tags=["Analysis"])
+async def get_cashflow_chart(filters: Dict[str, Any] = Depends(get_transaction_filters)):
+    try:
+        chart_data = analysis.prepare_cashflow_chart_data(filters)
+        return chart_data
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Failed to generate cashflow chart data.")
+
+@app.get("/api/analysis/portfolio-chart", tags=["Analysis"])
+async def get_portfolio_chart(filters: Dict[str, Any] = Depends(get_holding_filters)):
+    try:
+        chart_data = analysis.prepare_portfolio_chart_data(filters)
+        return chart_data
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Failed to generate portfolio chart data.")
+
+
+# --- Account Management --- #
+
+@app.get("/api/accounts", response_model=List[str], tags=["Accounts"])
+async def get_all_accounts():
+    """Returns a list of all unique account IDs known to the system."""
+    return db.get_all_account_ids()
+
+@app.get("/api/accounts/visibility", response_model=Dict[str, bool], tags=["Accounts"])
+async def get_visibility_settings():
+    """Returns the current visibility settings for all accounts."""
+    return db.get_account_visibility()
+
+@app.put("/api/accounts/visibility", status_code=204, tags=["Accounts"])
+async def update_visibility_settings(payload: AccountVisibilitySettings):
+    """Updates the visibility settings for one or more accounts."""
+    try:
+        db.set_account_visibility(payload.settings)
+        return Response(status_code=204)
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to update settings: {e}")
 
 @app.post("/api/data/purge", tags=["Admin"])
 async def purge_data(request: PurgeRequest):
