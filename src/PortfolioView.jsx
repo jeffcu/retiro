@@ -69,6 +69,8 @@ const PortfolioView = () => {
     const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
         style: 'currency',
         currency: 'USD',
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
     }).format(value || 0);
 
     const totalMarketValue = holdings.reduce((sum, h) => sum + (h.market_value || 0), 0);

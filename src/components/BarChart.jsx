@@ -15,7 +15,7 @@ const BarChart = ({ data, indexBy, keys, axisLeftLabel, axisBottomLabel }) => {
                 data={data}
                 keys={keys}
                 indexBy={indexBy}
-                margin={{ top: 20, right: 30, bottom: 60, left: 100 }}
+                margin={{ top: 20, right: 30, bottom: 80, left: 100 }}
                 padding={0.3}
                 valueScale={{ type: 'linear' }}
                 indexScale={{ type: 'band', round: true }}
@@ -26,10 +26,10 @@ const BarChart = ({ data, indexBy, keys, axisLeftLabel, axisBottomLabel }) => {
                 axisBottom={{
                     tickSize: 5,
                     tickPadding: 5,
-                    tickRotation: 0,
+                    tickRotation: -90, // Rotated for legibility
                     legend: axisBottomLabel,
                     legendPosition: 'middle',
-                    legendOffset: 32,
+                    legendOffset: 65, // Adjusted for rotated labels
                 }}
                 axisLeft={{
                     tickSize: 5,
@@ -65,7 +65,7 @@ const BarChart = ({ data, indexBy, keys, axisLeftLabel, axisBottomLabel }) => {
                         legend: { text: { fill: '#bbb' } },
                     },
                     grid: {
-                        line: { stroke: '#444' }
+                        line: { stroke: '#444' } 
                     },
                     tooltip: {
                         container: {
