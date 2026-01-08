@@ -237,6 +237,7 @@ fastapi
 uvicorn[standard]
 python-dotenv
 python-multipart
+httpx
 
 
 --- FILE: projects/trust/vite.config.js ---
@@ -1074,16 +1075,16 @@ const PortfolioSummary = ({ holdings, formatCurrency }) => {
     );
 };
 
+const filterConfig = [
+    { id: 'account_id', label: 'Account', type: 'select', optionsKey: 'accounts' },
+    { id: 'symbol', label: 'Symbol', type: 'text', placeholder: 'e.g., AAPL' },
+];
+
 const PortfolioView = () => {
     const [holdings, setHoldings] = useState([]);
     const [chartData, setChartData] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
-
-    const filterConfig = [
-        { id: 'account_id', label: 'Account', type: 'select', optionsKey: 'accounts' },
-        { id: 'symbol', label: 'Symbol', type: 'text', placeholder: 'e.g., AAPL' },
-    ];
 
     const fetchData = async (filters = {}) => {
         try {
@@ -1118,6 +1119,8 @@ const PortfolioView = () => {
     const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
         style: 'currency',
         currency: 'USD',
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
     }).format(value || 0);
 
     const totalMarketValue = holdings.reduce((sum, h) => sum + (h.market_value || 0), 0);
@@ -1206,8 +1209,8 @@ const SankeyChart = ({ data }) => {
     const formatValue = (value) => new Intl.NumberFormat('en-US', {
         style: 'currency',
         currency: 'USD',
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
     }).format(value);
 
     const handleNodeClick = (node, event) => {
@@ -1419,6 +1422,8 @@ def prepare_portfolio_chart_data(filters: Dict[str, Any]) -> List[Dict[str, Any]
 
 --- FILE: projects/trust/src/data_model.py ---
 
+from __future__ import annotations
+import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
@@ -1431,6 +1436,21 @@ class CashflowType(Enum):
     EXPENSE = "Expense"
     TRANSFER = "Transfer"
     CAPEX = "Capital Expenditure"
+    INVESTMENT = "Investment"
+
+    @classmethod
+    def from_string(cls, value: str | None) -> CashflowType | None:
+        """Safely create a CashflowType from a string, ignoring case and whitespace."""
+        if not value:
+            return None
+        
+        clean_value = value.strip().lower()
+        for member in cls:
+            if member.value.lower() == clean_value:
+                return member
+        
+        logging.warning(f"Unknown CashflowType value encountered: '{value}'. Treating as None.")
+        return None
 
 
 @dataclass
@@ -1518,7 +1538,7 @@ def _ensure_schema(conn: sqlite3.Connection):
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS rules (
         rule_id TEXT PRIMARY KEY,
-        pattern TEXT NOT NULL,
+        pattern TEXT,
         category TEXT NOT NULL,
         cashflow_type TEXT NOT NULL,
         tags TEXT, -- Comma-separated list
@@ -1591,6 +1611,25 @@ def _ensure_schema(conn: sqlite3.Connection):
     if 'account_filter_list' not in rules_cols:
         print("--- MIGRATING SCHEMA: Adding 'account_filter_list' to 'rules'. ---")
         cursor.execute("ALTER TABLE rules ADD COLUMN account_filter_list TEXT;")
+    if 'condition_category' not in rules_cols:
+        print("--- MIGRATING SCHEMA: Adding 'condition_category' to 'rules'. ---")
+        cursor.execute("ALTER TABLE rules ADD COLUMN condition_category TEXT;")
+    if 'condition_institution' not in rules_cols:
+        print("--- MIGRATING SCHEMA: Adding 'condition_institution' to 'rules'. ---")
+        cursor.execute("ALTER TABLE rules ADD COLUMN condition_institution TEXT;")
+    if 'condition_cashflow_type' not in rules_cols:
+        print("--- MIGRATING SCHEMA: Adding 'condition_cashflow_type' to 'rules'. ---")
+        cursor.execute("ALTER TABLE rules ADD COLUMN condition_cashflow_type TEXT;")
+    if 'condition_tags' not in rules_cols:
+        print("--- MIGRATING SCHEMA: Adding 'condition_tags' to 'rules'. ---")
+        cursor.execute("ALTER TABLE rules ADD COLUMN condition_tags TEXT;")
+    if 'pattern' in rules_cols:
+        # Make pattern nullable
+        # SQLite has limited ALTER TABLE support, this is a more involved process
+        # For now, we assume this change is being made on a fresh DB or can be done manually
+        # A full migration would require creating a new table, copying data, and renaming.
+        # We will also change the `NOT NULL` constraint on `pattern` in code.
+        pass
 
 
     conn.commit()
@@ -1762,7 +1801,7 @@ def get_transactions(filters: Dict[str, Any] = None, exclude_invisible: bool = F
         where_clauses.append("account_id NOT IN (SELECT account_id FROM account_visibility WHERE is_visible = 0)")
 
     if filters:
-        allowed = ['category', 'account_id', 'institution', 'description', 'tags']
+        allowed = ['category', 'account_id', 'institution', 'description', 'tags', 'cashflow_type']
         for key, value in filters.items():
             if key in allowed:
                 if key in ['description', 'tags']:
@@ -1815,22 +1854,25 @@ def get_filter_options() -> Dict[str, List[str]]:
 
     options = {}
 
-    # --- TRACE: Log the raw query result ---
-    # The previous query was too restrictive: "WHERE ... cashflow_type = 'Expense'"
-    # This caused the filter to be empty if no categorized expenses existed.
-    # The new query correctly pulls all unique categories regardless of type.
-    print("--- TRACE [database.py]: Querying for distinct transaction categories. ---")
     cursor.execute("SELECT DISTINCT category FROM transactions WHERE category IS NOT NULL AND category != '' AND category != 'Uncategorized' ORDER BY category")
     
     fetched_rows = cursor.fetchall()
     options['categories'] = [row['category'] for row in fetched_rows]
-    print(f"--- TRACE [database.py]: Found {len(options['categories'])} categories: {options['categories']} ---")
 
     cursor.execute("SELECT DISTINCT account_id FROM transactions ORDER BY account_id")
     options['accounts'] = [row['account_id'] for row in cursor.fetchall()]
 
     cursor.execute("SELECT DISTINCT institution FROM transactions WHERE institution IS NOT NULL ORDER BY institution")
     options['institutions'] = [row['institution'] for row in cursor.fetchall()]
+
+    # ADDED: Hardcode cashflow types based on the spec
+    options['cashflowTypes'] = [
+        "Income", 
+        "Expense", 
+        "Transfer", 
+        "Capital Expenditure", 
+        "Investment"
+    ]
 
     conn.close()
     return options
@@ -1853,7 +1895,7 @@ def get_cashflow_aggregation_by_month(year: int, filters: Dict[str, Any]) -> Lis
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    allowed_fields = ['category', 'account_id', 'institution', 'description', 'tags']
+    allowed_fields = ['category', 'account_id', 'institution', 'description', 'tags', 'cashflow_type']
     where_clause, params = _build_where_clause(filters, allowed_fields)
     
     # Prepend year filter to where clause
@@ -1932,23 +1974,27 @@ def create_rule(rule_data: Dict[str, Any]) -> Dict[str, Any]:
     rule_id = str(uuid.uuid4())
     sql = """INSERT INTO rules (
                 rule_id, pattern, category, cashflow_type, tags, priority, 
-                case_sensitive, account_filter_mode, account_filter_list
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);"""
+                case_sensitive, account_filter_mode, account_filter_list,
+                condition_category, condition_institution, condition_cashflow_type, condition_tags
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"""
     
-    # Ensure lists are stored as comma-separated strings
     tags_str = ','.join(rule_data.get('tags', []))
     account_list_str = ','.join(rule_data.get('account_filter_list', []))
     
     cursor.execute(sql, (
         rule_id,
-        rule_data['pattern'],
+        rule_data.get('pattern'),
         rule_data['category'],
         rule_data['cashflow_type'],
         tags_str,
         rule_data.get('priority', 100),
         1 if rule_data.get('case_sensitive') else 0,
         rule_data.get('account_filter_mode', 'include'),
-        account_list_str
+        account_list_str,
+        rule_data.get('condition_category'),
+        rule_data.get('condition_institution'),
+        rule_data.get('condition_cashflow_type'),
+        rule_data.get('condition_tags')
     ))
     conn.commit()
     new_rule_cursor = conn.cursor()
@@ -2146,14 +2192,23 @@ app.add_middleware(
 )
 
 class RuleCreate(BaseModel):
-    pattern: str
+    # Action fields
     category: str
-    cashflow_type: CashflowType
+    cashflow_type: str # From frontend, will be string value of CashflowType enum
     tags: Optional[List[str]] = []
-    priority: Optional[int] = 100
+    
+    # Condition fields
+    pattern: Optional[str] = None # from description filter
     case_sensitive: Optional[bool] = False
-    account_filter_mode: Optional[str] = 'include'
     account_filter_list: Optional[List[str]] = []
+    condition_category: Optional[str] = None
+    condition_institution: Optional[str] = None
+    condition_cashflow_type: Optional[str] = None
+    condition_tags: Optional[str] = None
+
+    # Meta
+    priority: Optional[int] = 100
+    account_filter_mode: Optional[str] = 'include'
 
 class RuleResponse(RuleCreate):
     rule_id: str
@@ -2264,10 +2319,16 @@ async def get_all_import_runs():
 
 @app.post("/api/rules", response_model=RuleResponse, status_code=201, tags=["Rules"])
 async def create_new_rule(rule: RuleCreate):
-    rule_dict = rule.dict()
-    rule_dict['cashflow_type'] = rule_dict['cashflow_type'].value
-    created_rule = db.create_rule(rule_dict)
-    return created_rule
+    try:
+        rule_dict = rule.dict()
+        created_rule = db.create_rule(rule_dict)
+        return created_rule
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500, 
+            detail=f"An internal error occurred while creating the rule: {str(e)}"
+        )
 
 @app.get("/api/rules", response_model=List[RuleResponse], tags=["Rules"])
 async def get_all_rules():
@@ -2300,13 +2361,15 @@ def get_transaction_filters(
     institution: Optional[str] = Query(None),
     description: Optional[str] = Query(None),
     tags: Optional[str] = Query(None),
+    cashflow_type: Optional[str] = Query(None),
 ) -> Dict[str, Any]:
     filters = {
         "category": category,
         "account_id": account_id,
         "institution": institution,
         "description": description,
-        "tags": tags
+        "tags": tags,
+        "cashflow_type": cashflow_type,
     }
     return {k: v for k, v in filters.items() if v is not None}
 
@@ -2365,7 +2428,6 @@ async def get_portfolio_summary():
 async def get_filter_options():
     try:
         options = db.get_filter_options()
-        print(f"--- TRACE [main.py]: Sending filter options to frontend: {options} ---")
         return options
     except Exception as e:
         traceback.print_exc()
@@ -2435,6 +2497,7 @@ if __name__ == "__main__":
 --- FILE: projects/trust/src/rules_engine.py ---
 
 import re
+import logging
 from dataclasses import dataclass, field
 from typing import List
 from datetime import datetime
@@ -2451,44 +2514,36 @@ class Rule:
     (PRS Section 5.3)
     """
     rule_id: str
-    pattern: str
-    category: str
-    cashflow_type: CashflowType
+    pattern: str | None
+    category: str # Action: what to set the category to
+    cashflow_type: CashflowType # Action: what to set the type to
     tags: List[str] = field(default_factory=list)
     priority: int = 100
     case_sensitive: bool = False
     account_filter_mode: str = 'include'
     account_filter_list: List[str] = field(default_factory=list)
-
-def _reset_and_apply_defaults(transaction: Transaction) -> Transaction:
-    """
-    Resets classification fields to their defaults before reapplying rules.
-    This is crucial for re-categorization when rules have been changed or deleted.
-    """
-    # Reset rule-derived fields
-    transaction.category = None
-    transaction.cashflow_type = None
-    transaction.tags = []
-    transaction.is_transfer = False
-
-    # Apply default classification based on amount
-    if transaction.amount > 0:
-        transaction.cashflow_type = CashflowType.INCOME
-        transaction.category = 'Income'
-    elif transaction.amount < 0:
-        transaction.cashflow_type = CashflowType.EXPENSE
-        transaction.category = 'Uncategorized'
-
-    return transaction
+    # New condition fields
+    condition_category: str | None = None
+    condition_institution: str | None = None
+    condition_cashflow_type: str | None = None
+    condition_tags: str | None = None
 
 def apply_rules_to_transaction(transaction: Transaction, rules: List[Rule]) -> Transaction:
     """
     Applies a list of rules to a single transaction, modifying it in place.
     The first rule that matches all conditions (by priority) wins.
+    If no rule matches, it falls back to the original category or a default.
     """
-    transaction = _reset_and_apply_defaults(transaction)
-
     sorted_rules = sorted(rules, key=lambda r: r.priority)
+    rule_matched = False
+
+    # Preserve the original state before modification for condition checking
+    original_category = transaction.category
+    original_cashflow_type = transaction.cashflow_type
+
+    # Reset volatile fields before rule application
+    transaction.tags = []
+    transaction.is_transfer = False
 
     for rule in sorted_rules:
         # --- Condition 1: Account Filter ---
@@ -2500,22 +2555,64 @@ def apply_rules_to_transaction(transaction: Transaction, rules: List[Rule]) -> T
             if rule.account_filter_mode == 'exclude' and account_matches:
                 continue # Skip: transaction account is in the exclude list
 
-        # --- Condition 2: Description Pattern ---
-        try:
-            flags = 0 if rule.case_sensitive else re.IGNORECASE
-            if re.search(rule.pattern, transaction.description, flags):
-                print(f"Rule '{rule.pattern}' matched description '{transaction.description}'. Applying category '{rule.category}'.")
-                transaction.category = rule.category
-                transaction.cashflow_type = rule.cashflow_type
-                transaction.tags = list(set(transaction.tags + rule.tags)) # Merge and dedupe tags
-                
-                transaction.is_transfer = rule.cashflow_type == CashflowType.TRANSFER
-                
-                # First match wins
-                break 
-        except re.error as e:
-            print(f"Skipping invalid regex pattern in rule {rule.rule_id}: '{rule.pattern}' - {e}")
+        # --- Condition 2: Institution ---
+        if rule.condition_institution and rule.condition_institution.lower() != (transaction.institution or '').lower():
             continue
+
+        # --- Condition 3: Category ---
+        # Check against the category the transaction had *before* any rules were applied.
+        if rule.condition_category and rule.condition_category.lower() != (original_category or '').lower():
+            continue
+        
+        # --- Condition 4: Cashflow Type ---
+        if rule.condition_cashflow_type and original_cashflow_type and \
+           rule.condition_cashflow_type.lower() != original_cashflow_type.value.lower():
+            continue
+
+        # --- Condition 5: Tags (simple string contains) ---
+        # This is a weak check. A better implementation would require dedicated tag storage.
+        if rule.condition_tags:
+            # Tags in DB are a comma-separated string. We check if the condition tag is a substring.
+            db_tags = transaction.tags # This should be the raw tags from DB
+            if not any(rule.condition_tags.lower() in tag.lower() for tag in db_tags):
+                 continue
+
+        # --- Condition 6: Description Pattern ---
+        if rule.pattern:
+            try:
+                flags = 0 if rule.case_sensitive else re.IGNORECASE
+                if not re.search(rule.pattern, transaction.description, flags):
+                    continue # Description doesn't match, so skip to next rule
+            except re.error as e:
+                print(f"Skipping invalid regex pattern in rule {rule.rule_id}: '{rule.pattern}' - {e}")
+                continue
+        
+        # If we reached here, all conditions for this rule have passed.
+        # Apply the action.
+        print(f"Rule '{rule.rule_id}' ('{rule.pattern or 'any'}') matched description '{transaction.description}'. Applying category '{rule.category}'.")
+        transaction.category = rule.category
+        transaction.cashflow_type = rule.cashflow_type
+        transaction.tags = list(set(transaction.tags + rule.tags)) # Merge and dedupe tags
+        
+        transaction.is_transfer = rule.cashflow_type == CashflowType.TRANSFER
+        
+        rule_matched = True
+        break # First match wins
+
+    # --- Fallback Logic: If no rules matched --- #
+    if not rule_matched:
+        # Restore original category if it existed.
+        transaction.category = original_category
+
+        # Apply default cashflow type and category ONLY if they are not already set.
+        if transaction.amount > 0:
+            transaction.cashflow_type = CashflowType.INCOME
+            if not transaction.category:
+                transaction.category = 'Income'
+        elif transaction.amount < 0:
+            transaction.cashflow_type = CashflowType.EXPENSE
+            if not transaction.category:
+                transaction.category = 'Uncategorized'
 
     return transaction
 
@@ -2524,19 +2621,28 @@ def load_rules_from_db() -> List[Rule]:
     Loads all rules from the database and returns them as Rule objects.
     """
     rule_records = db.get_all_rules()
-    rules = [
-        Rule(
+    rules = []
+    for r in rule_records:
+        cf_type = CashflowType.from_string(r['cashflow_type'])
+        if not cf_type:
+            logging.warning(f"Skipping corrupt or invalid rule {r['rule_id']} due to un-parseable cashflow_type: '{r['cashflow_type']}'")
+            continue
+        
+        rules.append(Rule(
             rule_id=r['rule_id'],
-            pattern=r['pattern'],
+            pattern=r.get('pattern'),
             category=r['category'],
-            cashflow_type=CashflowType(r['cashflow_type']),
+            cashflow_type=cf_type,
             tags=r.get('tags', []),
             priority=r['priority'],
             case_sensitive=r.get('case_sensitive', False),
             account_filter_mode=r.get('account_filter_mode', 'include'),
-            account_filter_list=r.get('account_filter_list', [])
-        ) for r in rule_records
-    ]
+            account_filter_list=r.get('account_filter_list', []),
+            condition_category=r.get('condition_category'),
+            condition_institution=r.get('condition_institution'),
+            condition_cashflow_type=r.get('condition_cashflow_type'),
+            condition_tags=r.get('condition_tags')
+        ))
     return rules
 
 def recategorize_all_transactions() -> int:
@@ -2546,7 +2652,6 @@ def recategorize_all_transactions() -> int:
     """
     print("--- Starting global re-categorization process... ---")
     rules = load_rules_from_db()
-    # UPDATED: Use the new get_transactions function
     transaction_dicts = db.get_transactions()
     updated_transactions = []
 
@@ -2559,6 +2664,9 @@ def recategorize_all_transactions() -> int:
             amount=Decimal(str(tx_dict['amount'])),
             description=tx_dict['description'],
             merchant=tx_dict.get('merchant'),
+            category=tx_dict.get('category'), # Pass current category
+            cashflow_type=CashflowType.from_string(tx_dict.get('cashflow_type')),
+            tags=tx_dict.get('tags', '').split(',') if tx_dict.get('tags') else [],
             asset_id=tx_dict.get('asset_id'),
             import_run_id=tx_dict.get('import_run_id'),
             raw_data_hash=tx_dict.get('raw_data_hash'),
@@ -2596,7 +2704,7 @@ const BarChart = ({ data, indexBy, keys, axisLeftLabel, axisBottomLabel }) => {
                 data={data}
                 keys={keys}
                 indexBy={indexBy}
-                margin={{ top: 20, right: 30, bottom: 60, left: 100 }}
+                margin={{ top: 20, right: 30, bottom: 80, left: 100 }}
                 padding={0.3}
                 valueScale={{ type: 'linear' }}
                 indexScale={{ type: 'band', round: true }}
@@ -2607,10 +2715,10 @@ const BarChart = ({ data, indexBy, keys, axisLeftLabel, axisBottomLabel }) => {
                 axisBottom={{
                     tickSize: 5,
                     tickPadding: 5,
-                    tickRotation: 0,
+                    tickRotation: -90, // Rotated for legibility
                     legend: axisBottomLabel,
                     legendPosition: 'middle',
-                    legendOffset: 32,
+                    legendOffset: 65, // Adjusted for rotated labels
                 }}
                 axisLeft={{
                     tickSize: 5,
@@ -2646,7 +2754,7 @@ const BarChart = ({ data, indexBy, keys, axisLeftLabel, axisBottomLabel }) => {
                         legend: { text: { fill: '#bbb' } },
                     },
                     grid: {
-                        line: { stroke: '#444' }
+                        line: { stroke: '#444' } 
                     },
                     tooltip: {
                         container: {
@@ -3103,8 +3211,6 @@ const FilterPanel = ({ config, onFilterSubmit }) => {
                 const response = await fetch('/api/filter-options');
                 if (!response.ok) throw new Error('Failed to fetch filter options');
                 const data = await response.json();
-                // --- TRACE: Log received options to browser console ---
-                console.log('--- TRACE [FilterPanel.jsx]: Received filter options from API:', data);
                 setOptions(data);
             } catch (error) {
                 console.error(error);
@@ -3231,8 +3337,9 @@ const NetWorthHero = () => {
     const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
         style: 'currency',
         currency: 'USD',
+        minimumFractionDigits: 0,
         maximumFractionDigits: 0,
-    }).format(value);
+    }).format(value || 0);
 
     return (
         <div className="net-worth-hero">
@@ -3389,6 +3496,8 @@ const ImportSummary = ({ refreshKey }) => {
     const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
         style: 'currency',
         currency: 'USD',
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
     }).format(value || 0);
 
     const formatDate = (isoString) => {
@@ -3545,6 +3654,208 @@ const PlaceholderView = ({ viewName }) => {
 };
 
 export default PlaceholderView;
+
+
+--- FILE: projects/trust/src/components/RuleCreator.css ---
+
+.rule-creator-card {
+    background-color: var(--light-bg);
+    margin-bottom: 2rem;
+    border: 1px solid var(--gold-accent);
+}
+
+.rule-creator-card h3 {
+    margin-top: 0;
+    color: var(--gold-accent);
+}
+
+.rule-creator-card h4 {
+    margin-top: 1.5rem;
+    margin-bottom: 0.5rem;
+    color: #ddd;
+    font-weight: 500;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.5rem;
+}
+
+.rule-creator-card .condition-list {
+    list-style: none;
+    padding: 1rem;
+    margin: 0 0 1.5rem 0;
+    background-color: var(--dark-bg);
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+}
+
+.rule-creator-card .condition-list li {
+    padding: 0.25rem 0;
+}
+
+.rule-creator-card .condition-list strong {
+    text-transform: capitalize;
+    color: var(--gold-accent);
+    margin-right: 0.5rem;
+}
+
+.rule-creator-card .condition-list em {
+    color: #fff;
+    font-style: normal;
+    background-color: var(--medium-bg);
+    padding: 2px 6px;
+    border-radius: 3px;
+}
+
+.rule-creator-card .form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+}
+
+.rule-creator-card .form-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.rule-creator-card .form-group label {
+    margin-bottom: 0.5rem;
+    font-size: 0.9em;
+}
+
+.rule-creator-card .form-group input,
+.rule-creator-card .form-group select {
+    width: 100%;
+    padding: 0.5rem;
+    background-color: var(--medium-bg);
+    border: 1px solid #666;
+    border-radius: 4px;
+    color: #fff;
+    box-sizing: border-box;
+}
+
+.rule-creator-card .form-actions {
+    margin-top: 2rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    justify-content: flex-end;
+    gap: 1rem;
+}
+
+.rule-creator-card .form-actions button {
+    border: none;
+    padding: 0.6rem 1.5rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.rule-creator-card .form-actions button.primary {
+    background-color: var(--gold-accent);
+    color: var(--dark-bg);
+}
+
+.rule-creator-card .form-actions button {
+    background-color: #555;
+    color: #fff;
+}
+
+
+--- FILE: projects/trust/src/components/RuleCreator.jsx ---
+
+import { useState } from 'react';
+import './RuleCreator.css';
+
+const RuleCreator = ({ filters, onSave, onCancel }) => {
+    const [actionState, setActionState] = useState({
+        set_category: '',
+        set_cashflow_type: 'Expense',
+        add_tags: '',
+    });
+
+    const handleInputChange = (e) => {
+        const { name, value } = e.target;
+        setActionState(prevState => ({ ...prevState, [name]: value }));
+    };
+    
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        const ruleData = {
+            // Actions from form
+            category: actionState.set_category,
+            cashflow_type: actionState.set_cashflow_type,
+            tags: actionState.add_tags.split(',').map(t => t.trim()).filter(Boolean),
+            
+            // Conditions from filters prop
+            pattern: filters.description || null,
+            account_filter_list: filters.account_id ? [filters.account_id] : [],
+            condition_category: filters.category || null,
+            condition_institution: filters.institution || null,
+            condition_cashflow_type: filters.cashflow_type || null,
+            condition_tags: filters.tags || null,
+        };
+        
+        try {
+            const response = await fetch('/api/rules', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(ruleData),
+            });
+            if (!response.ok) {
+                const errData = await response.json();
+                throw new Error(errData.detail || 'Failed to create rule');
+            }
+            onSave();
+        } catch (err) {
+            alert(`Error creating rule: ${err.message}`);
+        }
+    };
+
+    const conditionItems = Object.entries(filters)
+        .filter(([, value]) => value)
+        .map(([key, value]) => <li key={key}><strong>{key.replace(/_/g, ' ')}:</strong> <em>{value}</em></li>);
+
+    return (
+        <div className="card rule-creator-card">
+            <h3>Create Rule from Filter</h3>
+            
+            <h4>IF a transaction matches ALL of these conditions:</h4>
+            <ul className="condition-list">
+                {conditionItems.length > 0 ? conditionItems : <li>No conditions defined by filter.</li>}
+            </ul>
+
+            <form onSubmit={handleSubmit}>
+                <h4>THEN apply this action:</h4>
+                 <div className="form-grid">
+                    <div className="form-group">
+                        <label>Set Category to</label>
+                        <input type="text" name="set_category" value={actionState.set_category} onChange={handleInputChange} placeholder="e.g., Groceries" required />
+                    </div>
+                    <div className="form-group">
+                        <label>Set Cashflow Type to</label>
+                        <select name="set_cashflow_type" value={actionState.set_cashflow_type} onChange={handleInputChange}>
+                            <option value="Expense">Expense</option>
+                            <option value="Income">Income</option>
+                            <option value="Transfer">Transfer</option>
+                            <option value="Capital Expenditure">Capital Expenditure</option>
+                            <option value="Investment">Investment</option>
+                        </select>
+                    </div>
+                     <div className="form-group">
+                        <label>Add Tags (comma-separated)</label>
+                        <input type="text" name="add_tags" value={actionState.add_tags} onChange={handleInputChange} placeholder="e.g., vacation" />
+                    </div>
+                </div>
+                
+                <div className="form-actions">
+                    <button type="submit" className="primary">Save Rule & Recategorize</button>
+                    <button type="button" onClick={onCancel}>Cancel</button>
+                </div>
+            </form>
+        </div>
+    );
+};
+
+export default RuleCreator;
 
 
 --- FILE: projects/trust/src/components/RulesEditor.css ---
@@ -4019,7 +4330,7 @@ export default SideBar;
 .table-container {
     margin-top: 1rem;
     max-height: 70vh;
-    overflow-y: auto;
+    overflow: auto; /* UPDATED: was overflow-y, now handles horizontal scroll */
     border: 1px solid var(--border-color);
     border-radius: 4px;
     text-align: left;
@@ -4058,31 +4369,79 @@ export default SideBar;
     background-color: #4a4a4a;
 }
 
+/* --- Rule Creation Prompt --- */
+
+.rule-prompt-card {
+    padding: 1rem 1.5rem;
+    background-color: var(--light-bg);
+    border: 1px solid var(--gold-accent);
+    border-radius: 6px;
+    margin-bottom: 2rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.rule-prompt-card p {
+    margin: 0;
+    font-style: italic;
+}
+
+.rule-prompt-card button {
+    background-color: var(--gold-accent);
+    color: var(--dark-bg);
+    border: none;
+    padding: 0.6rem 1.5rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+    white-space: nowrap;
+}
+
+.rule-prompt-card button:hover {
+    opacity: 0.9;
+}
+
 
 --- FILE: projects/trust/src/components/TransactionListView.jsx ---
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import './TransactionListView.css';
 import FilterPanel from './FilterPanel';
 import BarChart from './BarChart';
+import RuleCreator from './RuleCreator';
+
+const filterConfig = [
+    { id: 'category', label: 'Category', type: 'select', optionsKey: 'categories' },
+    { id: 'account_id', label: 'Account', type: 'select', optionsKey: 'accounts' },
+    { id: 'institution', label: 'Institution', type: 'select', optionsKey: 'institutions' },
+    { id: 'cashflow_type', label: 'Cashflow Type', type: 'select', optionsKey: 'cashflowTypes' },
+    { id: 'description', label: 'Description Contains', type: 'text', placeholder: 'e.g., Amazon' },
+    { id: 'tags', label: 'Tag Contains', type: 'text', placeholder: 'e.g., vacation' },
+];
+
+const RulePromptCard = ({ onShowCreator }) => {
+    return (
+        <div className="rule-prompt-card">
+            <p>Want to automate this? Create a rule from these filters.</p>
+            <button onClick={onShowCreator}>Create Rule</button>
+        </div>
+    );
+};
 
 const TransactionListView = () => {
     const [transactions, setTransactions] = useState([]);
     const [chartData, setChartData] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
-
-    const filterConfig = [
-        { id: 'category', label: 'Category', type: 'select', optionsKey: 'categories' },
-        { id: 'account_id', label: 'Account', type: 'select', optionsKey: 'accounts' },
-        { id: 'institution', label: 'Institution', type: 'select', optionsKey: 'institutions' },
-        { id: 'description', label: 'Description Contains', type: 'text', placeholder: 'e.g., Amazon' },
-        { id: 'tags', label: 'Tag Contains', type: 'text', placeholder: 'e.g., vacation' },
-    ];
+    const [activeFilters, setActiveFilters] = useState({});
+    const [showRuleCreator, setShowRuleCreator] = useState(false);
 
     const fetchData = async (filters = {}) => {
         try {
             setLoading(true);
+            setActiveFilters(filters);
+            setShowRuleCreator(false); // Hide creator on new filter/fetch
             const query = new URLSearchParams(filters).toString();
 
             const [transactionsRes, chartRes] = await Promise.all([
@@ -4110,9 +4469,29 @@ const TransactionListView = () => {
         fetchData(); // Initial fetch with no filters
     }, []);
 
+    const handleRuleSave = async () => {
+        setShowRuleCreator(false);
+        try {
+            // Re-categorize everything with the new rule
+            const recategorizeRes = await fetch('/api/transactions/recategorize', { method: 'POST' });
+            if (!recategorizeRes.ok) throw new Error('Recategorization failed');
+            
+            const result = await recategorizeRes.json();
+            alert(result.message); // Inform the user
+
+            // Re-fetch the data to show the updated view
+            await fetchData(activeFilters);
+
+        } catch (err) {
+            alert(`Error after saving rule: ${err.message}`);
+        }
+    };
+
     const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
         style: 'currency',
         currency: 'USD',
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
     }).format(value || 0);
 
     const formatDate = (dateString) => {
@@ -4120,11 +4499,23 @@ const TransactionListView = () => {
         return new Date(dateString).toLocaleDateString();
     }
 
+    const hasActiveFilters = Object.keys(activeFilters).length > 0;
+
     if (error) return <p>Error loading transactions: {error}</p>;
 
     return (
         <>
             <FilterPanel config={filterConfig} onFilterSubmit={fetchData} />
+
+            {showRuleCreator ? (
+                <RuleCreator 
+                    filters={activeFilters}
+                    onSave={handleRuleSave}
+                    onCancel={() => setShowRuleCreator(false)}
+                />
+            ) : hasActiveFilters && transactions.length > 0 && (
+                <RulePromptCard onShowCreator={() => setShowRuleCreator(true)} />
+            )}
 
             <div className="card">
                 <h2>Monthly Summary</h2>
@@ -4156,7 +4547,9 @@ const TransactionListView = () => {
                                     <th>Account</th>
                                     <th>Institution</th>
                                     <th>Description</th>
+                                    <th>Cashflow Type</th>
                                     <th>Category</th>
+                                    <th>Tags</th>
                                     <th style={{ textAlign: 'right' }}>Amount</th>
                                 </tr>
                             </thead>
@@ -4167,7 +4560,9 @@ const TransactionListView = () => {
                                         <td>{t.account_id}</td>
                                         <td>{t.institution}</td>
                                         <td>{t.description}</td>
+                                        <td>{t.cashflow_type}</td>
                                         <td>{t.category}</td>
+                                        <td>{t.tags}</td>
                                         <td style={{ color: t.amount > 0 ? 'var(--gold-accent)' : 'inherit' }}>
                                             {formatCurrency(t.amount)}
                                         </td>
@@ -4572,6 +4967,82 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Hold
     }
 
     return holdings, summary, skipped_rows, warnings
+
+
+--- FILE: projects/trust/src/market_data/__init__.py ---
+
+# This package handles fetching external market data.
+# (PRS Section 6, MDS Section 5.2)
+
+
+--- FILE: projects/trust/src/market_data/alpha_vantage_provider.py ---
+
+"""
+Implementation of the market data provider interface for Alpha Vantage.
+(MDS Section 5.2)
+"""
+import os
+import httpx
+from typing import List, Dict, Any
+
+API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
+BASE_URL = "https://www.alphavantage.co/query"
+
+async def get_quotes(symbols: List[str]) -> Dict[str, Any]:
+    """
+    Fetches the latest quote for a list of symbols using Alpha Vantage.
+
+    To respect API limits, this function should be used with batching
+    and timing managed by a calling service.
+
+    Args:
+        symbols: A list of stock/ETF symbols.
+
+    Returns:
+        A dictionary where keys are symbols and values are the quote data, 
+        or an error message if the fetch failed for that symbol.
+    """
+    if not API_KEY or API_KEY == "YOUR_API_KEY_HERE":
+        print("ERROR: ALPHA_VANTAGE_API_KEY is not set.")
+        return {symbol: {"error": "API key not configured"} for symbol in symbols}
+
+    results = {}
+    # Use an async client to make concurrent requests if needed in the future,
+    # but for now, we'll process them sequentially to respect rate limits.
+    async with httpx.AsyncClient() as client:
+        for symbol in symbols:
+            params = {
+                "function": "GLOBAL_QUOTE",
+                "symbol": symbol,
+                "apikey": API_KEY
+            }
+            try:
+                response = await client.get(BASE_URL, params=params)
+                response.raise_for_status() # Raise an exception for 4xx/5xx responses
+                data = response.json()
+                
+                quote_data = data.get('Global Quote')
+                if not quote_data:
+                    # This often happens with an invalid symbol or an API limit message.
+                    error_message = data.get('Note', f"No 'Global Quote' in response for {symbol}")
+                    results[symbol] = {"error": error_message}
+                    print(f"WARNING: Could not fetch quote for {symbol}: {error_message}")
+                    continue
+
+                results[symbol] = {
+                    "price": quote_data.get('05. price'),
+                    "change_percent": quote_data.get('10. change percent'),
+                    "latest_trading_day": quote_data.get('07. latest trading day')
+                }
+
+            except httpx.HTTPStatusError as e:
+                print(f"HTTP error fetching quote for {symbol}: {e}")
+                results[symbol] = {"error": f"HTTP Error: {e.response.status_code}"}
+            except Exception as e:
+                print(f"An unexpected error occurred fetching quote for {symbol}: {e}")
+                results[symbol] = {"error": "An unexpected error occurred."}
+    
+    return results
 
 
 --- AGENT MANIFEST FOR PROJECT: trust ---

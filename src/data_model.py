@@ -1,3 +1,5 @@
+from __future__ import annotations
+import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
@@ -10,6 +12,21 @@ class CashflowType(Enum):
     EXPENSE = "Expense"
     TRANSFER = "Transfer"
     CAPEX = "Capital Expenditure"
+    INVESTMENT = "Investment"
+
+    @classmethod
+    def from_string(cls, value: str | None) -> CashflowType | None:
+        """Safely create a CashflowType from a string, ignoring case and whitespace."""
+        if not value:
+            return None
+        
+        clean_value = value.strip().lower()
+        for member in cls:
+            if member.value.lower() == clean_value:
+                return member
+        
+        logging.warning(f"Unknown CashflowType value encountered: '{value}'. Treating as None.")
+        return None
 
 
 @dataclass

@@ -1,0 +1,100 @@
+.rule-creator-card {
+    background-color: var(--light-bg);
+    margin-bottom: 2rem;
+    border: 1px solid var(--gold-accent);
+}
+
+.rule-creator-card h3 {
+    margin-top: 0;
+    color: var(--gold-accent);
+}
+
+.rule-creator-card h4 {
+    margin-top: 1.5rem;
+    margin-bottom: 0.5rem;
+    color: #ddd;
+    font-weight: 500;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.5rem;
+}
+
+.rule-creator-card .condition-list {
+    list-style: none;
+    padding: 1rem;
+    margin: 0 0 1.5rem 0;
+    background-color: var(--dark-bg);
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+}
+
+.rule-creator-card .condition-list li {
+    padding: 0.25rem 0;
+}
+
+.rule-creator-card .condition-list strong {
+    text-transform: capitalize;
+    color: var(--gold-accent);
+    margin-right: 0.5rem;
+}
+
+.rule-creator-card .condition-list em {
+    color: #fff;
+    font-style: normal;
+    background-color: var(--medium-bg);
+    padding: 2px 6px;
+    border-radius: 3px;
+}
+
+.rule-creator-card .form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+}
+
+.rule-creator-card .form-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.rule-creator-card .form-group label {
+    margin-bottom: 0.5rem;
+    font-size: 0.9em;
+}
+
+.rule-creator-card .form-group input,
+.rule-creator-card .form-group select {
+    width: 100%;
+    padding: 0.5rem;
+    background-color: var(--medium-bg);
+    border: 1px solid #666;
+    border-radius: 4px;
+    color: #fff;
+    box-sizing: border-box;
+}
+
+.rule-creator-card .form-actions {
+    margin-top: 2rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    justify-content: flex-end;
+    gap: 1rem;
+}
+
+.rule-creator-card .form-actions button {
+    border: none;
+    padding: 0.6rem 1.5rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.rule-creator-card .form-actions button.primary {
+    background-color: var(--gold-accent);
+    color: var(--dark-bg);
+}
+
+.rule-creator-card .form-actions button {
+    background-color: #555;
+    color: #fff;
+}

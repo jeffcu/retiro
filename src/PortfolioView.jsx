@@ -25,16 +25,16 @@ const PortfolioSummary = ({ holdings, formatCurrency }) => {
     );
 };
 
+const filterConfig = [
+    { id: 'account_id', label: 'Account', type: 'select', optionsKey: 'accounts' },
+    { id: 'symbol', label: 'Symbol', type: 'text', placeholder: 'e.g., AAPL' },
+];
+
 const PortfolioView = () => {
     const [holdings, setHoldings] = useState([]);
     const [chartData, setChartData] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
-
-    const filterConfig = [
-        { id: 'account_id', label: 'Account', type: 'select', optionsKey: 'accounts' },
-        { id: 'symbol', label: 'Symbol', type: 'text', placeholder: 'e.g., AAPL' },
-    ];
 
     const fetchData = async (filters = {}) => {
         try {

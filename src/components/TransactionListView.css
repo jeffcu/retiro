@@ -1,7 +1,7 @@
 .table-container {
     margin-top: 1rem;
     max-height: 70vh;
-    overflow-y: auto;
+    overflow: auto; /* UPDATED: was overflow-y, now handles horizontal scroll */
     border: 1px solid var(--border-color);
     border-radius: 4px;
     text-align: left;
@@ -38,4 +38,37 @@
 
 .table-container tbody tr:hover {
     background-color: #4a4a4a;
+}
+
+/* --- Rule Creation Prompt --- */
+
+.rule-prompt-card {
+    padding: 1rem 1.5rem;
+    background-color: var(--light-bg);
+    border: 1px solid var(--gold-accent);
+    border-radius: 6px;
+    margin-bottom: 2rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.rule-prompt-card p {
+    margin: 0;
+    font-style: italic;
+}
+
+.rule-prompt-card button {
+    background-color: var(--gold-accent);
+    color: var(--dark-bg);
+    border: none;
+    padding: 0.6rem 1.5rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+    white-space: nowrap;
+}
+
+.rule-prompt-card button:hover {
+    opacity: 0.9;
 }

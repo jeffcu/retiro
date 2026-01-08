@@ -38,14 +38,23 @@ app.add_middleware(
 )
 
 class RuleCreate(BaseModel):
-    pattern: str
+    # Action fields
     category: str
-    cashflow_type: CashflowType
+    cashflow_type: str # From frontend, will be string value of CashflowType enum
     tags: Optional[List[str]] = []
-    priority: Optional[int] = 100
+    
+    # Condition fields
+    pattern: Optional[str] = None # from description filter
     case_sensitive: Optional[bool] = False
-    account_filter_mode: Optional[str] = 'include'
     account_filter_list: Optional[List[str]] = []
+    condition_category: Optional[str] = None
+    condition_institution: Optional[str] = None
+    condition_cashflow_type: Optional[str] = None
+    condition_tags: Optional[str] = None
+
+    # Meta
+    priority: Optional[int] = 100
+    account_filter_mode: Optional[str] = 'include'
 
 class RuleResponse(RuleCreate):
     rule_id: str
@@ -156,10 +165,16 @@ async def get_all_import_runs():
 
 @app.post("/api/rules", response_model=RuleResponse, status_code=201, tags=["Rules"])
 async def create_new_rule(rule: RuleCreate):
-    rule_dict = rule.dict()
-    rule_dict['cashflow_type'] = rule_dict['cashflow_type'].value
-    created_rule = db.create_rule(rule_dict)
-    return created_rule
+    try:
+        rule_dict = rule.dict()
+        created_rule = db.create_rule(rule_dict)
+        return created_rule
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500, 
+            detail=f"An internal error occurred while creating the rule: {str(e)}"
+        )
 
 @app.get("/api/rules", response_model=List[RuleResponse], tags=["Rules"])
 async def get_all_rules():
@@ -192,13 +207,15 @@ def get_transaction_filters(
     institution: Optional[str] = Query(None),
     description: Optional[str] = Query(None),
     tags: Optional[str] = Query(None),
+    cashflow_type: Optional[str] = Query(None),
 ) -> Dict[str, Any]:
     filters = {
         "category": category,
         "account_id": account_id,
         "institution": institution,
         "description": description,
-        "tags": tags
+        "tags": tags,
+        "cashflow_type": cashflow_type,
     }
     return {k: v for k, v in filters.items() if v is not None}
 

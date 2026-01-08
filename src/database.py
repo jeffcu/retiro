@@ -41,7 +41,7 @@ def _ensure_schema(conn: sqlite3.Connection):
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS rules (
         rule_id TEXT PRIMARY KEY,
-        pattern TEXT NOT NULL,
+        pattern TEXT,
         category TEXT NOT NULL,
         cashflow_type TEXT NOT NULL,
         tags TEXT, -- Comma-separated list
@@ -103,8 +103,58 @@ def _ensure_schema(conn: sqlite3.Connection):
         print("--- MIGRATING SCHEMA: Adding 'tags' to 'transactions'. ---")
         cursor.execute("ALTER TABLE transactions ADD COLUMN tags TEXT;")
 
+    # --- Advanced Rules Table Migration ---
     cursor.execute("PRAGMA table_info(rules)")
-    rules_cols = {row[1] for row in cursor.fetchall()}
+    rules_info_rows = cursor.fetchall()
+    rules_cols_info = {row['name']: row for row in rules_info_rows}
+
+    # MIGRATION: Make 'rules.pattern' nullable if it was previously defined as NOT NULL.
+    if 'pattern' in rules_cols_info and rules_cols_info['pattern']['notnull'] == 1:
+        print("--- MIGRATING SCHEMA: Making 'pattern' column in 'rules' table nullable. ---")
+        try:
+            cursor.execute("PRAGMA foreign_keys=off;")
+            cursor.execute("BEGIN TRANSACTION;")
+            cursor.execute("ALTER TABLE rules RENAME TO _rules_old;")
+            
+            # Recreate the table with the full, modern schema where 'pattern' is nullable.
+            cursor.execute("""
+            CREATE TABLE rules (
+                rule_id TEXT PRIMARY KEY,
+                pattern TEXT, -- This is now correctly nullable
+                category TEXT NOT NULL,
+                cashflow_type TEXT NOT NULL,
+                tags TEXT,
+                priority INTEGER DEFAULT 100,
+                case_sensitive INTEGER DEFAULT 0,
+                account_filter_mode TEXT DEFAULT 'include',
+                account_filter_list TEXT,
+                condition_category TEXT,
+                condition_institution TEXT,
+                condition_cashflow_type TEXT,
+                condition_tags TEXT
+            );
+            """)
+            
+            # Copy data from the old table, matching existing columns.
+            old_cols = list(rules_cols_info.keys())
+            old_cols_str = ", ".join([f'\"{c}\"' for c in old_cols])
+            cursor.execute(f"INSERT INTO rules ({old_cols_str}) SELECT {old_cols_str} FROM _rules_old;")
+            
+            cursor.execute("DROP TABLE _rules_old;")
+            cursor.execute("COMMIT;")
+            print("--- 'rules' table migration successful. ---")
+        except Exception as e:
+            print(f"ERROR during 'rules' table migration: {e}. Rolling back.")
+            cursor.execute("ROLLBACK;")
+            raise e
+        finally:
+            cursor.execute("PRAGMA foreign_keys=on;")
+            # After migration, we need to refresh the column info.
+            cursor.execute("PRAGMA table_info(rules)")
+            rules_cols_info = {row['name']: row for row in cursor.fetchall()}
+
+    # Subsequent migrations for adding columns one-by-one.
+    rules_cols = set(rules_cols_info.keys())
     if 'case_sensitive' not in rules_cols:
         print("--- MIGRATING SCHEMA: Adding 'case_sensitive' to 'rules'. ---")
         cursor.execute("ALTER TABLE rules ADD COLUMN case_sensitive INTEGER DEFAULT 0;")
@@ -114,7 +164,18 @@ def _ensure_schema(conn: sqlite3.Connection):
     if 'account_filter_list' not in rules_cols:
         print("--- MIGRATING SCHEMA: Adding 'account_filter_list' to 'rules'. ---")
         cursor.execute("ALTER TABLE rules ADD COLUMN account_filter_list TEXT;")
-
+    if 'condition_category' not in rules_cols:
+        print("--- MIGRATING SCHEMA: Adding 'condition_category' to 'rules'. ---")
+        cursor.execute("ALTER TABLE rules ADD COLUMN condition_category TEXT;")
+    if 'condition_institution' not in rules_cols:
+        print("--- MIGRATING SCHEMA: Adding 'condition_institution' to 'rules'. ---")
+        cursor.execute("ALTER TABLE rules ADD COLUMN condition_institution TEXT;")
+    if 'condition_cashflow_type' not in rules_cols:
+        print("--- MIGRATING SCHEMA: Adding 'condition_cashflow_type' to 'rules'. ---")
+        cursor.execute("ALTER TABLE rules ADD COLUMN condition_cashflow_type TEXT;")
+    if 'condition_tags' not in rules_cols:
+        print("--- MIGRATING SCHEMA: Adding 'condition_tags' to 'rules'. ---")
+        cursor.execute("ALTER TABLE rules ADD COLUMN condition_tags TEXT;")
 
     conn.commit()
     print("--- Database schema is OK. ---")
@@ -285,7 +346,7 @@ def get_transactions(filters: Dict[str, Any] = None, exclude_invisible: bool = F
         where_clauses.append("account_id NOT IN (SELECT account_id FROM account_visibility WHERE is_visible = 0)")
 
     if filters:
-        allowed = ['category', 'account_id', 'institution', 'description', 'tags']
+        allowed = ['category', 'account_id', 'institution', 'description', 'tags', 'cashflow_type']
         for key, value in filters.items():
             if key in allowed:
                 if key in ['description', 'tags']:
@@ -349,6 +410,15 @@ def get_filter_options() -> Dict[str, List[str]]:
     cursor.execute("SELECT DISTINCT institution FROM transactions WHERE institution IS NOT NULL ORDER BY institution")
     options['institutions'] = [row['institution'] for row in cursor.fetchall()]
 
+    # ADDED: Hardcode cashflow types based on the spec
+    options['cashflowTypes'] = [
+        "Income", 
+        "Expense", 
+        "Transfer", 
+        "Capital Expenditure", 
+        "Investment"
+    ]
+
     conn.close()
     return options
 
@@ -370,7 +440,7 @@ def get_cashflow_aggregation_by_month(year: int, filters: Dict[str, Any]) -> Lis
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    allowed_fields = ['category', 'account_id', 'institution', 'description', 'tags']
+    allowed_fields = ['category', 'account_id', 'institution', 'description', 'tags', 'cashflow_type']
     where_clause, params = _build_where_clause(filters, allowed_fields)
     
     # Prepend year filter to where clause
@@ -449,23 +519,27 @@ def create_rule(rule_data: Dict[str, Any]) -> Dict[str, Any]:
     rule_id = str(uuid.uuid4())
     sql = """INSERT INTO rules (
                 rule_id, pattern, category, cashflow_type, tags, priority, 
-                case_sensitive, account_filter_mode, account_filter_list
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);"""
+                case_sensitive, account_filter_mode, account_filter_list,
+                condition_category, condition_institution, condition_cashflow_type, condition_tags
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"""
     
-    # Ensure lists are stored as comma-separated strings
     tags_str = ','.join(rule_data.get('tags', []))
     account_list_str = ','.join(rule_data.get('account_filter_list', []))
     
     cursor.execute(sql, (
         rule_id,
-        rule_data['pattern'],
+        rule_data.get('pattern'),
         rule_data['category'],
         rule_data['cashflow_type'],
         tags_str,
         rule_data.get('priority', 100),
         1 if rule_data.get('case_sensitive') else 0,
         rule_data.get('account_filter_mode', 'include'),
-        account_list_str
+        account_list_str,
+        rule_data.get('condition_category'),
+        rule_data.get('condition_institution'),
+        rule_data.get('condition_cashflow_type'),
+        rule_data.get('condition_tags')
     ))
     conn.commit()
     new_rule_cursor = conn.cursor()
