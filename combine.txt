@@ -1302,13 +1302,14 @@ for visualizations like Sankey diagrams, and running forecasts.
 from typing import Dict, Any, List
 from collections import defaultdict
 from datetime import datetime
-from .database import get_transactions, get_holdings_aggregation_by_symbol, get_cashflow_aggregation_by_month, get_latest_transaction_year
+from .database import get_sankey_aggregates, get_holdings_aggregation_by_symbol, get_cashflow_aggregation_by_month, get_latest_transaction_year
 
 def generate_income_sankey(period: str, exclude_invisible: bool = False) -> Dict[str, Any]:
     """
-    Analyzes transactions to generate data for a simple Sankey diagram.
-    This version creates a flat structure: Income -> [Expense Categories].
-    (PRS Section 2.1.A)
+    Analyzes transaction aggregates to generate data for the income Sankey diagram.
+    This version uses a direct database aggregation for efficiency and accuracy,
+    ensuring only operational cashflow is included.
+    (PRS Section 2.1.A, 3.1)
 
     Args:
         period: The time period to analyze (NOTE: Not yet implemented).
@@ -1318,32 +1319,25 @@ def generate_income_sankey(period: str, exclude_invisible: bool = False) -> Dict
     Returns:
         A dictionary formatted for the Nivo Sankey component.
     """
-    # UPDATED: Call the new filterable get_transactions function with no filters.
-    transactions = get_transactions(exclude_invisible=exclude_invisible)
+    # Use the new, more robust aggregation function from the database layer.
+    aggregates = get_sankey_aggregates(exclude_invisible=exclude_invisible)
     
     total_income = 0.0
     expense_by_category = defaultdict(float)
     total_capex = 0.0
     
-    for tx in transactions:
-        try:
-            amount = float(tx['amount'])
-            cashflow_type = tx.get('cashflow_type')
+    # Process the pre-aggregated data from the database.
+    for row in aggregates:
+        cashflow_type = row.get('cashflow_type')
+        total = row.get('total', 0.0)
 
-            if cashflow_type == 'Income' and amount > 0:
-                total_income += amount
-            elif cashflow_type == 'Expense' and amount < 0:
-                # Use the assigned category, or 'Uncategorized' if none exists
-                category = tx.get('category') or 'Uncategorized'
-                expense_by_category[category] += abs(amount)
-            elif cashflow_type == 'Capital Expenditure' and amount < 0:
-                total_capex += abs(amount)
-
-        except (ValueError, TypeError) as e:
-            tx_id = tx.get('transaction_id', 'N/A')
-            # In a real application, this should be structured logging.
-            print(f"WARNING: Skipping transaction {tx_id} due to invalid amount: {tx.get('amount')}. Error: {e}")
-            continue
+        if cashflow_type == 'Income' and total > 0:
+            total_income += total
+        elif cashflow_type == 'Expense' and total < 0:
+            category = row.get('category') or 'Uncategorized'
+            expense_by_category[category] += abs(total)
+        elif cashflow_type == 'Capital Expenditure' and total < 0:
+            total_capex += abs(total)
 
     total_expenses = sum(expense_by_category.values())
     net_surplus = total_income - total_expenses - total_capex
@@ -1600,8 +1594,58 @@ def _ensure_schema(conn: sqlite3.Connection):
         print("--- MIGRATING SCHEMA: Adding 'tags' to 'transactions'. ---")
         cursor.execute("ALTER TABLE transactions ADD COLUMN tags TEXT;")
 
+    # --- Advanced Rules Table Migration ---
     cursor.execute("PRAGMA table_info(rules)")
-    rules_cols = {row[1] for row in cursor.fetchall()}
+    rules_info_rows = cursor.fetchall()
+    rules_cols_info = {row['name']: row for row in rules_info_rows}
+
+    # MIGRATION: Make 'rules.pattern' nullable if it was previously defined as NOT NULL.
+    if 'pattern' in rules_cols_info and rules_cols_info['pattern']['notnull'] == 1:
+        print("--- MIGRATING SCHEMA: Making 'pattern' column in 'rules' table nullable. ---")
+        try:
+            cursor.execute("PRAGMA foreign_keys=off;")
+            cursor.execute("BEGIN TRANSACTION;")
+            cursor.execute("ALTER TABLE rules RENAME TO _rules_old;")
+            
+            # Recreate the table with the full, modern schema where 'pattern' is nullable.
+            cursor.execute("""
+            CREATE TABLE rules (
+                rule_id TEXT PRIMARY KEY,
+                pattern TEXT, -- This is now correctly nullable
+                category TEXT NOT NULL,
+                cashflow_type TEXT NOT NULL,
+                tags TEXT,
+                priority INTEGER DEFAULT 100,
+                case_sensitive INTEGER DEFAULT 0,
+                account_filter_mode TEXT DEFAULT 'include',
+                account_filter_list TEXT,
+                condition_category TEXT,
+                condition_institution TEXT,
+                condition_cashflow_type TEXT,
+                condition_tags TEXT
+            );
+            """)
+            
+            # Copy data from the old table, matching existing columns.
+            old_cols = list(rules_cols_info.keys())
+            old_cols_str = ", ".join([f'\"{c}\"' for c in old_cols])
+            cursor.execute(f"INSERT INTO rules ({old_cols_str}) SELECT {old_cols_str} FROM _rules_old;")
+            
+            cursor.execute("DROP TABLE _rules_old;")
+            cursor.execute("COMMIT;")
+            print("--- 'rules' table migration successful. ---")
+        except Exception as e:
+            print(f"ERROR during 'rules' table migration: {e}. Rolling back.")
+            cursor.execute("ROLLBACK;")
+            raise e
+        finally:
+            cursor.execute("PRAGMA foreign_keys=on;")
+            # After migration, we need to refresh the column info.
+            cursor.execute("PRAGMA table_info(rules)")
+            rules_cols_info = {row['name']: row for row in cursor.fetchall()}
+
+    # Subsequent migrations for adding columns one-by-one.
+    rules_cols = set(rules_cols_info.keys())
     if 'case_sensitive' not in rules_cols:
         print("--- MIGRATING SCHEMA: Adding 'case_sensitive' to 'rules'. ---")
         cursor.execute("ALTER TABLE rules ADD COLUMN case_sensitive INTEGER DEFAULT 0;")
@@ -1623,14 +1667,6 @@ def _ensure_schema(conn: sqlite3.Connection):
     if 'condition_tags' not in rules_cols:
         print("--- MIGRATING SCHEMA: Adding 'condition_tags' to 'rules'. ---")
         cursor.execute("ALTER TABLE rules ADD COLUMN condition_tags TEXT;")
-    if 'pattern' in rules_cols:
-        # Make pattern nullable
-        # SQLite has limited ALTER TABLE support, this is a more involved process
-        # For now, we assume this change is being made on a fresh DB or can be done manually
-        # A full migration would require creating a new table, copying data, and renaming.
-        # We will also change the `NOT NULL` constraint on `pattern` in code.
-        pass
-
 
     conn.commit()
     print("--- Database schema is OK. ---")
@@ -1879,6 +1915,37 @@ def get_filter_options() -> Dict[str, List[str]]:
 
 
 # --- Aggregations for Charts --- #
+
+def get_sankey_aggregates(exclude_invisible: bool = False) -> List[Dict[str, Any]]:
+    """
+    Performs a direct SQL aggregation to get the data needed for the Income Sankey.
+    This is more efficient than fetching all transactions. It correctly filters by
+    account visibility and only considers operational cashflow types.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    where_clauses = ["t.cashflow_type IN ('Income', 'Expense', 'Capital Expenditure')"]
+    
+    if exclude_invisible:
+        where_clauses.append("t.account_id NOT IN (SELECT account_id FROM account_visibility WHERE is_visible = 0)")
+
+    where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+
+    query = f"""
+        SELECT 
+            cashflow_type,
+            category,
+            SUM(amount) as total
+        FROM transactions t
+        {where_sql}
+        GROUP BY cashflow_type, category
+    """
+    
+    cursor.execute(query)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
 
 def get_latest_transaction_year() -> int | None:
     """Finds the most recent year present in the transaction data."""

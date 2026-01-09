@@ -425,6 +425,37 @@ def get_filter_options() -> Dict[str, List[str]]:
 
 # --- Aggregations for Charts --- #
 
+def get_sankey_aggregates(exclude_invisible: bool = False) -> List[Dict[str, Any]]:
+    """
+    Performs a direct SQL aggregation to get the data needed for the Income Sankey.
+    This is more efficient than fetching all transactions. It correctly filters by
+    account visibility and only considers operational cashflow types.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    where_clauses = ["t.cashflow_type IN ('Income', 'Expense', 'Capital Expenditure')"]
+    
+    if exclude_invisible:
+        where_clauses.append("t.account_id NOT IN (SELECT account_id FROM account_visibility WHERE is_visible = 0)")
+
+    where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+
+    query = f"""
+        SELECT 
+            cashflow_type,
+            category,
+            SUM(amount) as total
+        FROM transactions t
+        {where_sql}
+        GROUP BY cashflow_type, category
+    """
+    
+    cursor.execute(query)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
 def get_latest_transaction_year() -> int | None:
     """Finds the most recent year present in the transaction data."""
     conn = get_db_connection()

@@ -23,15 +23,16 @@ const SankeyChart = ({ data }) => {
         <div style={{ height: '600px', width: '100%', backgroundColor: '#f5f5f5', borderRadius: '4px', padding: '1rem' }}>
             <ResponsiveSankey
                 data={data} 
-                margin={{ top: 20, right: 160, bottom: 20, left: 50 }}
-                align="justify"
+                // --- LAYOUT OPTIMIZATION (User Request) ---
+                // Tighter margins, more compact layout, and thicker nodes/flows.
+                margin={{ top: 40, right: 200, bottom: 40, left: 80 }}
+                align="center" // 'center' provides a more compact layout than 'justify'
                 colors={{ scheme: 'category10' }} // A colorblind-safe, distinct palette
                 nodeOpacity={1}
                 nodeHoverOthersOpacity={0.35}
-                nodeThickness={18}
-                nodeSpacing={24}
+                nodeThickness={24} // Increased for more visual weight
+                nodeSpacing={8}    // Decreased for tighter vertical layout
                 nodeBorderWidth={0}
-                nodeBorderColor={{ from: 'color', modifiers: [['darker', 0.8]] }}
                 nodeBorderRadius={3}
                 
                 // Link/flow styling for light background
@@ -40,7 +41,7 @@ const SankeyChart = ({ data }) => {
                 enableLinkGradient={false}
 
                 linkHoverOthersOpacity={0.1}
-                linkContract={3}
+                linkContract={0} // Removed contract for thicker-appearing flows
                 labelPosition="outside"
                 labelOrientation="horizontal"
                 labelPadding={16}
