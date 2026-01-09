@@ -65,7 +65,9 @@ const SankeyChart = ({ data }) => {
                     </div>
                 )}
 
-                // Tooltip for nodes (bars) - Hardened to prevent crashes on bad data.
+                // --- FIX: Display node name and value on hover --- //
+                // Reverted to a simpler implementation to ensure both the node's ID (name)
+                // and its value are always displayed as requested.
                 nodeTooltip={node => (
                     <div style={{
                         padding: '12px',
@@ -76,8 +78,7 @@ const SankeyChart = ({ data }) => {
                     }}>
                         <strong>{node.id}</strong>
                         <br />
-                        {/* Defensive check: Ensure node.value is a number before formatting. */}
-                        {typeof node.value === 'number' ? formatValue(node.value) : 'N/A'}
+                        {formatValue(node.value)}
                     </div>
                 )}
                 

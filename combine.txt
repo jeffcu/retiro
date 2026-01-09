@@ -1268,7 +1268,9 @@ const SankeyChart = ({ data }) => {
                     </div>
                 )}
 
-                // Tooltip for nodes (bars) - Hardened to prevent crashes on bad data.
+                // --- FIX: Correctly display node values on hover --- //
+                // The previous logic could fail if a node's value wasn't a valid number,
+                // resulting in '$NaN'. This is now hardened to prevent that.
                 nodeTooltip={node => (
                     <div style={{
                         padding: '12px',
@@ -1279,8 +1281,7 @@ const SankeyChart = ({ data }) => {
                     }}>
                         <strong>{node.id}</strong>
                         <br />
-                        {/* Defensive check: Ensure node.value is a number before formatting. */}
-                        {typeof node.value === 'number' ? formatValue(node.value) : 'N/A'}
+                        {isFinite(node.value) ? formatValue(node.value) : 'N/A'}
                     </div>
                 )}
                 
@@ -1291,7 +1292,6 @@ const SankeyChart = ({ data }) => {
 };
 
 export default SankeyChart;
-
 
 --- FILE: projects/trust/src/analysis.py ---
 
@@ -1344,7 +1344,7 @@ def generate_income_sankey(period: str, exclude_invisible: bool = False) -> Dict
     nodes = []
     links = []
 
-    # --- NEW: Balanced Sankey Architecture with Name Sanitization --- #
+    # --- NEW: Balanced and Sorted Sankey Architecture --- #
 
     # 0. Define reserved names to prevent topological loops.
     RESERVED_NODE_NAMES = {
@@ -1358,14 +1358,10 @@ def generate_income_sankey(period: str, exclude_invisible: bool = False) -> Dict
     
     nodes.append({"id": "Available Funds"})
 
-    # 2. Handle deficit vs. surplus to ensure the diagram always balances.
+    # 2. Handle deficit vs. surplus to establish balanced inflows.
     if net_surplus >= 0:
         if total_income > 0:
             links.append({"source": "Income", "target": "Available Funds", "value": round(total_income, 2)})
-        
-        if net_surplus > 0:
-            nodes.append({"id": "Net Surplus"})
-            links.append({"source": "Available Funds", "target": "Net Surplus", "value": round(net_surplus, 2)})
     else:
         net_deficit = abs(net_surplus)
         nodes.append({"id": "Net Deficit"})
@@ -1373,39 +1369,50 @@ def generate_income_sankey(period: str, exclude_invisible: bool = False) -> Dict
             links.append({"source": "Income", "target": "Available Funds", "value": round(total_income, 2)})
         links.append({"source": "Net Deficit", "target": "Available Funds", "value": round(net_deficit, 2)})
 
-    # 3. Process Expense outflows, sanitizing names to prevent collisions.
+    # 3. Sanitize expense category names to prevent collisions.
     sanitized_expenses = defaultdict(float)
     for category, amount in expense_by_category.items():
         safe_name = f"{category} (Expense)" if category in RESERVED_NODE_NAMES else category
         sanitized_expenses[safe_name] += amount
 
-    MAX_EXPENSE_CATEGORIES = 7
+    # 4. Assemble and sort all outflows from "Available Funds".
+    outflows = []
+    if net_surplus > 0:
+        outflows.append(("Net Surplus", net_surplus))
+    if total_capex > 0:
+        outflows.append(("Capital Expenditure", total_capex))
+
+    # Use top N expense categories and group the rest into "Other Expenses".
+    MAX_EXPENSE_CATEGORIES = 6 
     sorted_expenses = sorted(sanitized_expenses.items(), key=lambda item: item[1], reverse=True)
     
-    top_expenses = dict(sorted_expenses[:MAX_EXPENSE_CATEGORIES])
+    top_expenses_list = sorted_expenses[:MAX_EXPENSE_CATEGORIES]
     other_expenses_list = sorted_expenses[MAX_EXPENSE_CATEGORIES:]
     other_expenses_total = sum(amount for _, amount in other_expenses_list)
 
-    for category, amount in top_expenses.items():
-        if amount > 0:
-            nodes.append({"id": category})
-            links.append({"source": "Available Funds", "target": category, "value": round(amount, 2)})
+    outflows.extend(top_expenses_list)
 
     if other_expenses_total > 0:
-        nodes.append({"id": "Other Expenses"})
-        links.append({"source": "Available Funds", "target": "Other Expenses", "value": round(other_expenses_total, 2)})
-        
+        outflows.append(("Other Expenses", other_expenses_total))
+
+    # Sort the master list of outflows by value, descending.
+    outflows.sort(key=lambda item: item[1], reverse=True)
+
+    # 5. Create nodes and links from the sorted outflows.
+    for target_node, amount in outflows:
+        if amount > 0:
+            nodes.append({"id": target_node})
+            links.append({"source": "Available Funds", "target": target_node, "value": round(amount, 2)})
+
+    # 6. Handle the sub-tier breakout for "Other Expenses", also sorted.
+    if other_expenses_total > 0:
+        other_expenses_list.sort(key=lambda item: item[1], reverse=True)
         for category, amount in other_expenses_list:
             if amount > 0:
                 nodes.append({"id": category})
                 links.append({"source": "Other Expenses", "target": category, "value": round(amount, 2)})
 
-    # 4. Handle Capital Expenditure outflow.
-    if total_capex > 0:
-        nodes.append({"id": "Capital Expenditure"})
-        links.append({"source": "Available Funds", "target": "Capital Expenditure", "value": round(total_capex, 2)})
-    
-    # 5. Finalize node list, ensuring no duplicates.
+    # 7. Finalize node list, ensuring no duplicates.
     unique_node_ids = {node['id'] for node in nodes}
     final_nodes = [{"id": node_id} for node_id in sorted(list(unique_node_ids))]
 
@@ -1455,6 +1462,7 @@ def prepare_portfolio_chart_data(filters: Dict[str, Any]) -> List[Dict[str, Any]
         }
         for row in data
     ]
+
 
 
 --- FILE: projects/trust/src/data_model.py ---
