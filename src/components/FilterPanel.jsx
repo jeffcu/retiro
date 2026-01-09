@@ -1,18 +1,11 @@
 import { useState, useEffect } from 'react';
 import './FilterPanel.css';
 
-const FilterPanel = ({ config, onFilterSubmit }) => {
-    const [filterState, setFilterState] = useState({});
+const FilterPanel = ({ config, onFilterSubmit, initialValues = {} }) => {
+    const [filterState, setFilterState] = useState(initialValues);
     const [options, setOptions] = useState({});
 
     useEffect(() => {
-        // Initialize filter state from config
-        const initialState = config.reduce((acc, item) => {
-            acc[item.id] = '';
-            return acc;
-        }, {});
-        setFilterState(initialState);
-
         // Fetch options for select dropdowns
         const fetchOptions = async () => {
             try {
@@ -25,7 +18,12 @@ const FilterPanel = ({ config, onFilterSubmit }) => {
             }
         };
         fetchOptions();
-    }, [config]);
+    }, []);
+
+    useEffect(() => {
+        // When initialValues change (from a drill-down), update the panel's state.
+        setFilterState(initialValues);
+    }, [initialValues]);
 
     const handleChange = (e) => {
         const { name, value } = e.target;
@@ -36,10 +34,16 @@ const FilterPanel = ({ config, onFilterSubmit }) => {
         e.preventDefault();
         // Remove empty filters before submitting
         const activeFilters = Object.fromEntries(
-            Object.entries(filterState).filter(([_, value]) => value !== '' && value !== 'All')
+            Object.entries(filterState).filter(([key, value]) => value !== '' && value !== 'All')
         );
         onFilterSubmit(activeFilters);
     };
+
+    // Create a map from config for quick lookup
+    const configMap = config.reduce((acc, item) => {
+        acc[item.id] = item;
+        return acc;
+    }, {});
 
     return (
         <form onSubmit={handleSubmit} className="filter-panel">

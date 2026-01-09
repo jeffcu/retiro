@@ -340,6 +340,25 @@ def get_transaction(transaction_id: str) -> Dict[str, Any] | None:
     conn.close()
     return dict(row) if row else None
 
+def _apply_period_filter_to_query(
+    where_clauses: List[str], params: List[Any], period: str | None
+):
+    """Applies a date range WHERE clause based on a period string."""
+    if not period or period == 'all':
+        return
+    
+    table_prefix = "t." if any("SELECT" in c for c in where_clauses) else ""
+
+    if period.isdigit() and len(period) == 4: # Year filter
+        where_clauses.append(f"strftime('%Y', {table_prefix}transaction_date) = ?")
+        params.append(period)
+    elif period == '6m':
+        where_clauses.append(f"{table_prefix}transaction_date >= date('now', '-6 months')")
+    elif period == '3m':
+        where_clauses.append(f"{table_prefix}transaction_date >= date('now', '-3 months')")
+    elif period == '1m':
+        where_clauses.append(f"{table_prefix}transaction_date >= date('now', '-1 month')")
+
 def get_transactions(filters: Dict[str, Any] = None, exclude_invisible: bool = False) -> List[Dict[str, Any]]:
     """ 
     Retrieves transactions, with options for filtering.
@@ -355,6 +374,7 @@ def get_transactions(filters: Dict[str, Any] = None, exclude_invisible: bool = F
         where_clauses.append("account_id NOT IN (SELECT account_id FROM account_visibility WHERE is_visible = 0)")
 
     if filters:
+        period = filters.pop('period', None) # Extract period filter
         allowed = ['category', 'account_id', 'institution', 'description', 'tags', 'cashflow_type']
         for key, value in filters.items():
             if key in allowed:
@@ -364,6 +384,8 @@ def get_transactions(filters: Dict[str, Any] = None, exclude_invisible: bool = F
                 else:
                     where_clauses.append(f"{key} = ?")
                     params.append(value)
+        
+        _apply_period_filter_to_query(where_clauses, params, period)
 
     if where_clauses:
         base_query += " WHERE " + " AND ".join(where_clauses)
@@ -449,17 +471,7 @@ def get_sankey_aggregates(period: str, exclude_invisible: bool = False) -> List[
     if exclude_invisible:
         where_clauses.append("t.account_id NOT IN (SELECT account_id FROM account_visibility WHERE is_visible = 0)")
 
-    # --- NEW: Time Filtering Logic ---
-    if period.isdigit() and len(period) == 4: # Year filter e.g. "2024"
-        where_clauses.append("strftime('%Y', t.transaction_date) = ?")
-        params.append(period)
-    elif period == '6m':
-        where_clauses.append("t.transaction_date >= date('now', '-6 months')")
-    elif period == '3m':
-        where_clauses.append("t.transaction_date >= date('now', '-3 months')")
-    elif period == '1m':
-        where_clauses.append("t.transaction_date >= date('now', '-1 month')")
-    # "all" is the default, so no date clause is needed.
+    _apply_period_filter_to_query(where_clauses, params, period)
 
     where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
 

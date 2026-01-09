@@ -214,6 +214,7 @@ def get_transaction_filters(
     description: Optional[str] = Query(None),
     tags: Optional[str] = Query(None),
     cashflow_type: Optional[str] = Query(None),
+    period: Optional[str] = Query(None), # Added period filter
 ) -> Dict[str, Any]:
     filters = {
         "category": category,
@@ -222,6 +223,7 @@ def get_transaction_filters(
         "description": description,
         "tags": tags,
         "cashflow_type": cashflow_type,
+        "period": period,
     }
     return {k: v for k, v in filters.items() if v is not None}
 

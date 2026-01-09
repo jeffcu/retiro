@@ -925,32 +925,43 @@ import TransactionListView from './components/TransactionListView';
 import './App.css';
 
 function App() {
-  const [activeView, setActiveView] = useState('Home');
+  const [currentView, setCurrentView] = useState({ name: 'Home', params: {} });
+
+  const navigateTo = (viewName, params = {}) => {
+    setCurrentView({ name: viewName, params });
+  };
+
+  const setActiveView = (viewName) => {
+    navigateTo(viewName);
+  };
 
   const renderView = () => {
-    switch (activeView) {
+    const { name, params } = currentView;
+    switch (name) {
       case 'Home':
-        return <HomeView />;
+        return <HomeView navigateTo={navigateTo} />;
       case 'Portfolio':
         return <PortfolioView />;
       case 'Data & Settings':
         return <DataImportView />;
       case 'Cashflow':
-        return <TransactionListView />;
+        // Using a key forces React to remount the component when params change,
+        // ensuring a fresh state for the new drill-down view.
+        return <TransactionListView key={JSON.stringify(params)} initialFilters={params} />;
       case 'Projects/Tags':
       case 'Real Estate':
       case 'Forecast':
-        return <PlaceholderView viewName={activeView} />;
+        return <PlaceholderView viewName={name} />;
       default:
-        return <HomeView />;
+        return <HomeView navigateTo={navigateTo} />;
     }
   };
 
   return (
     <>
-      <SideBar activeView={activeView} setActiveView={setActiveView} />
+      <SideBar activeView={currentView.name} setActiveView={setActiveView} />
       <main className="main-content">
-        <h1>{activeView}</h1>
+        <h1>{currentView.name}</h1>
         {renderView()}
       </main>
     </>
@@ -1203,7 +1214,7 @@ export default PortfolioView;
 
 import { ResponsiveSankey } from '@nivo/sankey';
 
-const SankeyChart = ({ data }) => {
+const SankeyChart = ({ data, onNodeClick = () => {} }) => {
 
     // Helper to format numbers with commas and two decimal places.
     const formatValue = (value) => new Intl.NumberFormat('en-US', {
@@ -1214,10 +1225,8 @@ const SankeyChart = ({ data }) => {
     }).format(value);
 
     const handleNodeClick = (node, event) => {
-        // Placeholder for drill-down functionality (PRS 2.2)
-        const details = `Node Clicked:\nID: ${node.id}\nValue: ${formatValue(node.value)}`;
-        console.log(details);
-        alert(details);
+        // Pass the entire node object up to the parent handler.
+        onNodeClick(node);
     };
 
     return (
@@ -1884,6 +1893,25 @@ def get_transaction(transaction_id: str) -> Dict[str, Any] | None:
     conn.close()
     return dict(row) if row else None
 
+def _apply_period_filter_to_query(
+    where_clauses: List[str], params: List[Any], period: str | None
+):
+    """Applies a date range WHERE clause based on a period string."""
+    if not period or period == 'all':
+        return
+    
+    table_prefix = "t." if any("SELECT" in c for c in where_clauses) else ""
+
+    if period.isdigit() and len(period) == 4: # Year filter
+        where_clauses.append(f"strftime('%Y', {table_prefix}transaction_date) = ?")
+        params.append(period)
+    elif period == '6m':
+        where_clauses.append(f"{table_prefix}transaction_date >= date('now', '-6 months')")
+    elif period == '3m':
+        where_clauses.append(f"{table_prefix}transaction_date >= date('now', '-3 months')")
+    elif period == '1m':
+        where_clauses.append(f"{table_prefix}transaction_date >= date('now', '-1 month')")
+
 def get_transactions(filters: Dict[str, Any] = None, exclude_invisible: bool = False) -> List[Dict[str, Any]]:
     """ 
     Retrieves transactions, with options for filtering.
@@ -1899,6 +1927,7 @@ def get_transactions(filters: Dict[str, Any] = None, exclude_invisible: bool = F
         where_clauses.append("account_id NOT IN (SELECT account_id FROM account_visibility WHERE is_visible = 0)")
 
     if filters:
+        period = filters.pop('period', None) # Extract period filter
         allowed = ['category', 'account_id', 'institution', 'description', 'tags', 'cashflow_type']
         for key, value in filters.items():
             if key in allowed:
@@ -1908,6 +1937,8 @@ def get_transactions(filters: Dict[str, Any] = None, exclude_invisible: bool = F
                 else:
                     where_clauses.append(f"{key} = ?")
                     params.append(value)
+        
+        _apply_period_filter_to_query(where_clauses, params, period)
 
     if where_clauses:
         base_query += " WHERE " + " AND ".join(where_clauses)
@@ -1993,17 +2024,7 @@ def get_sankey_aggregates(period: str, exclude_invisible: bool = False) -> List[
     if exclude_invisible:
         where_clauses.append("t.account_id NOT IN (SELECT account_id FROM account_visibility WHERE is_visible = 0)")
 
-    # --- NEW: Time Filtering Logic ---
-    if period.isdigit() and len(period) == 4: # Year filter e.g. "2024"
-        where_clauses.append("strftime('%Y', t.transaction_date) = ?")
-        params.append(period)
-    elif period == '6m':
-        where_clauses.append("t.transaction_date >= date('now', '-6 months')")
-    elif period == '3m':
-        where_clauses.append("t.transaction_date >= date('now', '-3 months')")
-    elif period == '1m':
-        where_clauses.append("t.transaction_date >= date('now', '-1 month')")
-    # "all" is the default, so no date clause is needed.
+    _apply_period_filter_to_query(where_clauses, params, period)
 
     where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
 
@@ -2510,6 +2531,7 @@ def get_transaction_filters(
     description: Optional[str] = Query(None),
     tags: Optional[str] = Query(None),
     cashflow_type: Optional[str] = Query(None),
+    period: Optional[str] = Query(None), # Added period filter
 ) -> Dict[str, Any]:
     filters = {
         "category": category,
@@ -2518,6 +2540,7 @@ def get_transaction_filters(
         "description": description,
         "tags": tags,
         "cashflow_type": cashflow_type,
+        "period": period,
     }
     return {k: v for k, v in filters.items() if v is not None}
 
@@ -3395,18 +3418,11 @@ export default DataImportView;
 import { useState, useEffect } from 'react';
 import './FilterPanel.css';
 
-const FilterPanel = ({ config, onFilterSubmit }) => {
-    const [filterState, setFilterState] = useState({});
+const FilterPanel = ({ config, onFilterSubmit, initialValues = {} }) => {
+    const [filterState, setFilterState] = useState(initialValues);
     const [options, setOptions] = useState({});
 
     useEffect(() => {
-        // Initialize filter state from config
-        const initialState = config.reduce((acc, item) => {
-            acc[item.id] = '';
-            return acc;
-        }, {});
-        setFilterState(initialState);
-
         // Fetch options for select dropdowns
         const fetchOptions = async () => {
             try {
@@ -3419,7 +3435,12 @@ const FilterPanel = ({ config, onFilterSubmit }) => {
             }
         };
         fetchOptions();
-    }, [config]);
+    }, []);
+
+    useEffect(() => {
+        // When initialValues change (from a drill-down), update the panel's state.
+        setFilterState(initialValues);
+    }, [initialValues]);
 
     const handleChange = (e) => {
         const { name, value } = e.target;
@@ -3430,10 +3451,16 @@ const FilterPanel = ({ config, onFilterSubmit }) => {
         e.preventDefault();
         // Remove empty filters before submitting
         const activeFilters = Object.fromEntries(
-            Object.entries(filterState).filter(([_, value]) => value !== '' && value !== 'All')
+            Object.entries(filterState).filter(([key, value]) => value !== '' && value !== 'All')
         );
         onFilterSubmit(activeFilters);
     };
+
+    // Create a map from config for quick lookup
+    const configMap = config.reduce((acc, item) => {
+        acc[item.id] = item;
+        return acc;
+    }, {});
 
     return (
         <form onSubmit={handleSubmit} className="filter-panel">
@@ -3623,7 +3650,7 @@ const TimeFilter = ({ selectedPeriod, onPeriodChange }) => {
     );
 };
 
-const HomeView = () => {
+const HomeView = ({ navigateTo }) => {
     const [incomeSankeyData, setIncomeSankeyData] = useState({ nodes: [], links: [] });
     const [sankeyLoading, setSankeyLoading] = useState(true);
     const [selectedPeriod, setSelectedPeriod] = useState('all');
@@ -3645,6 +3672,31 @@ const HomeView = () => {
         fetchSankeyData();
     }, [selectedPeriod]);
 
+    const handleSankeyNodeClick = (node) => {
+        const { id } = node;
+        let filters = { period: selectedPeriod };
+
+        // These are structural nodes and should not be used for drill-down.
+        const nonFilterableNodes = ["Income", "Available Funds", "Net Surplus", "Net Deficit"];
+        if (nonFilterableNodes.includes(id)) {
+            console.log(`Drill-down on structural node '${id}' is disabled.`);
+            return;
+        }
+
+        // Logic to determine the correct filter based on the node ID from the Sankey data.
+        if (id === 'Capital Expenditure') {
+            filters.cashflow_type = 'Capital Expenditure';
+        } else if (id.endsWith('(Expense)')) {
+            filters.category = id.replace(' (Expense)', '');
+        } else {
+            // Default behavior is to treat the node ID as a category filter.
+            filters.category = id;
+        }
+
+        console.log(`Navigating to Cashflow view with filters:`, filters);
+        navigateTo('Cashflow', filters);
+    };
+
     const isChartVisible = !sankeyLoading && incomeSankeyData && incomeSankeyData.links.length > 0;
 
     return (
@@ -3659,7 +3711,7 @@ const HomeView = () => {
                 {sankeyLoading ? (
                     <p>Loading chart data...</p>
                 ) : isChartVisible ? (
-                    <SankeyChart data={incomeSankeyData} />
+                    <SankeyChart data={incomeSankeyData} onNodeClick={handleSankeyNodeClick} />
                 ) : (
                     <p>No transaction data available for the selected period. Please import a transactions CSV file.</p>
                 )}
@@ -4905,16 +4957,16 @@ const RulePromptCard = ({ onShowCreator }) => {
     );
 };
 
-const TransactionListView = () => {
+const TransactionListView = ({ initialFilters = {} }) => {
     const [transactions, setTransactions] = useState([]);
     const [chartData, setChartData] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
-    const [activeFilters, setActiveFilters] = useState({});
+    const [activeFilters, setActiveFilters] = useState(initialFilters);
     const [showRuleCreator, setShowRuleCreator] = useState(false);
     const [editingTransaction, setEditingTransaction] = useState(null); // State for the modal
 
-    const fetchData = async (filters = {}) => {
+    const fetchData = async (filters = activeFilters) => {
         try {
             setLoading(true);
             setActiveFilters(filters);
@@ -4943,8 +4995,8 @@ const TransactionListView = () => {
     };
 
     useEffect(() => {
-        fetchData(); // Initial fetch with no filters
-    }, []);
+        fetchData(initialFilters); // Initial fetch with filters from props
+    }, []); // This effect runs only once on mount due to the key prop in App.jsx
 
     const handleRuleSave = async () => {
         setShowRuleCreator(false);
@@ -4981,13 +5033,17 @@ const TransactionListView = () => {
         return new Date(dateString).toLocaleDateString();
     }
 
-    const hasActiveFilters = Object.keys(activeFilters).length > 0;
+    const hasActiveFilters = Object.values(activeFilters).some(v => v);
 
     if (error) return <p>Error loading transactions: {error}</p>;
 
     return (
         <>
-            <FilterPanel config={filterConfig} onFilterSubmit={fetchData} />
+            <FilterPanel 
+                config={filterConfig} 
+                onFilterSubmit={fetchData} 
+                initialValues={activeFilters}
+            />
 
             {showRuleCreator ? (
                 <RuleCreator 

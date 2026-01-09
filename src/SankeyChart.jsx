@@ -1,6 +1,6 @@
 import { ResponsiveSankey } from '@nivo/sankey';
 
-const SankeyChart = ({ data }) => {
+const SankeyChart = ({ data, onNodeClick = () => {} }) => {
 
     // Helper to format numbers with commas and two decimal places.
     const formatValue = (value) => new Intl.NumberFormat('en-US', {
@@ -11,10 +11,8 @@ const SankeyChart = ({ data }) => {
     }).format(value);
 
     const handleNodeClick = (node, event) => {
-        // Placeholder for drill-down functionality (PRS 2.2)
-        const details = `Node Clicked:\nID: ${node.id}\nValue: ${formatValue(node.value)}`;
-        console.log(details);
-        alert(details);
+        // Pass the entire node object up to the parent handler.
+        onNodeClick(node);
     };
 
     return (

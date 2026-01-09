@@ -68,7 +68,7 @@ const TimeFilter = ({ selectedPeriod, onPeriodChange }) => {
     );
 };
 
-const HomeView = () => {
+const HomeView = ({ navigateTo }) => {
     const [incomeSankeyData, setIncomeSankeyData] = useState({ nodes: [], links: [] });
     const [sankeyLoading, setSankeyLoading] = useState(true);
     const [selectedPeriod, setSelectedPeriod] = useState('all');
@@ -90,6 +90,31 @@ const HomeView = () => {
         fetchSankeyData();
     }, [selectedPeriod]);
 
+    const handleSankeyNodeClick = (node) => {
+        const { id } = node;
+        let filters = { period: selectedPeriod };
+
+        // These are structural nodes and should not be used for drill-down.
+        const nonFilterableNodes = ["Income", "Available Funds", "Net Surplus", "Net Deficit"];
+        if (nonFilterableNodes.includes(id)) {
+            console.log(`Drill-down on structural node '${id}' is disabled.`);
+            return;
+        }
+
+        // Logic to determine the correct filter based on the node ID from the Sankey data.
+        if (id === 'Capital Expenditure') {
+            filters.cashflow_type = 'Capital Expenditure';
+        } else if (id.endsWith('(Expense)')) {
+            filters.category = id.replace(' (Expense)', '');
+        } else {
+            // Default behavior is to treat the node ID as a category filter.
+            filters.category = id;
+        }
+
+        console.log(`Navigating to Cashflow view with filters:`, filters);
+        navigateTo('Cashflow', filters);
+    };
+
     const isChartVisible = !sankeyLoading && incomeSankeyData && incomeSankeyData.links.length > 0;
 
     return (
@@ -104,7 +129,7 @@ const HomeView = () => {
                 {sankeyLoading ? (
                     <p>Loading chart data...</p>
                 ) : isChartVisible ? (
-                    <SankeyChart data={incomeSankeyData} />
+                    <SankeyChart data={incomeSankeyData} onNodeClick={handleSankeyNodeClick} />
                 ) : (
                     <p>No transaction data available for the selected period. Please import a transactions CSV file.</p>
                 )}

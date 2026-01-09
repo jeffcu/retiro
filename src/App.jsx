@@ -8,32 +8,43 @@ import TransactionListView from './components/TransactionListView';
 import './App.css';
 
 function App() {
-  const [activeView, setActiveView] = useState('Home');
+  const [currentView, setCurrentView] = useState({ name: 'Home', params: {} });
+
+  const navigateTo = (viewName, params = {}) => {
+    setCurrentView({ name: viewName, params });
+  };
+
+  const setActiveView = (viewName) => {
+    navigateTo(viewName);
+  };
 
   const renderView = () => {
-    switch (activeView) {
+    const { name, params } = currentView;
+    switch (name) {
       case 'Home':
-        return <HomeView />;
+        return <HomeView navigateTo={navigateTo} />;
       case 'Portfolio':
         return <PortfolioView />;
       case 'Data & Settings':
         return <DataImportView />;
       case 'Cashflow':
-        return <TransactionListView />;
+        // Using a key forces React to remount the component when params change,
+        // ensuring a fresh state for the new drill-down view.
+        return <TransactionListView key={JSON.stringify(params)} initialFilters={params} />;
       case 'Projects/Tags':
       case 'Real Estate':
       case 'Forecast':
-        return <PlaceholderView viewName={activeView} />;
+        return <PlaceholderView viewName={name} />;
       default:
-        return <HomeView />;
+        return <HomeView navigateTo={navigateTo} />;
     }
   };
 
   return (
     <>
-      <SideBar activeView={activeView} setActiveView={setActiveView} />
+      <SideBar activeView={currentView.name} setActiveView={setActiveView} />
       <main className="main-content">
-        <h1>{activeView}</h1>
+        <h1>{currentView.name}</h1>
         {renderView()}
       </main>
     </>

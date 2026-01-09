@@ -23,16 +23,16 @@ const RulePromptCard = ({ onShowCreator }) => {
     );
 };
 
-const TransactionListView = () => {
+const TransactionListView = ({ initialFilters = {} }) => {
     const [transactions, setTransactions] = useState([]);
     const [chartData, setChartData] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
-    const [activeFilters, setActiveFilters] = useState({});
+    const [activeFilters, setActiveFilters] = useState(initialFilters);
     const [showRuleCreator, setShowRuleCreator] = useState(false);
     const [editingTransaction, setEditingTransaction] = useState(null); // State for the modal
 
-    const fetchData = async (filters = {}) => {
+    const fetchData = async (filters = activeFilters) => {
         try {
             setLoading(true);
             setActiveFilters(filters);
@@ -61,8 +61,8 @@ const TransactionListView = () => {
     };
 
     useEffect(() => {
-        fetchData(); // Initial fetch with no filters
-    }, []);
+        fetchData(initialFilters); // Initial fetch with filters from props
+    }, []); // This effect runs only once on mount due to the key prop in App.jsx
 
     const handleRuleSave = async () => {
         setShowRuleCreator(false);
@@ -99,13 +99,17 @@ const TransactionListView = () => {
         return new Date(dateString).toLocaleDateString();
     }
 
-    const hasActiveFilters = Object.keys(activeFilters).length > 0;
+    const hasActiveFilters = Object.values(activeFilters).some(v => v);
 
     if (error) return <p>Error loading transactions: {error}</p>;
 
     return (
         <>
-            <FilterPanel config={filterConfig} onFilterSubmit={fetchData} />
+            <FilterPanel 
+                config={filterConfig} 
+                onFilterSubmit={fetchData} 
+                initialValues={activeFilters}
+            />
 
             {showRuleCreator ? (
                 <RuleCreator 
