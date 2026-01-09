@@ -11,8 +11,8 @@ from .database import get_sankey_aggregates, get_holdings_aggregation_by_symbol,
 def generate_income_sankey(period: str, exclude_invisible: bool = False) -> Dict[str, Any]:
     """
     Analyzes transaction aggregates to generate data for the income Sankey diagram.
-    This version uses a direct database aggregation for efficiency and accuracy,
-    ensuring only operational cashflow is included.
+    This version ensures the diagram is always balanced by using an intermediate
+    node and explicitly showing deficits.
     (PRS Section 2.1.A, 3.1)
 
     Args:
@@ -44,40 +44,71 @@ def generate_income_sankey(period: str, exclude_invisible: bool = False) -> Dict
     total_expenses = sum(expense_by_category.values())
     net_surplus = total_income - total_expenses - total_capex
 
-    nodes = [{"id": "Income"}]
+    nodes = []
     links = []
 
-    # --- NEW: Aggregation Logic (PRS 2.1.A, 2.2) ---
-    # Sort expenses and group smaller ones into "Other Expenses"
-    MAX_EXPENSE_CATEGORIES = 7 # Keep top 7 expense categories + "Other"
-    sorted_expenses = sorted(expense_by_category.items(), key=lambda item: item[1], reverse=True)
+    # --- NEW: Balanced Sankey Architecture with Name Sanitization --- #
+
+    # 0. Define reserved names to prevent topological loops.
+    RESERVED_NODE_NAMES = {
+        "Income", "Available Funds", "Net Surplus", 
+        "Net Deficit", "Capital Expenditure", "Other Expenses"
+    }
+
+    # 1. Define core source and intermediate distribution nodes.
+    if total_income > 0:
+        nodes.append({"id": "Income"})
+    
+    nodes.append({"id": "Available Funds"})
+
+    # 2. Handle deficit vs. surplus to ensure the diagram always balances.
+    if net_surplus >= 0:
+        if total_income > 0:
+            links.append({"source": "Income", "target": "Available Funds", "value": round(total_income, 2)})
+        
+        if net_surplus > 0:
+            nodes.append({"id": "Net Surplus"})
+            links.append({"source": "Available Funds", "target": "Net Surplus", "value": round(net_surplus, 2)})
+    else:
+        net_deficit = abs(net_surplus)
+        nodes.append({"id": "Net Deficit"})
+        if total_income > 0:
+            links.append({"source": "Income", "target": "Available Funds", "value": round(total_income, 2)})
+        links.append({"source": "Net Deficit", "target": "Available Funds", "value": round(net_deficit, 2)})
+
+    # 3. Process Expense outflows, sanitizing names to prevent collisions.
+    sanitized_expenses = defaultdict(float)
+    for category, amount in expense_by_category.items():
+        safe_name = f"{category} (Expense)" if category in RESERVED_NODE_NAMES else category
+        sanitized_expenses[safe_name] += amount
+
+    MAX_EXPENSE_CATEGORIES = 7
+    sorted_expenses = sorted(sanitized_expenses.items(), key=lambda item: item[1], reverse=True)
     
     top_expenses = dict(sorted_expenses[:MAX_EXPENSE_CATEGORIES])
-    other_expenses = dict(sorted_expenses[MAX_EXPENSE_CATEGORIES:])
-    other_expenses_total = sum(other_expenses.values())
+    other_expenses_list = sorted_expenses[MAX_EXPENSE_CATEGORIES:]
+    other_expenses_total = sum(amount for _, amount in other_expenses_list)
 
-    # Add top expense categories as nodes and create links
     for category, amount in top_expenses.items():
         if amount > 0:
             nodes.append({"id": category})
-            links.append({"source": "Income", "target": category, "value": round(amount, 2)})
+            links.append({"source": "Available Funds", "target": category, "value": round(amount, 2)})
 
-    # Add the aggregated "Other Expenses" node if it has value
     if other_expenses_total > 0:
         nodes.append({"id": "Other Expenses"})
-        links.append({"source": "Income", "target": "Other Expenses", "value": round(other_expenses_total, 2)})
+        links.append({"source": "Available Funds", "target": "Other Expenses", "value": round(other_expenses_total, 2)})
+        
+        for category, amount in other_expenses_list:
+            if amount > 0:
+                nodes.append({"id": category})
+                links.append({"source": "Other Expenses", "target": category, "value": round(amount, 2)})
 
-    # Handle Capital Expenditure
+    # 4. Handle Capital Expenditure outflow.
     if total_capex > 0:
         nodes.append({"id": "Capital Expenditure"})
-        links.append({"source": "Income", "target": "Capital Expenditure", "value": round(total_capex, 2)})
+        links.append({"source": "Available Funds", "target": "Capital Expenditure", "value": round(total_capex, 2)})
     
-    # Handle Net Surplus
-    if net_surplus > 0:
-        nodes.append({"id": "Net Surplus"})
-        links.append({"source": "Income", "target": "Net Surplus", "value": round(net_surplus, 2)})
-
-    # Deduplicate nodes just in case.
+    # 5. Finalize node list, ensuring no duplicates.
     unique_node_ids = {node['id'] for node in nodes}
     final_nodes = [{"id": node_id} for node_id in sorted(list(unique_node_ids))]
 
