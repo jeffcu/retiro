@@ -3,6 +3,7 @@ import './TransactionListView.css';
 import FilterPanel from './FilterPanel';
 import BarChart from './BarChart';
 import RuleCreator from './RuleCreator';
+import TransactionEditorModal from './TransactionEditorModal'; // Import the new modal
 
 const filterConfig = [
     { id: 'category', label: 'Category', type: 'select', optionsKey: 'categories' },
@@ -29,6 +30,7 @@ const TransactionListView = () => {
     const [error, setError] = useState(null);
     const [activeFilters, setActiveFilters] = useState({});
     const [showRuleCreator, setShowRuleCreator] = useState(false);
+    const [editingTransaction, setEditingTransaction] = useState(null); // State for the modal
 
     const fetchData = async (filters = {}) => {
         try {
@@ -78,6 +80,11 @@ const TransactionListView = () => {
         } catch (err) {
             alert(`Error after saving rule: ${err.message}`);
         }
+    };
+
+    const handleTransactionSave = () => {
+        setEditingTransaction(null); // Close the modal
+        fetchData(activeFilters); // Refresh the data
     };
 
     const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
@@ -148,7 +155,7 @@ const TransactionListView = () => {
                             </thead>
                             <tbody>
                                 {transactions.map(t => (
-                                    <tr key={t.transaction_id}>
+                                    <tr key={t.transaction_id} onDoubleClick={() => setEditingTransaction(t)} style={{cursor: 'pointer'}} title="Double-click to edit">
                                         <td>{formatDate(t.transaction_date)}</td>
                                         <td>{t.account_id}</td>
                                         <td>{t.institution}</td>
@@ -168,6 +175,14 @@ const TransactionListView = () => {
                     <p>No transactions found for the current filter. Please import a transaction CSV file or adjust filters.</p>
                 )}
             </div>
+
+            {editingTransaction && (
+                <TransactionEditorModal
+                    transaction={editingTransaction}
+                    onClose={() => setEditingTransaction(null)}
+                    onSave={handleTransactionSave}
+                />
+            )}
         </>
     );
 };

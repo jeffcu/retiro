@@ -43,14 +43,41 @@ const NetWorthHero = () => {
     );
 };
 
+const TimeFilter = ({ selectedPeriod, onPeriodChange }) => {
+    const periods = [
+        { id: 'all', label: 'All Time' },
+        { id: '2025', label: '2025' },
+        { id: '2024', label: '2024' },
+        { id: '6m', label: 'Last 6 Months' },
+        { id: '3m', label: 'Last 3 Months' },
+        { id: '1m', label: 'Last 1 Month' },
+    ];
+
+    return (
+        <div className="time-filter-container">
+            {periods.map(p => (
+                <button
+                    key={p.id}
+                    className={`time-filter-btn ${selectedPeriod === p.id ? 'active' : ''}`}
+                    onClick={() => onPeriodChange(p.id)}
+                >
+                    {p.label}
+                </button>
+            ))}
+        </div>
+    );
+};
+
 const HomeView = () => {
     const [incomeSankeyData, setIncomeSankeyData] = useState({ nodes: [], links: [] });
     const [sankeyLoading, setSankeyLoading] = useState(true);
+    const [selectedPeriod, setSelectedPeriod] = useState('all');
 
     useEffect(() => {
         const fetchSankeyData = async () => {
             try {
-                const response = await fetch('/api/sankey/income');
+                setSankeyLoading(true);
+                const response = await fetch(`/api/sankey/income?period=${selectedPeriod}`);
                 if (!response.ok) throw new Error('Failed to fetch income sankey');
                 const data = await response.json();
                 setIncomeSankeyData(data);
@@ -61,7 +88,7 @@ const HomeView = () => {
             }
         };
         fetchSankeyData();
-    }, []);
+    }, [selectedPeriod]);
 
     const isChartVisible = !sankeyLoading && incomeSankeyData && incomeSankeyData.links.length > 0;
 
@@ -69,14 +96,17 @@ const HomeView = () => {
         <>
             <NetWorthHero />
             
-            <div className="card sankey-container-card"> {/* Added class for specific styling */}
-                <h2>Income → Uses of Money</h2>
+            <div className="card sankey-container-card"> 
+                <div className="sankey-header">
+                    <h2>Income → Uses of Money</h2>
+                    <TimeFilter selectedPeriod={selectedPeriod} onPeriodChange={setSelectedPeriod} />
+                </div>
                 {sankeyLoading ? (
                     <p>Loading chart data...</p>
                 ) : isChartVisible ? (
                     <SankeyChart data={incomeSankeyData} />
                 ) : (
-                    <p>No transaction data available. Please import a transactions CSV file.</p>
+                    <p>No transaction data available for the selected period. Please import a transactions CSV file.</p>
                 )}
             </div>
             

@@ -331,6 +331,15 @@ def _build_where_clause(filters: Dict, allowed_fields: List[str]) -> Tuple[str, 
 
     return f"WHERE {" AND ".join(clauses)}", params
 
+def get_transaction(transaction_id: str) -> Dict[str, Any] | None:
+    """Retrieves a single transaction by its ID."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM transactions WHERE transaction_id = ?", (transaction_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
 def get_transactions(filters: Dict[str, Any] = None, exclude_invisible: bool = False) -> List[Dict[str, Any]]:
     """ 
     Retrieves transactions, with options for filtering.
@@ -425,19 +434,32 @@ def get_filter_options() -> Dict[str, List[str]]:
 
 # --- Aggregations for Charts --- #
 
-def get_sankey_aggregates(exclude_invisible: bool = False) -> List[Dict[str, Any]]:
+def get_sankey_aggregates(period: str, exclude_invisible: bool = False) -> List[Dict[str, Any]]:
     """
     Performs a direct SQL aggregation to get the data needed for the Income Sankey.
     This is more efficient than fetching all transactions. It correctly filters by
-    account visibility and only considers operational cashflow types.
+    account visibility and time period.
     """
     conn = get_db_connection()
     cursor = conn.cursor()
 
     where_clauses = ["t.cashflow_type IN ('Income', 'Expense', 'Capital Expenditure')"]
+    params = []
     
     if exclude_invisible:
         where_clauses.append("t.account_id NOT IN (SELECT account_id FROM account_visibility WHERE is_visible = 0)")
+
+    # --- NEW: Time Filtering Logic ---
+    if period.isdigit() and len(period) == 4: # Year filter e.g. "2024"
+        where_clauses.append("strftime('%Y', t.transaction_date) = ?")
+        params.append(period)
+    elif period == '6m':
+        where_clauses.append("t.transaction_date >= date('now', '-6 months')")
+    elif period == '3m':
+        where_clauses.append("t.transaction_date >= date('now', '-3 months')")
+    elif period == '1m':
+        where_clauses.append("t.transaction_date >= date('now', '-1 month')")
+    # "all" is the default, so no date clause is needed.
 
     where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
 
@@ -451,7 +473,7 @@ def get_sankey_aggregates(exclude_invisible: bool = False) -> List[Dict[str, Any
         GROUP BY cashflow_type, category
     """
     
-    cursor.execute(query)
+    cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]

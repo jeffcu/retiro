@@ -12,7 +12,7 @@ from decimal import Decimal
 
 from src.importers import csv_importer, holdings_importer
 from src.database import initialize_database, save_transactions
-from src.data_model import CashflowType
+from src.data_model import CashflowType, Transaction
 from src import database as db
 from src import analysis
 from src import rules_engine
@@ -64,6 +64,12 @@ class PurgeRequest(BaseModel):
 
 class AccountVisibilitySettings(BaseModel):
     settings: Dict[str, bool]
+
+class TransactionUpdate(BaseModel):
+    description: str
+    category: Optional[str] = None
+    cashflow_type: Optional[str] = None
+    tags: List[str] = []
 
 
 @app.on_event("startup")
@@ -236,6 +242,50 @@ async def get_filtered_transactions(filters: Dict[str, Any] = Depends(get_transa
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"An internal error occurred while fetching transactions: {e}")
+
+@app.put("/api/transactions/{transaction_id}", tags=["Data"])
+async def update_transaction(transaction_id: str, payload: TransactionUpdate):
+    try:
+        # 1. Fetch the existing transaction record
+        tx_dict = db.get_transaction(transaction_id)
+        if not tx_dict:
+            raise HTTPException(status_code=404, detail="Transaction not found.")
+
+        # 2. Re-constitute the full Transaction object
+        tx_obj = Transaction(
+            transaction_id=tx_dict['transaction_id'],
+            account_id=tx_dict['account_id'],
+            transaction_date=datetime.strptime(tx_dict['transaction_date'].split(' ')[0], '%Y-%m-%d').date(),
+            amount=Decimal(str(tx_dict['amount'])),
+            description=tx_dict['description'],
+            merchant=tx_dict.get('merchant'),
+            category=tx_dict.get('category'),
+            cashflow_type=CashflowType.from_string(tx_dict.get('cashflow_type')),
+            tags=tx_dict.get('tags', '').split(',') if tx_dict.get('tags') else [],
+            asset_id=tx_dict.get('asset_id'),
+            import_run_id=tx_dict.get('import_run_id'),
+            raw_data_hash=tx_dict.get('raw_data_hash'),
+            institution=tx_dict.get('institution'),
+            original_category=tx_dict.get('original_category')
+        )
+
+        # 3. Update fields from the payload
+        tx_obj.description = payload.description
+        tx_obj.category = payload.category
+        tx_obj.cashflow_type = CashflowType.from_string(payload.cashflow_type)
+        tx_obj.tags = payload.tags
+        tx_obj.is_transfer = tx_obj.cashflow_type == CashflowType.TRANSFER
+
+        # 4. Save the updated transaction back to the database
+        db.save_transactions([tx_obj])
+
+        return {"message": "Transaction updated successfully", "transaction": tx_obj}
+
+    except HTTPException as he:
+        raise he # Re-raise HTTP exceptions directly
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"An internal error occurred: {e}")
 
 @app.get("/api/holdings", tags=["Data"])
 async def get_filtered_holdings(filters: Dict[str, Any] = Depends(get_holding_filters)):

@@ -34,19 +34,22 @@ def apply_rules_to_transaction(transaction: Transaction, rules: List[Rule]) -> T
     """
     Applies a list of rules to a single transaction, modifying it in place.
     The first rule that matches all conditions (by priority) wins.
-    If no rule matches, it falls back to the original category or a default.
+    If no rule matches, it falls back to the original category from the file,
+    or a sensible default if no category information exists at all.
     """
     sorted_rules = sorted(rules, key=lambda r: r.priority)
-    rule_matched = False
 
-    # Preserve the original state before modification for condition checking
-    original_category = transaction.category
-    original_cashflow_type = transaction.cashflow_type
+    # Preserve the transaction's state *before* rules run, for condition checking.
+    # The `original_category` from the file is the most truthful source for conditions.
+    # Fall back to the current category if that's all we have.
+    category_for_condition_check = transaction.original_category or transaction.category
+    cashflow_type_for_condition_check = transaction.cashflow_type
 
-    # Reset volatile fields before rule application
+    # Reset fields that are always determined by rules. Tags are replaced by a matching rule.
     transaction.tags = []
     transaction.is_transfer = False
 
+    # --- Rule Matching Loop ---
     for rule in sorted_rules:
         # --- Condition 1: Account Filter ---
         if rule.account_filter_list:
@@ -63,58 +66,65 @@ def apply_rules_to_transaction(transaction: Transaction, rules: List[Rule]) -> T
 
         # --- Condition 3: Category ---
         # Check against the category the transaction had *before* any rules were applied.
-        if rule.condition_category and rule.condition_category.lower() != (original_category or '').lower():
+        if rule.condition_category and rule.condition_category.lower() != (category_for_condition_check or '').lower():
             continue
         
         # --- Condition 4: Cashflow Type ---
-        if rule.condition_cashflow_type and original_cashflow_type and \
-           rule.condition_cashflow_type.lower() != original_cashflow_type.value.lower():
+        if rule.condition_cashflow_type and cashflow_type_for_condition_check and \
+           rule.condition_cashflow_type.lower() != cashflow_type_for_condition_check.value.lower():
             continue
 
         # --- Condition 5: Tags (simple string contains) ---
         # This is a weak check. A better implementation would require dedicated tag storage.
         if rule.condition_tags:
-            # Tags in DB are a comma-separated string. We check if the condition tag is a substring.
             db_tags = transaction.tags # This should be the raw tags from DB
             if not any(rule.condition_tags.lower() in tag.lower() for tag in db_tags):
                  continue
 
         # --- Condition 6: Description Pattern ---
+        pattern_matched = False
         if rule.pattern:
             try:
                 flags = 0 if rule.case_sensitive else re.IGNORECASE
-                if not re.search(rule.pattern, transaction.description, flags):
-                    continue # Description doesn't match, so skip to next rule
+                if re.search(rule.pattern, transaction.description, flags):
+                    pattern_matched = True
             except re.error as e:
                 print(f"Skipping invalid regex pattern in rule {rule.rule_id}: '{rule.pattern}' - {e}")
                 continue
+        else:
+            # If a rule has no pattern, it can match based on other conditions alone.
+            pattern_matched = True
         
-        # If we reached here, all conditions for this rule have passed.
-        # Apply the action.
-        print(f"Rule '{rule.rule_id}' ('{rule.pattern or 'any'}') matched description '{transaction.description}'. Applying category '{rule.category}'.")
+        if not pattern_matched:
+            continue
+
+        # If we reached here, all conditions for this rule have passed. Apply the action.
+        print(f"Rule '{rule.rule_id}' ('{rule.pattern or 'any'}') matched transaction '{transaction.description}'. Applying category '{rule.category}'.")
         transaction.category = rule.category
         transaction.cashflow_type = rule.cashflow_type
-        transaction.tags = list(set(transaction.tags + rule.tags)) # Merge and dedupe tags
-        
+        transaction.tags = list(set(rule.tags)) # A rule's tags overwrite any previous.
         transaction.is_transfer = rule.cashflow_type == CashflowType.TRANSFER
         
-        rule_matched = True
-        break # First match wins
+        return transaction # A rule matched, our job is done.
 
-    # --- Fallback Logic: If no rules matched --- #
-    if not rule_matched:
-        # Restore original category if it existed.
-        transaction.category = original_category
+    # --- Fallback Logic: If no rules matched ---
+    # If we get here, the loop finished without returning.
+    
+    # 1. Set Category: Prioritize the file's category. If not present, we just
+    #    leave the category as it was from the last run.
+    if transaction.original_category:
+        transaction.category = transaction.original_category
 
-        # Apply default cashflow type and category ONLY if they are not already set.
-        if transaction.amount > 0:
-            transaction.cashflow_type = CashflowType.INCOME
-            if not transaction.category:
-                transaction.category = 'Income'
-        elif transaction.amount < 0:
-            transaction.cashflow_type = CashflowType.EXPENSE
-            if not transaction.category:
-                transaction.category = 'Uncategorized'
+    # 2. Set Cashflow Type & Final Category if they are still not set.
+    # This handles brand new transactions that had no category info at all.
+    if not transaction.cashflow_type:
+        transaction.cashflow_type = CashflowType.INCOME if transaction.amount > 0 else CashflowType.EXPENSE
+
+    if not transaction.category:
+        if transaction.cashflow_type == CashflowType.INCOME:
+            transaction.category = 'Income'
+        else: # Expense, CapEx, Investment... if no category, it's Uncategorized.
+            transaction.category = 'Uncategorized'
 
     return transaction
 
@@ -173,7 +183,7 @@ def recategorize_all_transactions() -> int:
             import_run_id=tx_dict.get('import_run_id'),
             raw_data_hash=tx_dict.get('raw_data_hash'),
             institution=tx_dict.get('institution'),
-            original_category=tx_dict.get('original_category')
+            original_category=tx_dict.get('original_category') # This is the crucial field
         )
 
         # Apply the full rule set to the reconstituted transaction object

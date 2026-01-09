@@ -16,14 +16,14 @@ def generate_income_sankey(period: str, exclude_invisible: bool = False) -> Dict
     (PRS Section 2.1.A, 3.1)
 
     Args:
-        period: The time period to analyze (NOTE: Not yet implemented).
+        period: The time period to analyze (e.g., 'all', '2024', '6m').
         exclude_invisible: If True, filters out transactions from accounts
                            marked as not visible.
 
     Returns:
         A dictionary formatted for the Nivo Sankey component.
     """
-    aggregates = get_sankey_aggregates(exclude_invisible=exclude_invisible)
+    aggregates = get_sankey_aggregates(period=period, exclude_invisible=exclude_invisible)
     
     total_income = 0.0
     expense_by_category = defaultdict(float)
@@ -44,35 +44,31 @@ def generate_income_sankey(period: str, exclude_invisible: bool = False) -> Dict
     total_expenses = sum(expense_by_category.values())
     net_surplus = total_income - total_expenses - total_capex
 
-    # --- REVISED: Ordered Sankey Architecture --- #
-    # The order in which nodes are added to the list can influence the
-    # rendering library's layout algorithm. We build the node list in
-    # a deliberate, sorted order instead of alphabetically.
-    
-    nodes_by_id = {}
+    nodes = []
     links = []
 
-    def add_node(node_id):
-        if node_id not in nodes_by_id:
-            nodes_by_id[node_id] = {"id": node_id}
+    # --- NEW: Balanced and Sorted Sankey Architecture --- #
 
-    # 1. Define reserved names to prevent topological loops.
+    # 0. Define reserved names to prevent topological loops.
     RESERVED_NODE_NAMES = {
         "Income", "Available Funds", "Net Surplus", 
         "Net Deficit", "Capital Expenditure", "Other Expenses"
     }
 
-    # 2. Add core nodes and establish balanced inflows.
-    add_node("Available Funds")
+    # 1. Define core source and intermediate distribution nodes.
+    if total_income > 0:
+        nodes.append({"id": "Income"})
+    
+    nodes.append({"id": "Available Funds"})
+
+    # 2. Handle deficit vs. surplus to establish balanced inflows.
     if net_surplus >= 0:
         if total_income > 0:
-            add_node("Income")
             links.append({"source": "Income", "target": "Available Funds", "value": round(total_income, 2)})
     else:
         net_deficit = abs(net_surplus)
-        add_node("Net Deficit")
+        nodes.append({"id": "Net Deficit"})
         if total_income > 0:
-            add_node("Income")
             links.append({"source": "Income", "target": "Available Funds", "value": round(total_income, 2)})
         links.append({"source": "Net Deficit", "target": "Available Funds", "value": round(net_deficit, 2)})
 
@@ -89,6 +85,7 @@ def generate_income_sankey(period: str, exclude_invisible: bool = False) -> Dict
     if total_capex > 0:
         outflows.append(("Capital Expenditure", total_capex))
 
+    # Use top N expense categories and group the rest into "Other Expenses".
     MAX_EXPENSE_CATEGORIES = 6 
     sorted_expenses = sorted(sanitized_expenses.items(), key=lambda item: item[1], reverse=True)
     
@@ -101,12 +98,13 @@ def generate_income_sankey(period: str, exclude_invisible: bool = False) -> Dict
     if other_expenses_total > 0:
         outflows.append(("Other Expenses", other_expenses_total))
 
+    # Sort the master list of outflows by value, descending.
     outflows.sort(key=lambda item: item[1], reverse=True)
 
-    # 5. Create nodes and links from sorted outflows. This adds nodes in the desired order.
+    # 5. Create nodes and links from the sorted outflows.
     for target_node, amount in outflows:
         if amount > 0:
-            add_node(target_node)
+            nodes.append({"id": target_node})
             links.append({"source": "Available Funds", "target": target_node, "value": round(amount, 2)})
 
     # 6. Handle the sub-tier breakout for "Other Expenses", also sorted.
@@ -114,10 +112,12 @@ def generate_income_sankey(period: str, exclude_invisible: bool = False) -> Dict
         other_expenses_list.sort(key=lambda item: item[1], reverse=True)
         for category, amount in other_expenses_list:
             if amount > 0:
-                add_node(category)
+                nodes.append({"id": category})
                 links.append({"source": "Other Expenses", "target": category, "value": round(amount, 2)})
 
-    final_nodes = list(nodes_by_id.values())
+    # 7. Finalize node list, ensuring no duplicates.
+    unique_node_ids = {node['id'] for node in nodes}
+    final_nodes = [{"id": node_id} for node_id in sorted(list(unique_node_ids))]
 
     if not links:
         return {"nodes": [], "links": []}
