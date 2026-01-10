@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import './PortfolioView.css';
 import FilterPanel from './FilterPanel';
 import BarChart from './BarChart';
@@ -37,6 +37,7 @@ const PortfolioView = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [activeFilters, setActiveFilters] = useState({ period: 'all' });
+    const [sortConfig, setSortConfig] = useState(null);
 
     const fetchData = async (filters = activeFilters) => {
         try {
@@ -68,6 +69,44 @@ const PortfolioView = () => {
     useEffect(() => {
         fetchData();
     }, []);
+
+    const sortedHoldings = useMemo(() => {
+        let sortableItems = [...holdings];
+        if (sortConfig !== null) {
+            sortableItems.sort((a, b) => {
+                const valA = a[sortConfig.key];
+                const valB = b[sortConfig.key];
+    
+                if (valA === null || valA === undefined) return 1;
+                if (valB === null || valB === undefined) return -1;
+                
+                if (valA < valB) {
+                    return sortConfig.direction === 'ascending' ? -1 : 1;
+                }
+                if (valA > valB) {
+                    return sortConfig.direction === 'ascending' ? 1 : -1;
+                }
+                return 0;
+            });
+        }
+        return sortableItems;
+    }, [holdings, sortConfig]);
+
+    const requestSort = (key) => {
+        let direction = 'descending';
+        if (sortConfig && sortConfig.key === key && sortConfig.direction === 'descending') {
+            direction = 'ascending';
+        } else if (sortConfig && sortConfig.key === key && sortConfig.direction === 'ascending') {
+            setSortConfig(null);
+            return;
+        }
+        setSortConfig({ key, direction });
+    };
+
+    const getSortIndicator = (key) => {
+        if (!sortConfig || sortConfig.key !== key) return null;
+        return sortConfig.direction === 'ascending' ? '▲' : '▼';
+    };
 
     const handlePanelFilterSubmit = (panelFilters) => {
         const newFilters = { ...panelFilters, period: activeFilters.period };
@@ -129,15 +168,25 @@ const PortfolioView = () => {
                                 <table>
                                     <thead>
                                         <tr>
-                                            <th>Symbol</th>
-                                            <th>Account</th>
-                                            <th>Quantity</th>
-                                            <th>Cost Basis</th>
-                                            <th>Market Value</th>
+                                            <th className="sortable" onClick={() => requestSort('symbol')}>
+                                                Symbol <span className="sort-indicator">{getSortIndicator('symbol')}</span>
+                                            </th>
+                                            <th className="sortable" onClick={() => requestSort('account_id')}>
+                                                Account <span className="sort-indicator">{getSortIndicator('account_id')}</span>
+                                            </th>
+                                            <th className="sortable" onClick={() => requestSort('quantity')}>
+                                                Quantity <span className="sort-indicator">{getSortIndicator('quantity')}</span>
+                                            </th>
+                                            <th className="sortable" onClick={() => requestSort('cost_basis')}>
+                                                Cost Basis <span className="sort-indicator">{getSortIndicator('cost_basis')}</span>
+                                            </th>
+                                            <th className="sortable" onClick={() => requestSort('market_value')}>
+                                                Market Value <span className="sort-indicator">{getSortIndicator('market_value')}</span>
+                                            </th>
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {holdings.map(h => (
+                                        {sortedHoldings.map(h => (
                                             <tr key={h.holding_id}>
                                                 <td>{h.symbol}</td>
                                                 <td>{h.account_id}</td>

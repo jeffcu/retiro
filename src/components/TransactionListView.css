@@ -103,3 +103,20 @@
     color: var(--gold-accent);
     font-weight: bold;
 }
+
+/* --- Sorting Styles --- */
+.table-container th.sortable {
+    cursor: pointer;
+    position: relative;
+    user-select: none; /* prevent text selection on fast clicks */
+}
+
+.table-container th.sortable:hover {
+    background-color: #4a4a4a;
+}
+
+.table-container th .sort-indicator {
+    display: inline-block;
+    margin-left: 8px;
+    color: var(--gold-accent);
+}

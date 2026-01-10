@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import './TransactionListView.css';
 import FilterPanel from './FilterPanel';
 import BarChart from './BarChart';
@@ -32,6 +32,7 @@ const TransactionListView = ({ initialFilters = {} }) => {
     const [activeFilters, setActiveFilters] = useState({ period: 'all', ...initialFilters });
     const [showRuleCreator, setShowRuleCreator] = useState(false);
     const [editingTransaction, setEditingTransaction] = useState(null);
+    const [sortConfig, setSortConfig] = useState(null);
 
     const fetchData = async (filters = activeFilters) => {
         try {
@@ -64,6 +65,44 @@ const TransactionListView = ({ initialFilters = {} }) => {
     useEffect(() => {
         fetchData(activeFilters); // Initial fetch with filters from props/state
     }, []); // This effect runs only once on mount due to the key prop in App.jsx
+
+    const sortedTransactions = useMemo(() => {
+        let sortableItems = [...transactions];
+        if (sortConfig !== null) {
+            sortableItems.sort((a, b) => {
+                const valA = a[sortConfig.key];
+                const valB = b[sortConfig.key];
+
+                if (valA === null || valA === undefined) return 1;
+                if (valB === null || valB === undefined) return -1;
+                
+                if (valA < valB) {
+                    return sortConfig.direction === 'ascending' ? -1 : 1;
+                }
+                if (valA > valB) {
+                    return sortConfig.direction === 'ascending' ? 1 : -1;
+                }
+                return 0;
+            });
+        }
+        return sortableItems;
+    }, [transactions, sortConfig]);
+
+    const requestSort = (key) => {
+        let direction = 'descending';
+        if (sortConfig && sortConfig.key === key && sortConfig.direction === 'descending') {
+            direction = 'ascending';
+        } else if (sortConfig && sortConfig.key === key && sortConfig.direction === 'ascending') {
+            setSortConfig(null);
+            return;
+        }
+        setSortConfig({ key, direction });
+    };
+
+    const getSortIndicator = (key) => {
+        if (!sortConfig || sortConfig.key !== key) return null;
+        return sortConfig.direction === 'ascending' ? '▲' : '▼';
+    };
 
     const handlePanelFilterSubmit = (panelFilters) => {
         const newFilters = { ...panelFilters, period: activeFilters.period };
@@ -101,8 +140,8 @@ const TransactionListView = ({ initialFilters = {} }) => {
     const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
         style: 'currency',
         currency: 'USD',
-        minimumFractionDigits: 2, // Show cents for transaction totals
-        maximumFractionDigits: 2,
+        minimumFractionDigits: 0, // Per request, use round dollars
+        maximumFractionDigits: 0,
     }).format(value || 0);
 
     const formatDate = (dateString) => {
@@ -168,18 +207,34 @@ const TransactionListView = ({ initialFilters = {} }) => {
                         <table>
                             <thead>
                                 <tr>
-                                    <th>Date</th>
-                                    <th>Account</th>
-                                    <th>Institution</th>
-                                    <th>Description</th>
-                                    <th>Cashflow Type</th>
-                                    <th>Category</th>
-                                    <th>Tags</th>
-                                    <th style={{ textAlign: 'right' }}>Amount</th>
+                                    <th className="sortable" onClick={() => requestSort('transaction_date')}>
+                                        Date <span className="sort-indicator">{getSortIndicator('transaction_date')}</span>
+                                    </th>
+                                    <th className="sortable" onClick={() => requestSort('account_id')}>
+                                        Account <span className="sort-indicator">{getSortIndicator('account_id')}</span>
+                                    </th>
+                                    <th className="sortable" onClick={() => requestSort('institution')}>
+                                        Institution <span className="sort-indicator">{getSortIndicator('institution')}</span>
+                                    </th>
+                                    <th className="sortable" onClick={() => requestSort('description')}>
+                                        Description <span className="sort-indicator">{getSortIndicator('description')}</span>
+                                    </th>
+                                    <th className="sortable" onClick={() => requestSort('cashflow_type')}>
+                                        Cashflow Type <span className="sort-indicator">{getSortIndicator('cashflow_type')}</span>
+                                    </th>
+                                    <th className="sortable" onClick={() => requestSort('category')}>
+                                        Category <span className="sort-indicator">{getSortIndicator('category')}</span>
+                                    </th>
+                                    <th className="sortable" onClick={() => requestSort('tags')}>
+                                        Tags <span className="sort-indicator">{getSortIndicator('tags')}</span>
+                                    </th>
+                                    <th className="sortable" onClick={() => requestSort('amount')}>
+                                        Amount <span className="sort-indicator">{getSortIndicator('amount')}</span>
+                                    </th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {transactions.map(t => (
+                                {sortedTransactions.map(t => (
                                     <tr key={t.transaction_id} onDoubleClick={() => setEditingTransaction(t)} style={{cursor: 'pointer'}} title="Double-click to edit">
                                         <td>{formatDate(t.transaction_date)}</td>
                                         <td>{t.account_id}</td>
@@ -188,7 +243,7 @@ const TransactionListView = ({ initialFilters = {} }) => {
                                         <td>{t.cashflow_type}</td>
                                         <td>{t.category}</td>
                                         <td>{t.tags}</td>
-                                        <td style={{ color: t.amount > 0 ? 'var(--gold-accent)' : 'inherit' }}>
+                                        <td style={{ color: t.amount > 0 ? 'var(--gold-accent)' : 'inherit', textAlign: 'right', fontFamily: 'monospace', fontSize: '1.1em' }}>
                                             {formatCurrency(t.amount)}
                                         </td>
                                     </tr>

@@ -40,6 +40,7 @@ const BarChart = ({ data, indexBy, keys, axisLeftLabel, axisBottomLabel }) => {
                     legendOffset: -80,
                     format: formatCurrency
                 }}
+                label={d => formatCurrency(d.value)} // Apply whole-dollar formatting to bar labels
                 labelSkipWidth={12}
                 labelSkipHeight={12}
                 labelTextColor={{ from: 'color', modifiers: [['darker', 1.6]] }}
