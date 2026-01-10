@@ -72,3 +72,34 @@
 .rule-prompt-card button:hover {
     opacity: 0.9;
 }
+
+/* --- NEW Styles for Chart Header & Summary Total --- */
+.chart-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 1rem;
+    margin-bottom: 1rem;
+}
+
+.chart-header h2 {
+    border-bottom: none;
+    padding-bottom: 0;
+    margin: 0;
+}
+
+.total-summary {
+    padding: 1rem;
+    text-align: right;
+    font-size: 1.2em;
+    font-weight: 500;
+    color: #ccc;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 1rem;
+}
+
+.total-summary span {
+    color: var(--gold-accent);
+    font-weight: bold;
+}

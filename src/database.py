@@ -307,16 +307,16 @@ def save_import_run(run_data: Dict[str, Any]):
 
 # --- Data Retrieval --- #
 
-def _build_where_clause(filters: Dict, allowed_fields: List[str]) -> Tuple[str, List[Any]]:
+def _build_where_clause(filters: Dict, allowed_fields: List[str]) -> Tuple[List[str], List[Any]]:
     """Helper to build a dynamic WHERE clause safely."""
     clauses = []
     params = []
 
     if not filters:
-        return "", []
+        return [], []
 
     for key, value in filters.items():
-        if key not in allowed_fields:
+        if key not in allowed_fields or not value:
             continue
         
         if key in ['description', 'tags']:
@@ -326,10 +326,7 @@ def _build_where_clause(filters: Dict, allowed_fields: List[str]) -> Tuple[str, 
             clauses.append(f"{key} = ?")
             params.append(value)
     
-    if not clauses:
-        return "", []
-
-    return f"WHERE {" AND ".join(clauses)}", params
+    return clauses, params
 
 def get_transaction(transaction_id: str) -> Dict[str, Any] | None:
     """Retrieves a single transaction by its ID."""
@@ -341,23 +338,23 @@ def get_transaction(transaction_id: str) -> Dict[str, Any] | None:
     return dict(row) if row else None
 
 def _apply_period_filter_to_query(
-    where_clauses: List[str], params: List[Any], period: str | None
+    where_clauses: List[str], params: List[Any], period: str | None, date_column: str, table_prefix: str = ""
 ):
     """Applies a date range WHERE clause based on a period string."""
     if not period or period == 'all':
         return
     
-    table_prefix = "t." if any("SELECT" in c for c in where_clauses) else ""
+    column_ref = f"{table_prefix}{date_column}" if table_prefix else date_column
 
     if period.isdigit() and len(period) == 4: # Year filter
-        where_clauses.append(f"strftime('%Y', {table_prefix}transaction_date) = ?")
+        where_clauses.append(f"strftime('%Y', {column_ref}) = ?")
         params.append(period)
     elif period == '6m':
-        where_clauses.append(f"{table_prefix}transaction_date >= date('now', '-6 months')")
+        where_clauses.append(f"{column_ref} >= date('now', '-6 months')")
     elif period == '3m':
-        where_clauses.append(f"{table_prefix}transaction_date >= date('now', '-3 months')")
+        where_clauses.append(f"{column_ref} >= date('now', '-3 months')")
     elif period == '1m':
-        where_clauses.append(f"{table_prefix}transaction_date >= date('now', '-1 month')")
+        where_clauses.append(f"{column_ref} >= date('now', '-1 month')")
 
 def get_transactions(filters: Dict[str, Any] = None, exclude_invisible: bool = False) -> List[Dict[str, Any]]:
     """ 
@@ -366,33 +363,29 @@ def get_transactions(filters: Dict[str, Any] = None, exclude_invisible: bool = F
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    base_query = "SELECT * FROM transactions"
+    filters = filters or {}
     where_clauses = []
     params = []
 
     if exclude_invisible:
         where_clauses.append("account_id NOT IN (SELECT account_id FROM account_visibility WHERE is_visible = 0)")
 
-    if filters:
-        period = filters.pop('period', None) # Extract period filter
-        allowed = ['category', 'account_id', 'institution', 'description', 'tags', 'cashflow_type']
-        for key, value in filters.items():
-            if key in allowed:
-                if key in ['description', 'tags']:
-                    where_clauses.append(f"{key} LIKE ?")
-                    params.append(f'%{value}%')
-                else:
-                    where_clauses.append(f"{key} = ?")
-                    params.append(value)
-        
-        _apply_period_filter_to_query(where_clauses, params, period)
+    period = filters.pop('period', None)
+    allowed = ['category', 'account_id', 'institution', 'description', 'tags', 'cashflow_type']
+    
+    field_clauses, field_params = _build_where_clause(filters, allowed)
+    where_clauses.extend(field_clauses)
+    params.extend(field_params)
+    
+    _apply_period_filter_to_query(where_clauses, params, period, date_column='transaction_date')
 
+    query_where = ""
     if where_clauses:
-        base_query += " WHERE " + " AND ".join(where_clauses)
+        query_where = " WHERE " + " AND ".join(where_clauses)
 
-    base_query += " ORDER BY transaction_date DESC"
+    query = f"SELECT * FROM transactions{query_where} ORDER BY transaction_date DESC"
 
-    cursor.execute(base_query, params)
+    cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
@@ -402,10 +395,15 @@ def get_holdings(filters: Dict[str, Any] = None) -> List[Dict[str, Any]]:
     conn = get_db_connection()
     cursor = conn.cursor()
 
+    filters = filters or {}
     allowed_fields = ['account_id', 'symbol']
-    where_clause, params = _build_where_clause(filters, allowed_fields)
+    period = filters.pop('period', None)
 
-    query = f"SELECT * FROM holdings {where_clause} ORDER BY symbol ASC"
+    clauses, params = _build_where_clause(filters, allowed_fields)
+    _apply_period_filter_to_query(clauses, params, period, date_column='last_price_timestamp')
+
+    where_str = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    query = f"SELECT * FROM holdings {where_str} ORDER BY symbol ASC"
     
     cursor.execute(query, params)
     rows = cursor.fetchall()
@@ -471,7 +469,7 @@ def get_sankey_aggregates(period: str, exclude_invisible: bool = False) -> List[
     if exclude_invisible:
         where_clauses.append("t.account_id NOT IN (SELECT account_id FROM account_visibility WHERE is_visible = 0)")
 
-    _apply_period_filter_to_query(where_clauses, params, period)
+    _apply_period_filter_to_query(where_clauses, params, period, date_column='transaction_date', table_prefix='t.')
 
     where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
 
@@ -506,15 +504,12 @@ def get_cashflow_aggregation_by_month(year: int, filters: Dict[str, Any]) -> Lis
     cursor = conn.cursor()
 
     allowed_fields = ['category', 'account_id', 'institution', 'description', 'tags', 'cashflow_type']
-    where_clause, params = _build_where_clause(filters, allowed_fields)
+    clauses, params = _build_where_clause(filters, allowed_fields)
     
-    # Prepend year filter to where clause
-    if where_clause:
-        final_where = f"WHERE strftime('%Y', transaction_date) = ? AND ({where_clause[6:]})"
-    else:
-        final_where = f"WHERE strftime('%Y', transaction_date) = ?"
-
-    final_params = [str(year)] + params
+    clauses.insert(0, "strftime('%Y', transaction_date) = ?")
+    params.insert(0, str(year))
+    
+    where_str = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
     query = f"""
         SELECT 
@@ -522,12 +517,12 @@ def get_cashflow_aggregation_by_month(year: int, filters: Dict[str, Any]) -> Lis
             SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as income,
             SUM(CASE WHEN amount < 0 AND cashflow_type = 'Expense' THEN amount ELSE 0 END) as expense
         FROM transactions
-        {final_where}
+        {where_str}
         GROUP BY month
         ORDER BY month ASC
     """
 
-    cursor.execute(query, final_params)
+    cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
@@ -537,15 +532,21 @@ def get_holdings_aggregation_by_symbol(filters: Dict[str, Any]) -> List[Dict[str
     conn = get_db_connection()
     cursor = conn.cursor()
 
+    filters = filters or {}
     allowed_fields = ['account_id', 'symbol']
-    where_clause, params = _build_where_clause(filters, allowed_fields)
+    period = filters.pop('period', None)
+
+    clauses, params = _build_where_clause(filters, allowed_fields)
+    _apply_period_filter_to_query(clauses, params, period, date_column='last_price_timestamp')
+
+    where_str = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
     query = f"""
         SELECT
             symbol,
             SUM(market_value) as total_market_value
         FROM holdings
-        {where_clause}
+        {where_str}
         GROUP BY symbol
         HAVING total_market_value > 0
         ORDER BY total_market_value DESC

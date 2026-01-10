@@ -9,6 +9,7 @@ const TransactionEditorModal = ({ transaction, onClose, onSave }) => {
         tags: '',
     });
     const [cashflowTypes, setCashflowTypes] = useState([]);
+    const [categories, setCategories] = useState([]);
 
     useEffect(() => {
         if (transaction) {
@@ -22,15 +23,17 @@ const TransactionEditorModal = ({ transaction, onClose, onSave }) => {
     }, [transaction]);
 
     useEffect(() => {
-        // Fetch cashflow types for the dropdown
+        // Fetch options for dropdowns
         const fetchOptions = async () => {
             try {
                 const response = await fetch('/api/filter-options');
-                if (!response.ok) throw new Error('Failed to fetch options');
+                if (!response.ok) throw new Error(`Failed to fetch options: ${response.status}`);
                 const data = await response.json();
+                console.log('TransactionEditorModal: Fetched categories:', data.categories); // Diagnostic log
                 setCashflowTypes(data.cashflowTypes || []);
+                setCategories(data.categories || []);
             } catch (error) {
-                console.error("Couldn't fetch cashflow types:", error);
+                console.error("Couldn't fetch filter options:", error);
             }
         };
         fetchOptions();
@@ -78,7 +81,19 @@ const TransactionEditorModal = ({ transaction, onClose, onSave }) => {
                     <div className="form-grid">
                         <div className="form-group">
                             <label>Category</label>
-                            <input type="text" name="category" value={formData.category} onChange={handleChange} placeholder="e.g., Groceries" />
+                            <input 
+                                type="text" 
+                                name="category" 
+                                value={formData.category} 
+                                onChange={handleChange} 
+                                placeholder="e.g., Groceries"
+                                list="category-options"
+                            />
+                            <datalist id="category-options">
+                                {categories.map(cat => (
+                                    <option key={cat} value={cat} />
+                                ))}
+                            </datalist>
                         </div>
                         <div className="form-group">
                             <label>Cashflow Type</label>

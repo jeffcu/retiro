@@ -230,10 +230,12 @@ def get_transaction_filters(
 def get_holding_filters(
     account_id: Optional[str] = Query(None),
     symbol: Optional[str] = Query(None),
+    period: Optional[str] = Query(None),
 ) -> Dict[str, Any]:
     filters = {
         "account_id": account_id,
-        "symbol": symbol
+        "symbol": symbol,
+        "period": period,
     }
     return {k: v for k, v in filters.items() if v is not None}
 

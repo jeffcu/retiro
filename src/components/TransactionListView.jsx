@@ -3,7 +3,8 @@ import './TransactionListView.css';
 import FilterPanel from './FilterPanel';
 import BarChart from './BarChart';
 import RuleCreator from './RuleCreator';
-import TransactionEditorModal from './TransactionEditorModal'; // Import the new modal
+import TransactionEditorModal from './TransactionEditorModal';
+import TimeFilter from './TimeFilter';
 
 const filterConfig = [
     { id: 'category', label: 'Category', type: 'select', optionsKey: 'categories' },
@@ -28,9 +29,9 @@ const TransactionListView = ({ initialFilters = {} }) => {
     const [chartData, setChartData] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
-    const [activeFilters, setActiveFilters] = useState(initialFilters);
+    const [activeFilters, setActiveFilters] = useState({ period: 'all', ...initialFilters });
     const [showRuleCreator, setShowRuleCreator] = useState(false);
-    const [editingTransaction, setEditingTransaction] = useState(null); // State for the modal
+    const [editingTransaction, setEditingTransaction] = useState(null);
 
     const fetchData = async (filters = activeFilters) => {
         try {
@@ -61,8 +62,18 @@ const TransactionListView = ({ initialFilters = {} }) => {
     };
 
     useEffect(() => {
-        fetchData(initialFilters); // Initial fetch with filters from props
+        fetchData(activeFilters); // Initial fetch with filters from props/state
     }, []); // This effect runs only once on mount due to the key prop in App.jsx
+
+    const handlePanelFilterSubmit = (panelFilters) => {
+        const newFilters = { ...panelFilters, period: activeFilters.period };
+        fetchData(newFilters);
+    };
+
+    const handlePeriodChange = (period) => {
+        const newFilters = { ...activeFilters, period };
+        fetchData(newFilters);
+    };
 
     const handleRuleSave = async () => {
         setShowRuleCreator(false);
@@ -90,8 +101,8 @@ const TransactionListView = ({ initialFilters = {} }) => {
     const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
         style: 'currency',
         currency: 'USD',
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 0,
+        minimumFractionDigits: 2, // Show cents for transaction totals
+        maximumFractionDigits: 2,
     }).format(value || 0);
 
     const formatDate = (dateString) => {
@@ -99,7 +110,8 @@ const TransactionListView = ({ initialFilters = {} }) => {
         return new Date(dateString).toLocaleDateString();
     }
 
-    const hasActiveFilters = Object.values(activeFilters).some(v => v);
+    const sumTotal = transactions.reduce((acc, tx) => acc + parseFloat(tx.amount || 0), 0);
+    const hasActiveFilters = Object.values(activeFilters).some(v => v && v !== 'all');
 
     if (error) return <p>Error loading transactions: {error}</p>;
 
@@ -107,7 +119,7 @@ const TransactionListView = ({ initialFilters = {} }) => {
         <>
             <FilterPanel 
                 config={filterConfig} 
-                onFilterSubmit={fetchData} 
+                onFilterSubmit={handlePanelFilterSubmit} 
                 initialValues={activeFilters}
             />
 
@@ -122,7 +134,16 @@ const TransactionListView = ({ initialFilters = {} }) => {
             )}
 
             <div className="card">
-                <h2>Monthly Summary</h2>
+                <div className="chart-header">
+                    <h2>Monthly Summary</h2>
+                    <TimeFilter 
+                        selectedPeriod={activeFilters.period || 'all'} 
+                        onPeriodChange={handlePeriodChange} 
+                    />
+                </div>
+                <div className="total-summary">
+                    Filtered Total: <span>{formatCurrency(sumTotal)}</span>
+                </div>
                 {loading ? (
                     <p>Loading chart...</p>
                 ) : chartData.length > 0 ? (

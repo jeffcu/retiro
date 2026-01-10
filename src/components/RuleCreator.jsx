@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import './RuleCreator.css';
 
 const RuleCreator = ({ filters, onSave, onCancel }) => {
@@ -7,6 +7,24 @@ const RuleCreator = ({ filters, onSave, onCancel }) => {
         set_cashflow_type: 'Expense',
         add_tags: '',
     });
+    const [categories, setCategories] = useState([]);
+
+    useEffect(() => {
+        const fetchCategories = async () => {
+            try {
+                const response = await fetch('/api/filter-options');
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch categories: ${response.status}`);
+                }
+                const data = await response.json();
+                console.log('RuleCreator: Fetched categories:', data.categories); // Diagnostic log
+                setCategories(data.categories || []);
+            } catch (error) {
+                console.error("Failed to fetch categories for Rule Creator:", error);
+            }
+        };
+        fetchCategories();
+    }, []);
 
     const handleInputChange = (e) => {
         const { name, value } = e.target;
@@ -64,7 +82,20 @@ const RuleCreator = ({ filters, onSave, onCancel }) => {
                  <div className="form-grid">
                     <div className="form-group">
                         <label>Set Category to</label>
-                        <input type="text" name="set_category" value={actionState.set_category} onChange={handleInputChange} placeholder="e.g., Groceries" required />
+                        <input 
+                            type="text" 
+                            name="set_category" 
+                            value={actionState.set_category} 
+                            onChange={handleInputChange} 
+                            placeholder="e.g., Groceries" 
+                            list="rule-creator-category-options"
+                            required
+                        />
+                        <datalist id="rule-creator-category-options">
+                            {categories.map(cat => (
+                                <option key={cat} value={cat} />
+                            ))}
+                        </datalist>
                     </div>
                     <div className="form-group">
                         <label>Set Cashflow Type to</label>

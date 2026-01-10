@@ -1860,16 +1860,16 @@ def save_import_run(run_data: Dict[str, Any]):
 
 # --- Data Retrieval --- #
 
-def _build_where_clause(filters: Dict, allowed_fields: List[str]) -> Tuple[str, List[Any]]:
+def _build_where_clause(filters: Dict, allowed_fields: List[str]) -> Tuple[List[str], List[Any]]:
     """Helper to build a dynamic WHERE clause safely."""
     clauses = []
     params = []
 
     if not filters:
-        return "", []
+        return [], []
 
     for key, value in filters.items():
-        if key not in allowed_fields:
+        if key not in allowed_fields or not value:
             continue
         
         if key in ['description', 'tags']:
@@ -1879,10 +1879,7 @@ def _build_where_clause(filters: Dict, allowed_fields: List[str]) -> Tuple[str, 
             clauses.append(f"{key} = ?")
             params.append(value)
     
-    if not clauses:
-        return "", []
-
-    return f"WHERE {" AND ".join(clauses)}", params
+    return clauses, params
 
 def get_transaction(transaction_id: str) -> Dict[str, Any] | None:
     """Retrieves a single transaction by its ID."""
@@ -1894,23 +1891,23 @@ def get_transaction(transaction_id: str) -> Dict[str, Any] | None:
     return dict(row) if row else None
 
 def _apply_period_filter_to_query(
-    where_clauses: List[str], params: List[Any], period: str | None
+    where_clauses: List[str], params: List[Any], period: str | None, date_column: str, table_prefix: str = ""
 ):
     """Applies a date range WHERE clause based on a period string."""
     if not period or period == 'all':
         return
     
-    table_prefix = "t." if any("SELECT" in c for c in where_clauses) else ""
+    column_ref = f"{table_prefix}{date_column}" if table_prefix else date_column
 
     if period.isdigit() and len(period) == 4: # Year filter
-        where_clauses.append(f"strftime('%Y', {table_prefix}transaction_date) = ?")
+        where_clauses.append(f"strftime('%Y', {column_ref}) = ?")
         params.append(period)
     elif period == '6m':
-        where_clauses.append(f"{table_prefix}transaction_date >= date('now', '-6 months')")
+        where_clauses.append(f"{column_ref} >= date('now', '-6 months')")
     elif period == '3m':
-        where_clauses.append(f"{table_prefix}transaction_date >= date('now', '-3 months')")
+        where_clauses.append(f"{column_ref} >= date('now', '-3 months')")
     elif period == '1m':
-        where_clauses.append(f"{table_prefix}transaction_date >= date('now', '-1 month')")
+        where_clauses.append(f"{column_ref} >= date('now', '-1 month')")
 
 def get_transactions(filters: Dict[str, Any] = None, exclude_invisible: bool = False) -> List[Dict[str, Any]]:
     """ 
@@ -1919,33 +1916,29 @@ def get_transactions(filters: Dict[str, Any] = None, exclude_invisible: bool = F
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    base_query = "SELECT * FROM transactions"
+    filters = filters or {}
     where_clauses = []
     params = []
 
     if exclude_invisible:
         where_clauses.append("account_id NOT IN (SELECT account_id FROM account_visibility WHERE is_visible = 0)")
 
-    if filters:
-        period = filters.pop('period', None) # Extract period filter
-        allowed = ['category', 'account_id', 'institution', 'description', 'tags', 'cashflow_type']
-        for key, value in filters.items():
-            if key in allowed:
-                if key in ['description', 'tags']:
-                    where_clauses.append(f"{key} LIKE ?")
-                    params.append(f'%{value}%')
-                else:
-                    where_clauses.append(f"{key} = ?")
-                    params.append(value)
-        
-        _apply_period_filter_to_query(where_clauses, params, period)
+    period = filters.pop('period', None)
+    allowed = ['category', 'account_id', 'institution', 'description', 'tags', 'cashflow_type']
+    
+    field_clauses, field_params = _build_where_clause(filters, allowed)
+    where_clauses.extend(field_clauses)
+    params.extend(field_params)
+    
+    _apply_period_filter_to_query(where_clauses, params, period, date_column='transaction_date')
 
+    query_where = ""
     if where_clauses:
-        base_query += " WHERE " + " AND ".join(where_clauses)
+        query_where = " WHERE " + " AND ".join(where_clauses)
 
-    base_query += " ORDER BY transaction_date DESC"
+    query = f"SELECT * FROM transactions{query_where} ORDER BY transaction_date DESC"
 
-    cursor.execute(base_query, params)
+    cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
@@ -1955,10 +1948,15 @@ def get_holdings(filters: Dict[str, Any] = None) -> List[Dict[str, Any]]:
     conn = get_db_connection()
     cursor = conn.cursor()
 
+    filters = filters or {}
     allowed_fields = ['account_id', 'symbol']
-    where_clause, params = _build_where_clause(filters, allowed_fields)
+    period = filters.pop('period', None)
 
-    query = f"SELECT * FROM holdings {where_clause} ORDER BY symbol ASC"
+    clauses, params = _build_where_clause(filters, allowed_fields)
+    _apply_period_filter_to_query(clauses, params, period, date_column='last_price_timestamp')
+
+    where_str = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    query = f"SELECT * FROM holdings {where_str} ORDER BY symbol ASC"
     
     cursor.execute(query, params)
     rows = cursor.fetchall()
@@ -2024,7 +2022,7 @@ def get_sankey_aggregates(period: str, exclude_invisible: bool = False) -> List[
     if exclude_invisible:
         where_clauses.append("t.account_id NOT IN (SELECT account_id FROM account_visibility WHERE is_visible = 0)")
 
-    _apply_period_filter_to_query(where_clauses, params, period)
+    _apply_period_filter_to_query(where_clauses, params, period, date_column='transaction_date', table_prefix='t.')
 
     where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
 
@@ -2059,15 +2057,12 @@ def get_cashflow_aggregation_by_month(year: int, filters: Dict[str, Any]) -> Lis
     cursor = conn.cursor()
 
     allowed_fields = ['category', 'account_id', 'institution', 'description', 'tags', 'cashflow_type']
-    where_clause, params = _build_where_clause(filters, allowed_fields)
+    clauses, params = _build_where_clause(filters, allowed_fields)
     
-    # Prepend year filter to where clause
-    if where_clause:
-        final_where = f"WHERE strftime('%Y', transaction_date) = ? AND ({where_clause[6:]})"
-    else:
-        final_where = f"WHERE strftime('%Y', transaction_date) = ?"
-
-    final_params = [str(year)] + params
+    clauses.insert(0, "strftime('%Y', transaction_date) = ?")
+    params.insert(0, str(year))
+    
+    where_str = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
     query = f"""
         SELECT 
@@ -2075,12 +2070,12 @@ def get_cashflow_aggregation_by_month(year: int, filters: Dict[str, Any]) -> Lis
             SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as income,
             SUM(CASE WHEN amount < 0 AND cashflow_type = 'Expense' THEN amount ELSE 0 END) as expense
         FROM transactions
-        {final_where}
+        {where_str}
         GROUP BY month
         ORDER BY month ASC
     """
 
-    cursor.execute(query, final_params)
+    cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
@@ -2090,15 +2085,21 @@ def get_holdings_aggregation_by_symbol(filters: Dict[str, Any]) -> List[Dict[str
     conn = get_db_connection()
     cursor = conn.cursor()
 
+    filters = filters or {}
     allowed_fields = ['account_id', 'symbol']
-    where_clause, params = _build_where_clause(filters, allowed_fields)
+    period = filters.pop('period', None)
+
+    clauses, params = _build_where_clause(filters, allowed_fields)
+    _apply_period_filter_to_query(clauses, params, period, date_column='last_price_timestamp')
+
+    where_str = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
     query = f"""
         SELECT
             symbol,
             SUM(market_value) as total_market_value
         FROM holdings
-        {where_clause}
+        {where_str}
         GROUP BY symbol
         HAVING total_market_value > 0
         ORDER BY total_market_value DESC
@@ -2547,10 +2548,12 @@ def get_transaction_filters(
 def get_holding_filters(
     account_id: Optional[str] = Query(None),
     symbol: Optional[str] = Query(None),
+    period: Optional[str] = Query(None),
 ) -> Dict[str, Any]:
     filters = {
         "account_id": account_id,
-        "symbol": symbol
+        "symbol": symbol,
+        "period": period,
     }
     return {k: v for k, v in filters.items() if v is not None}
 
@@ -3533,7 +3536,7 @@ export default FilterPanel;
     margin: 0;
 }
 
-/* --- NEW Styles for Sankey Chart Header & Time Filter --- */
+/* --- Styles for Sankey Chart Header --- */
 .sankey-header {
     display: flex;
     justify-content: space-between;
@@ -3551,38 +3554,13 @@ export default FilterPanel;
     margin: 0;
 }
 
-.time-filter-container {
-    display: flex;
-    gap: 0.5rem;
-}
-
-.time-filter-btn {
-    background-color: var(--medium-bg);
-    color: var(--text-color);
-    border: 1px solid var(--border-color);
-    padding: 0.4rem 0.8rem;
-    border-radius: 4px;
-    cursor: pointer;
-    font-weight: 500;
-    font-size: 0.85em;
-    transition: background-color 0.2s;
-}
-
-.time-filter-btn:hover {
-    background-color: var(--light-bg);
-}
-
-.time-filter-btn.active {
-    background-color: var(--gold-accent);
-    color: var(--dark-bg);
-    border-color: var(--gold-accent);
-}
 
 --- FILE: projects/trust/src/components/HomeView.jsx ---
 
 import { useState, useEffect } from 'react';
 import SankeyChart from '../SankeyChart';
 import MockSankey from './MockSankey';
+import TimeFilter from './TimeFilter';
 import './HomeView.css';
 
 const NetWorthHero = () => {
@@ -3621,31 +3599,6 @@ const NetWorthHero = () => {
                 {loading ? 'Calculating...' : formatCurrency(netWorth)}
             </p>
             <p className="timestamp">As of latest holdings import</p>
-        </div>
-    );
-};
-
-const TimeFilter = ({ selectedPeriod, onPeriodChange }) => {
-    const periods = [
-        { id: 'all', label: 'All Time' },
-        { id: '2025', label: '2025' },
-        { id: '2024', label: '2024' },
-        { id: '6m', label: 'Last 6 Months' },
-        { id: '3m', label: 'Last 3 Months' },
-        { id: '1m', label: 'Last 1 Month' },
-    ];
-
-    return (
-        <div className="time-filter-container">
-            {periods.map(p => (
-                <button
-                    key={p.id}
-                    className={`time-filter-btn ${selectedPeriod === p.id ? 'active' : ''}`}
-                    onClick={() => onPeriodChange(p.id)}
-                >
-                    {p.label}
-                </button>
-            ))}
         </div>
     );
 };
@@ -3984,6 +3937,178 @@ const PlaceholderView = ({ viewName }) => {
 export default PlaceholderView;
 
 
+--- FILE: projects/trust/src/components/PortfolioView.jsx ---
+
+import { useState, useEffect } from 'react';
+import './PortfolioView.css';
+import FilterPanel from './FilterPanel';
+import BarChart from './BarChart';
+import TimeFilter from './TimeFilter';
+
+const PortfolioSummary = ({ holdings, formatCurrency }) => {
+    const totalMarketValue = holdings.reduce((sum, h) => sum + (h.market_value || 0), 0);
+    const totalCostBasis = holdings.reduce((sum, h) => sum + (h.cost_basis || 0), 0);
+
+    return (
+        <div className="summary-container">
+            <div className="summary-item">
+                <span className="label">Total Holdings</span>
+                <span className="value">{holdings.length}</span>
+            </div>
+            <div className="summary-item">
+                <span className="label">Total Cost Basis</span>
+                <span className="value">{formatCurrency(totalCostBasis)}</span>
+            </div>
+            <div className="summary-item">
+                <span className="label">Total Market Value</span>
+                <span className="value emphasis">{formatCurrency(totalMarketValue)}</span>
+            </div>
+        </div>
+    );
+};
+
+const filterConfig = [
+    { id: 'account_id', label: 'Account', type: 'select', optionsKey: 'accounts' },
+    { id: 'symbol', label: 'Symbol', type: 'text', placeholder: 'e.g., AAPL' },
+];
+
+const PortfolioView = () => {
+    const [holdings, setHoldings] = useState([]);
+    const [chartData, setChartData] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+    const [activeFilters, setActiveFilters] = useState({ period: 'all' });
+
+    const fetchData = async (filters = activeFilters) => {
+        try {
+            setLoading(true);
+            setActiveFilters(filters);
+            const query = new URLSearchParams(filters).toString();
+
+            const [holdingsRes, chartRes] = await Promise.all([
+                fetch(`/api/holdings?${query}`),
+                fetch(`/api/analysis/portfolio-chart?${query}`)
+            ]);
+
+            if (!holdingsRes.ok) throw new Error(`HTTP Error (Holdings): ${holdingsRes.status}`);
+            if (!chartRes.ok) throw new Error(`HTTP Error (Chart): ${chartRes.status}`);
+
+            const holdingsData = await holdingsRes.json();
+            const chartData = await chartRes.json();
+
+            setHoldings(holdingsData);
+            setChartData(chartData);
+        } catch (e) {
+            setError(e.message);
+            console.error("Failed to fetch portfolio data:", e);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchData();
+    }, []);
+
+    const handlePanelFilterSubmit = (panelFilters) => {
+        const newFilters = { ...panelFilters, period: activeFilters.period };
+        fetchData(newFilters);
+    };
+
+    const handlePeriodChange = (period) => {
+        const newFilters = { ...activeFilters, period };
+        fetchData(newFilters);
+    };
+
+    const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
+    }).format(value || 0);
+
+    const totalMarketValue = holdings.reduce((sum, h) => sum + (h.market_value || 0), 0);
+
+    if (error) return <p>Error loading portfolio: {error}</p>;
+
+    return (
+        <>
+            <FilterPanel config={filterConfig} onFilterSubmit={handlePanelFilterSubmit} />
+
+            <div className="card">
+                <div className="chart-header">
+                    <h2>Filtered Results Summary</h2>
+                    <TimeFilter 
+                        selectedPeriod={activeFilters.period || 'all'} 
+                        onPeriodChange={handlePeriodChange} 
+                    />
+                </div>
+                {loading ? (
+                    <p>Loading chart...</p>
+                ) : chartData.length > 0 ? (
+                    <BarChart 
+                        data={chartData}
+                        indexBy="id"
+                        keys={['value']}
+                        axisLeftLabel="Market Value"
+                        axisBottomLabel="Symbol"
+                    />
+                ) : (
+                    <p>No data matches the current filters.</p>
+                )}
+            </div>
+
+            <div className="card">
+                <h2>Holdings Details</h2>
+                {loading ? (
+                    <p>Loading holdings...</p>
+                ) : (
+                    <>
+                        <PortfolioSummary holdings={holdings} formatCurrency={formatCurrency} />
+                        {holdings.length > 0 ? (
+                            <div className="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Symbol</th>
+                                            <th>Account</th>
+                                            <th>Quantity</th>
+                                            <th>Cost Basis</th>
+                                            <th>Market Value</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {holdings.map(h => (
+                                            <tr key={h.holding_id}>
+                                                <td>{h.symbol}</td>
+                                                <td>{h.account_id}</td>
+                                                <td>{h.quantity.toFixed(4)}</td>
+                                                <td>{formatCurrency(h.cost_basis)}</td>
+                                                <td>{formatCurrency(h.market_value)}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                    <tfoot>
+                                        <tr>
+                                            <td colSpan="4">Total Market Value</td>
+                                            <td>{formatCurrency(totalMarketValue)}</td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                            </div>
+                        ) : (
+                            <p>No holdings data found for the current filter. Please import a holdings CSV file or adjust filters.</p>
+                        )}
+                    </>
+                )}
+            </div>
+        </>
+    );
+};
+
+export default PortfolioView;
+
+
 --- FILE: projects/trust/src/components/RuleCreator.css ---
 
 .rule-creator-card {
@@ -4090,7 +4215,7 @@ export default PlaceholderView;
 
 --- FILE: projects/trust/src/components/RuleCreator.jsx ---
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import './RuleCreator.css';
 
 const RuleCreator = ({ filters, onSave, onCancel }) => {
@@ -4099,6 +4224,24 @@ const RuleCreator = ({ filters, onSave, onCancel }) => {
         set_cashflow_type: 'Expense',
         add_tags: '',
     });
+    const [categories, setCategories] = useState([]);
+
+    useEffect(() => {
+        const fetchCategories = async () => {
+            try {
+                const response = await fetch('/api/filter-options');
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch categories: ${response.status}`);
+                }
+                const data = await response.json();
+                console.log('RuleCreator: Fetched categories:', data.categories); // Diagnostic log
+                setCategories(data.categories || []);
+            } catch (error) {
+                console.error("Failed to fetch categories for Rule Creator:", error);
+            }
+        };
+        fetchCategories();
+    }, []);
 
     const handleInputChange = (e) => {
         const { name, value } = e.target;
@@ -4156,7 +4299,20 @@ const RuleCreator = ({ filters, onSave, onCancel }) => {
                  <div className="form-grid">
                     <div className="form-group">
                         <label>Set Category to</label>
-                        <input type="text" name="set_category" value={actionState.set_category} onChange={handleInputChange} placeholder="e.g., Groceries" required />
+                        <input 
+                            type="text" 
+                            name="set_category" 
+                            value={actionState.set_category} 
+                            onChange={handleInputChange} 
+                            placeholder="e.g., Groceries" 
+                            list="rule-creator-category-options"
+                            required
+                        />
+                        <datalist id="rule-creator-category-options">
+                            {categories.map(cat => (
+                                <option key={cat} value={cat} />
+                            ))}
+                        </datalist>
                     </div>
                     <div className="form-group">
                         <label>Set Cashflow Type to</label>
@@ -4364,6 +4520,7 @@ const RulesEditor = () => {
     const [rules, setRules] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [categories, setCategories] = useState([]);
     
     const initialFormState = {
         pattern: '',
@@ -4390,8 +4547,23 @@ const RulesEditor = () => {
         }
     };
 
+    const fetchCategories = async () => {
+        try {
+            const response = await fetch('/api/filter-options');
+            if (!response.ok) {
+                throw new Error(`Failed to fetch categories: ${response.status}`);
+            }
+            const data = await response.json();
+            console.log('RulesEditor: Fetched categories:', data.categories); // Diagnostic log
+            setCategories(data.categories || []);
+        } catch (error) {
+            console.error("Failed to fetch categories for Rules Editor:", error);
+        }
+    };
+
     useEffect(() => {
         fetchRules();
+        fetchCategories();
     }, []);
 
     const handleInputChange = (e) => {
@@ -4420,7 +4592,8 @@ const RulesEditor = () => {
                 const errData = await response.json();
                 throw new Error(errData.detail || 'Failed to create rule');
             }
-            fetchRules();
+            fetchRules(); // Refresh rules list
+            fetchCategories(); // Refresh categories list in case a new one was added
             setFormState(initialFormState);
         } catch (err) {
             alert(`Error creating rule: ${err.message}`);
@@ -4461,7 +4634,20 @@ const RulesEditor = () => {
                 </div>
                 <div className="form-group">
                     <label>THEN set Category to</label>
-                    <input type="text" name="category" value={formState.category} onChange={handleInputChange} placeholder="e.g., Groceries" required />
+                    <input 
+                        type="text" 
+                        name="category" 
+                        value={formState.category} 
+                        onChange={handleInputChange} 
+                        placeholder="e.g., Groceries" 
+                        list="main-rule-category-options"
+                        required 
+                    />
+                    <datalist id="main-rule-category-options">
+                        {categories.map(cat => (
+                            <option key={cat} value={cat} />
+                        ))}
+                    </datalist>
                 </div>
                 <div className="form-group">
                     <label>Set Cashflow Type to</label>
@@ -4653,6 +4839,66 @@ const SideBar = ({ activeView, setActiveView }) => {
 export default SideBar;
 
 
+--- FILE: projects/trust/src/components/TimeFilter.css ---
+
+.time-filter-container {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.time-filter-btn {
+    background-color: var(--medium-bg);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    padding: 0.4rem 0.8rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 500;
+    font-size: 0.85em;
+    transition: background-color 0.2s;
+}
+
+.time-filter-btn:hover {
+    background-color: var(--light-bg);
+}
+
+.time-filter-btn.active {
+    background-color: var(--gold-accent);
+    color: var(--dark-bg);
+    border-color: var(--gold-accent);
+}
+
+--- FILE: projects/trust/src/components/TimeFilter.jsx ---
+
+import './TimeFilter.css';
+
+const TimeFilter = ({ selectedPeriod, onPeriodChange }) => {
+    const periods = [
+        { id: 'all', label: 'All Time' },
+        { id: '2025', label: '2025' },
+        { id: '2024', label: '2024' },
+        { id: '6m', label: 'Last 6 Months' },
+        { id: '3m', label: 'Last 3 Months' },
+        { id: '1m', label: 'Last 1 Month' },
+    ];
+
+    return (
+        <div className="time-filter-container">
+            {periods.map(p => (
+                <button
+                    key={p.id}
+                    className={`time-filter-btn ${selectedPeriod === p.id ? 'active' : ''}`}
+                    onClick={() => onPeriodChange(p.id)}
+                >
+                    {p.label}
+                </button>
+            ))}
+        </div>
+    );
+};
+
+export default TimeFilter;
+
 --- FILE: projects/trust/src/components/TransactionEditorModal.css ---
 
 .modal-overlay {
@@ -4755,6 +5001,7 @@ const TransactionEditorModal = ({ transaction, onClose, onSave }) => {
         tags: '',
     });
     const [cashflowTypes, setCashflowTypes] = useState([]);
+    const [categories, setCategories] = useState([]);
 
     useEffect(() => {
         if (transaction) {
@@ -4768,15 +5015,17 @@ const TransactionEditorModal = ({ transaction, onClose, onSave }) => {
     }, [transaction]);
 
     useEffect(() => {
-        // Fetch cashflow types for the dropdown
+        // Fetch options for dropdowns
         const fetchOptions = async () => {
             try {
                 const response = await fetch('/api/filter-options');
-                if (!response.ok) throw new Error('Failed to fetch options');
+                if (!response.ok) throw new Error(`Failed to fetch options: ${response.status}`);
                 const data = await response.json();
+                console.log('TransactionEditorModal: Fetched categories:', data.categories); // Diagnostic log
                 setCashflowTypes(data.cashflowTypes || []);
+                setCategories(data.categories || []);
             } catch (error) {
-                console.error("Couldn't fetch cashflow types:", error);
+                console.error("Couldn't fetch filter options:", error);
             }
         };
         fetchOptions();
@@ -4824,7 +5073,19 @@ const TransactionEditorModal = ({ transaction, onClose, onSave }) => {
                     <div className="form-grid">
                         <div className="form-group">
                             <label>Category</label>
-                            <input type="text" name="category" value={formData.category} onChange={handleChange} placeholder="e.g., Groceries" />
+                            <input 
+                                type="text" 
+                                name="category" 
+                                value={formData.category} 
+                                onChange={handleChange} 
+                                placeholder="e.g., Groceries"
+                                list="category-options"
+                            />
+                            <datalist id="category-options">
+                                {categories.map(cat => (
+                                    <option key={cat} value={cat} />
+                                ))}
+                            </datalist>
                         </div>
                         <div className="form-group">
                             <label>Cashflow Type</label>
@@ -4929,6 +5190,37 @@ export default TransactionEditorModal;
     opacity: 0.9;
 }
 
+/* --- NEW Styles for Chart Header & Summary Total --- */
+.chart-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 1rem;
+    margin-bottom: 1rem;
+}
+
+.chart-header h2 {
+    border-bottom: none;
+    padding-bottom: 0;
+    margin: 0;
+}
+
+.total-summary {
+    padding: 1rem;
+    text-align: right;
+    font-size: 1.2em;
+    font-weight: 500;
+    color: #ccc;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 1rem;
+}
+
+.total-summary span {
+    color: var(--gold-accent);
+    font-weight: bold;
+}
+
 
 --- FILE: projects/trust/src/components/TransactionListView.jsx ---
 
@@ -4937,7 +5229,8 @@ import './TransactionListView.css';
 import FilterPanel from './FilterPanel';
 import BarChart from './BarChart';
 import RuleCreator from './RuleCreator';
-import TransactionEditorModal from './TransactionEditorModal'; // Import the new modal
+import TransactionEditorModal from './TransactionEditorModal';
+import TimeFilter from './TimeFilter';
 
 const filterConfig = [
     { id: 'category', label: 'Category', type: 'select', optionsKey: 'categories' },
@@ -4962,9 +5255,9 @@ const TransactionListView = ({ initialFilters = {} }) => {
     const [chartData, setChartData] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
-    const [activeFilters, setActiveFilters] = useState(initialFilters);
+    const [activeFilters, setActiveFilters] = useState({ period: 'all', ...initialFilters });
     const [showRuleCreator, setShowRuleCreator] = useState(false);
-    const [editingTransaction, setEditingTransaction] = useState(null); // State for the modal
+    const [editingTransaction, setEditingTransaction] = useState(null);
 
     const fetchData = async (filters = activeFilters) => {
         try {
@@ -4995,8 +5288,18 @@ const TransactionListView = ({ initialFilters = {} }) => {
     };
 
     useEffect(() => {
-        fetchData(initialFilters); // Initial fetch with filters from props
+        fetchData(activeFilters); // Initial fetch with filters from props/state
     }, []); // This effect runs only once on mount due to the key prop in App.jsx
+
+    const handlePanelFilterSubmit = (panelFilters) => {
+        const newFilters = { ...panelFilters, period: activeFilters.period };
+        fetchData(newFilters);
+    };
+
+    const handlePeriodChange = (period) => {
+        const newFilters = { ...activeFilters, period };
+        fetchData(newFilters);
+    };
 
     const handleRuleSave = async () => {
         setShowRuleCreator(false);
@@ -5024,8 +5327,8 @@ const TransactionListView = ({ initialFilters = {} }) => {
     const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
         style: 'currency',
         currency: 'USD',
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 0,
+        minimumFractionDigits: 2, // Show cents for transaction totals
+        maximumFractionDigits: 2,
     }).format(value || 0);
 
     const formatDate = (dateString) => {
@@ -5033,7 +5336,8 @@ const TransactionListView = ({ initialFilters = {} }) => {
         return new Date(dateString).toLocaleDateString();
     }
 
-    const hasActiveFilters = Object.values(activeFilters).some(v => v);
+    const sumTotal = transactions.reduce((acc, tx) => acc + parseFloat(tx.amount || 0), 0);
+    const hasActiveFilters = Object.values(activeFilters).some(v => v && v !== 'all');
 
     if (error) return <p>Error loading transactions: {error}</p>;
 
@@ -5041,7 +5345,7 @@ const TransactionListView = ({ initialFilters = {} }) => {
         <>
             <FilterPanel 
                 config={filterConfig} 
-                onFilterSubmit={fetchData} 
+                onFilterSubmit={handlePanelFilterSubmit} 
                 initialValues={activeFilters}
             />
 
@@ -5056,7 +5360,16 @@ const TransactionListView = ({ initialFilters = {} }) => {
             )}
 
             <div className="card">
-                <h2>Monthly Summary</h2>
+                <div className="chart-header">
+                    <h2>Monthly Summary</h2>
+                    <TimeFilter 
+                        selectedPeriod={activeFilters.period || 'all'} 
+                        onPeriodChange={handlePeriodChange} 
+                    />
+                </div>
+                <div className="total-summary">
+                    Filtered Total: <span>{formatCurrency(sumTotal)}</span>
+                </div>
                 {loading ? (
                     <p>Loading chart...</p>
                 ) : chartData.length > 0 ? (

@@ -5,6 +5,7 @@ const RulesEditor = () => {
     const [rules, setRules] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [categories, setCategories] = useState([]);
     
     const initialFormState = {
         pattern: '',
@@ -31,8 +32,23 @@ const RulesEditor = () => {
         }
     };
 
+    const fetchCategories = async () => {
+        try {
+            const response = await fetch('/api/filter-options');
+            if (!response.ok) {
+                throw new Error(`Failed to fetch categories: ${response.status}`);
+            }
+            const data = await response.json();
+            console.log('RulesEditor: Fetched categories:', data.categories); // Diagnostic log
+            setCategories(data.categories || []);
+        } catch (error) {
+            console.error("Failed to fetch categories for Rules Editor:", error);
+        }
+    };
+
     useEffect(() => {
         fetchRules();
+        fetchCategories();
     }, []);
 
     const handleInputChange = (e) => {
@@ -61,7 +77,8 @@ const RulesEditor = () => {
                 const errData = await response.json();
                 throw new Error(errData.detail || 'Failed to create rule');
             }
-            fetchRules();
+            fetchRules(); // Refresh rules list
+            fetchCategories(); // Refresh categories list in case a new one was added
             setFormState(initialFormState);
         } catch (err) {
             alert(`Error creating rule: ${err.message}`);
@@ -102,7 +119,20 @@ const RulesEditor = () => {
                 </div>
                 <div className="form-group">
                     <label>THEN set Category to</label>
-                    <input type="text" name="category" value={formState.category} onChange={handleInputChange} placeholder="e.g., Groceries" required />
+                    <input 
+                        type="text" 
+                        name="category" 
+                        value={formState.category} 
+                        onChange={handleInputChange} 
+                        placeholder="e.g., Groceries" 
+                        list="main-rule-category-options"
+                        required 
+                    />
+                    <datalist id="main-rule-category-options">
+                        {categories.map(cat => (
+                            <option key={cat} value={cat} />
+                        ))}
+                    </datalist>
                 </div>
                 <div className="form-group">
                     <label>Set Cashflow Type to</label>
