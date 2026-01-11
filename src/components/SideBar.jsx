@@ -23,7 +23,7 @@ const SideBar = ({ activeView, setActiveView }) => {
     return (
         <nav className="sidebar">
             <div className="logo">
-                Curie Trust
+                Trust Financial
             </div>
             <ul>
                 {navItems.map(item => (
