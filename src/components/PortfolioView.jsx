@@ -12,15 +12,15 @@ const PortfolioSummary = ({ holdings, formatCurrency }) => {
     return (
         <div className="summary-container">
             <div className="summary-item">
-                <span className="label">Total Holdings</span>
+                <span className="label">Filtered Holdings</span>
                 <span className="value">{holdings.length}</span>
             </div>
             <div className="summary-item">
-                <span className="label">Total Cost Basis</span>
+                <span className="label">Filtered Cost Basis</span>
                 <span className="value">{formatCurrency(totalCostBasis)}</span>
             </div>
             <div className="summary-item">
-                <span className="label">Total Market Value</span>
+                <span className="label">Filtered Market Value</span>
                 <span className="value emphasis">{formatCurrency(totalMarketValue)}</span>
             </div>
         </div>
@@ -145,9 +145,13 @@ const PortfolioView = () => {
                 initialValues={activeFilters} 
             />
 
+            {!loading && holdings.length > 0 && (
+                <PortfolioSummary holdings={holdings} formatCurrency={formatCurrency} />
+            )}
+
             <div className="card">
                 <div className="chart-header">
-                    <h2>Filtered Results Summary</h2>
+                    <h2>Top Holdings by Market Value</h2>
                     <TimeFilter 
                         selectedPeriod={activeFilters.period || 'all'} 
                         onPeriodChange={handlePeriodChange} 
@@ -174,7 +178,6 @@ const PortfolioView = () => {
                     <p>Loading holdings...</p>
                 ) : (
                     <>
-                        <PortfolioSummary holdings={holdings} formatCurrency={formatCurrency} />
                         {holdings.length > 0 ? (
                             <div className="table-container">
                                 <table>
