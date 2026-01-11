@@ -71,6 +71,9 @@ class TransactionUpdate(BaseModel):
     cashflow_type: Optional[str] = None
     tags: List[str] = []
 
+class HoldingUpdate(BaseModel):
+    tags: List[str] = []
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -230,11 +233,13 @@ def get_transaction_filters(
 def get_holding_filters(
     account_id: Optional[str] = Query(None),
     symbol: Optional[str] = Query(None),
+    tags: Optional[str] = Query(None),
     period: Optional[str] = Query(None),
 ) -> Dict[str, Any]:
     filters = {
         "account_id": account_id,
         "symbol": symbol,
+        "tags": tags,
         "period": period,
     }
     return {k: v for k, v in filters.items() if v is not None}
@@ -298,6 +303,18 @@ async def get_filtered_holdings(filters: Dict[str, Any] = Depends(get_holding_fi
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Failed to retrieve holdings.")
+
+@app.put("/api/holdings/{holding_id}", tags=["Data"])
+async def update_holding(holding_id: str, payload: HoldingUpdate):
+    try:
+        db.update_holding(holding_id, payload.tags)
+        updated_holding = db.get_holding(holding_id)
+        if not updated_holding:
+            raise HTTPException(status_code=404, detail="Holding not found after update.")
+        return updated_holding
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"An internal error occurred: {e}")
 
 
 @app.post("/api/transactions/recategorize", tags=["Processing"])

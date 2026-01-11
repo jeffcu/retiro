@@ -90,6 +90,9 @@ def _ensure_schema(conn: sqlite3.Connection):
     if 'market_value' not in holdings_cols:
         print("--- MIGRATING SCHEMA: Adding 'market_value' to 'holdings'. ---")
         cursor.execute("ALTER TABLE holdings ADD COLUMN market_value REAL;")
+    if 'tags' not in holdings_cols:
+        print("--- MIGRATING SCHEMA: Adding 'tags' to 'holdings'. ---")
+        cursor.execute("ALTER TABLE holdings ADD COLUMN tags TEXT;")
 
     cursor.execute("PRAGMA table_info(transactions)")
     trans_cols = {row[1] for row in cursor.fetchall()}
@@ -251,14 +254,15 @@ def save_holdings_snapshot(holdings: List[Holding], account_id: str):
         # Step 2: Insert the new holdings
         if holdings:
             sql = """INSERT INTO holdings (
-                        holding_id, account_id, symbol, quantity, cost_basis, market_value
-                     ) VALUES (?, ?, ?, ?, ?, ?);"""
+                        holding_id, account_id, symbol, quantity, cost_basis, market_value, tags
+                     ) VALUES (?, ?, ?, ?, ?, ?, ?);"""
             # Note: The `h.account_id` in the holdings list is assumed to be cleaned
             # at the API layer before this function is called.
             data_to_insert = [
                 (
                     h.holding_id, h.account_id, h.symbol, float(h.quantity), float(h.cost_basis),
-                    float(h.market_value) if h.market_value is not None else None
+                    float(h.market_value) if h.market_value is not None else None,
+                    ','.join(h.tags) if h.tags else None
                 ) for h in holdings
             ]
             cursor.executemany(sql, data_to_insert)
@@ -396,7 +400,7 @@ def get_holdings(filters: Dict[str, Any] = None) -> List[Dict[str, Any]]:
     cursor = conn.cursor()
 
     filters = filters or {}
-    allowed_fields = ['account_id', 'symbol']
+    allowed_fields = ['account_id', 'symbol', 'tags']
     period = filters.pop('period', None)
 
     clauses, params = _build_where_clause(filters, allowed_fields)
@@ -408,7 +412,52 @@ def get_holdings(filters: Dict[str, Any] = None) -> List[Dict[str, Any]]:
     cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
-    return [dict(row) for row in rows]
+
+    # Post-process tags from string to list
+    results = []
+    for row in rows:
+        row_dict = dict(row)
+        if row_dict.get('tags'):
+            row_dict['tags'] = [tag.strip() for tag in row_dict['tags'].split(',')]
+        else:
+            row_dict['tags'] = []
+        results.append(row_dict)
+    
+    return results
+
+def get_holding(holding_id: str) -> Dict[str, Any] | None:
+    """Retrieves a single holding by its ID."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM holdings WHERE holding_id = ?", (holding_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return None
+    
+    # Post-process tags from string to list
+    row_dict = dict(row)
+    if row_dict.get('tags'):
+        row_dict['tags'] = [tag.strip() for tag in row_dict['tags'].split(',')]
+    else:
+        row_dict['tags'] = []
+    return row_dict
+
+def update_holding(holding_id: str, tags: List[str]):
+    """Updates the tags for a specific holding."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    tags_str = ','.join(tags) if tags else None
+    try:
+        cursor.execute("UPDATE holdings SET tags = ? WHERE holding_id = ?", (tags_str, holding_id))
+        conn.commit()
+        if cursor.rowcount == 0:
+            print(f"Warning: Attempted to update holding {holding_id}, but no record was found.")
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
 
 
 def get_all_import_runs() -> List[Dict[str, Any]]:
@@ -533,7 +582,7 @@ def get_holdings_aggregation_by_symbol(filters: Dict[str, Any]) -> List[Dict[str
     cursor = conn.cursor()
 
     filters = filters or {}
-    allowed_fields = ['account_id', 'symbol']
+    allowed_fields = ['account_id', 'symbol', 'tags']
     period = filters.pop('period', None)
 
     clauses, params = _build_where_clause(filters, allowed_fields)

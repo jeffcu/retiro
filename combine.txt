@@ -918,7 +918,7 @@ h2 {
 import { useState } from 'react';
 import SideBar from './components/SideBar';
 import HomeView from './components/HomeView';
-import PortfolioView from './PortfolioView';
+import PortfolioView from './components/PortfolioView';
 import DataImportView from './components/DataImportView';
 import PlaceholderView from './components/PlaceholderView';
 import TransactionListView from './components/TransactionListView';
@@ -969,261 +969,6 @@ function App() {
 }
 
 export default App;
-
-
---- FILE: projects/trust/src/PortfolioView.css ---
-
-.summary-container {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 1.5rem;
-    padding: 1rem;
-    background-color: var(--dark-bg);
-    border: 1px solid var(--border-color);
-    border-radius: 6px;
-    margin-bottom: 2rem;
-}
-
-.summary-item {
-    display: flex;
-    flex-direction: column;
-}
-
-.summary-item .label {
-    font-size: 0.9em;
-    color: #aaa;
-    margin-bottom: 0.25rem;
-}
-
-.summary-item .value {
-    font-size: 1.8em;
-    font-weight: bold;
-    color: #fff;
-}
-
-.summary-item .value.emphasis {
-    color: var(--gold-accent);
-}
-
-.table-container {
-    margin-top: 1rem;
-    max-height: 600px;
-    overflow-y: auto;
-    border: 1px solid var(--border-color);
-    border-radius: 4px;
-    text-align: left;
-}
-
-.table-container table {
-    width: 100%;
-    border-collapse: collapse;
-}
-
-.table-container th, .table-container td {
-    padding: 8px 12px;
-    border-bottom: 1px solid var(--border-color);
-    text-align: left;
-}
-
-.table-container td:nth-child(3), 
-.table-container td:nth-child(4),
-.table-container td:nth-child(5) {
-    text-align: right;
-}
-
-.table-container thead th {
-    background-color: var(--light-bg);
-    position: sticky;
-    top: 0;
-    z-index: 1;
-}
-
-.table-container tbody tr:nth-child(even) {
-    background-color: var(--dark-bg);
-}
-
-.table-container tbody tr:hover {
-    background-color: #4a4a4a;
-}
-
-.table-container tfoot tr {
-    background-color: var(--light-bg);
-    font-weight: bold;
-}
-
-.table-container tfoot td:first-child {
-    text-align: right;
-}
-
-/* --- Sorting Styles --- */
-.table-container th.sortable {
-    cursor: pointer;
-    position: relative;
-    user-select: none; /* prevent text selection on fast clicks */
-}
-
-.table-container th.sortable:hover {
-    background-color: #4a4a4a;
-}
-
-.table-container th .sort-indicator {
-    display: inline-block;
-    margin-left: 8px;
-    color: var(--gold-accent);
-}
-
-
---- FILE: projects/trust/src/PortfolioView.jsx ---
-
-import { useState, useEffect } from 'react';
-import './PortfolioView.css';
-import FilterPanel from './components/FilterPanel';
-import BarChart from './components/BarChart';
-
-const PortfolioSummary = ({ holdings, formatCurrency }) => {
-    const totalMarketValue = holdings.reduce((sum, h) => sum + (h.market_value || 0), 0);
-    const totalCostBasis = holdings.reduce((sum, h) => sum + (h.cost_basis || 0), 0);
-
-    return (
-        <div className="summary-container">
-            <div className="summary-item">
-                <span className="label">Total Holdings</span>
-                <span className="value">{holdings.length}</span>
-            </div>
-            <div className="summary-item">
-                <span className="label">Total Cost Basis</span>
-                <span className="value">{formatCurrency(totalCostBasis)}</span>
-            </div>
-            <div className="summary-item">
-                <span className="label">Total Market Value</span>
-                <span className="value emphasis">{formatCurrency(totalMarketValue)}</span>
-            </div>
-        </div>
-    );
-};
-
-const filterConfig = [
-    { id: 'account_id', label: 'Account', type: 'select', optionsKey: 'accounts' },
-    { id: 'symbol', label: 'Symbol', type: 'text', placeholder: 'e.g., AAPL' },
-];
-
-const PortfolioView = () => {
-    const [holdings, setHoldings] = useState([]);
-    const [chartData, setChartData] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(null);
-
-    const fetchData = async (filters = {}) => {
-        try {
-            setLoading(true);
-            const query = new URLSearchParams(filters).toString();
-
-            const [holdingsRes, chartRes] = await Promise.all([
-                fetch(`/api/holdings?${query}`),
-                fetch(`/api/analysis/portfolio-chart?${query}`)
-            ]);
-
-            if (!holdingsRes.ok) throw new Error(`HTTP Error (Holdings): ${holdingsRes.status}`);
-            if (!chartRes.ok) throw new Error(`HTTP Error (Chart): ${chartRes.status}`);
-
-            const holdingsData = await holdingsRes.json();
-            const chartData = await chartRes.json();
-
-            setHoldings(holdingsData);
-            setChartData(chartData);
-        } catch (e) {
-            setError(e.message);
-            console.error("Failed to fetch portfolio data:", e);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    useEffect(() => {
-        fetchData();
-    }, []);
-
-    const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
-        style: 'currency',
-        currency: 'USD',
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 0,
-    }).format(value || 0);
-
-    const totalMarketValue = holdings.reduce((sum, h) => sum + (h.market_value || 0), 0);
-
-    if (error) return <p>Error loading portfolio: {error}</p>;
-
-    return (
-        <>
-            <FilterPanel config={filterConfig} onFilterSubmit={fetchData} />
-
-            <div className="card">
-                <h2>Filtered Results Summary</h2>
-                {loading ? (
-                    <p>Loading chart...</p>
-                ) : chartData.length > 0 ? (
-                    <BarChart 
-                        data={chartData}
-                        indexBy="id"
-                        keys={['value']}
-                        axisLeftLabel="Market Value"
-                        axisBottomLabel="Symbol"
-                    />
-                ) : (
-                    <p>No data matches the current filters.</p>
-                )}
-            </div>
-
-            <div className="card">
-                <h2>Holdings Details</h2>
-                {loading ? (
-                    <p>Loading holdings...</p>
-                ) : (
-                    <>
-                        <PortfolioSummary holdings={holdings} formatCurrency={formatCurrency} />
-                        {holdings.length > 0 ? (
-                            <div className="table-container">
-                                <table>
-                                    <thead>
-                                        <tr>
-                                            <th>Symbol</th>
-                                            <th>Account</th>
-                                            <th>Quantity</th>
-                                            <th>Cost Basis</th>
-                                            <th>Market Value</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {holdings.map(h => (
-                                            <tr key={h.holding_id}>
-                                                <td>{h.symbol}</td>
-                                                <td>{h.account_id}</td>
-                                                <td>{h.quantity.toFixed(4)}</td>
-                                                <td>{formatCurrency(h.cost_basis)}</td>
-                                                <td>{formatCurrency(h.market_value)}</td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                    <tfoot>
-                                        <tr>
-                                            <td colSpan="4">Total Market Value</td>
-                                            <td>{formatCurrency(totalMarketValue)}</td>
-                                        </tr>
-                                    </tfoot>
-                                </table>
-                            </div>
-                        ) : (
-                            <p>No holdings data found for the current filter. Please import a holdings CSV file or adjust filters.</p>
-                        )}
-                    </>
-                )}
-            </div>
-        </>
-    );
-};
-
-export default PortfolioView;
 
 
 --- FILE: projects/trust/src/SankeyChart.jsx ---
@@ -1559,10 +1304,10 @@ class Holding:
     symbol: str
     quantity: Decimal
     cost_basis: Decimal
-    # UPDATED for Phase 4.5: Added market_value, populated from CSV or API
     market_value: Decimal | None = None
     last_price: Decimal | None = None
     last_price_timestamp: datetime | None = None
+    tags: list[str] = field(default_factory=list)
 
 
 --- FILE: projects/trust/src/database.py ---
@@ -1659,6 +1404,9 @@ def _ensure_schema(conn: sqlite3.Connection):
     if 'market_value' not in holdings_cols:
         print("--- MIGRATING SCHEMA: Adding 'market_value' to 'holdings'. ---")
         cursor.execute("ALTER TABLE holdings ADD COLUMN market_value REAL;")
+    if 'tags' not in holdings_cols:
+        print("--- MIGRATING SCHEMA: Adding 'tags' to 'holdings'. ---")
+        cursor.execute("ALTER TABLE holdings ADD COLUMN tags TEXT;")
 
     cursor.execute("PRAGMA table_info(transactions)")
     trans_cols = {row[1] for row in cursor.fetchall()}
@@ -1820,14 +1568,15 @@ def save_holdings_snapshot(holdings: List[Holding], account_id: str):
         # Step 2: Insert the new holdings
         if holdings:
             sql = """INSERT INTO holdings (
-                        holding_id, account_id, symbol, quantity, cost_basis, market_value
-                     ) VALUES (?, ?, ?, ?, ?, ?);"""
+                        holding_id, account_id, symbol, quantity, cost_basis, market_value, tags
+                     ) VALUES (?, ?, ?, ?, ?, ?, ?);"""
             # Note: The `h.account_id` in the holdings list is assumed to be cleaned
             # at the API layer before this function is called.
             data_to_insert = [
                 (
                     h.holding_id, h.account_id, h.symbol, float(h.quantity), float(h.cost_basis),
-                    float(h.market_value) if h.market_value is not None else None
+                    float(h.market_value) if h.market_value is not None else None,
+                    ','.join(h.tags) if h.tags else None
                 ) for h in holdings
             ]
             cursor.executemany(sql, data_to_insert)
@@ -1965,7 +1714,7 @@ def get_holdings(filters: Dict[str, Any] = None) -> List[Dict[str, Any]]:
     cursor = conn.cursor()
 
     filters = filters or {}
-    allowed_fields = ['account_id', 'symbol']
+    allowed_fields = ['account_id', 'symbol', 'tags']
     period = filters.pop('period', None)
 
     clauses, params = _build_where_clause(filters, allowed_fields)
@@ -1977,7 +1726,52 @@ def get_holdings(filters: Dict[str, Any] = None) -> List[Dict[str, Any]]:
     cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
-    return [dict(row) for row in rows]
+
+    # Post-process tags from string to list
+    results = []
+    for row in rows:
+        row_dict = dict(row)
+        if row_dict.get('tags'):
+            row_dict['tags'] = [tag.strip() for tag in row_dict['tags'].split(',')]
+        else:
+            row_dict['tags'] = []
+        results.append(row_dict)
+    
+    return results
+
+def get_holding(holding_id: str) -> Dict[str, Any] | None:
+    """Retrieves a single holding by its ID."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM holdings WHERE holding_id = ?", (holding_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return None
+    
+    # Post-process tags from string to list
+    row_dict = dict(row)
+    if row_dict.get('tags'):
+        row_dict['tags'] = [tag.strip() for tag in row_dict['tags'].split(',')]
+    else:
+        row_dict['tags'] = []
+    return row_dict
+
+def update_holding(holding_id: str, tags: List[str]):
+    """Updates the tags for a specific holding."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    tags_str = ','.join(tags) if tags else None
+    try:
+        cursor.execute("UPDATE holdings SET tags = ? WHERE holding_id = ?", (tags_str, holding_id))
+        conn.commit()
+        if cursor.rowcount == 0:
+            print(f"Warning: Attempted to update holding {holding_id}, but no record was found.")
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
 
 
 def get_all_import_runs() -> List[Dict[str, Any]]:
@@ -2102,7 +1896,7 @@ def get_holdings_aggregation_by_symbol(filters: Dict[str, Any]) -> List[Dict[str
     cursor = conn.cursor()
 
     filters = filters or {}
-    allowed_fields = ['account_id', 'symbol']
+    allowed_fields = ['account_id', 'symbol', 'tags']
     period = filters.pop('period', None)
 
     clauses, params = _build_where_clause(filters, allowed_fields)
@@ -2405,6 +2199,9 @@ class TransactionUpdate(BaseModel):
     cashflow_type: Optional[str] = None
     tags: List[str] = []
 
+class HoldingUpdate(BaseModel):
+    tags: List[str] = []
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -2564,11 +2361,13 @@ def get_transaction_filters(
 def get_holding_filters(
     account_id: Optional[str] = Query(None),
     symbol: Optional[str] = Query(None),
+    tags: Optional[str] = Query(None),
     period: Optional[str] = Query(None),
 ) -> Dict[str, Any]:
     filters = {
         "account_id": account_id,
         "symbol": symbol,
+        "tags": tags,
         "period": period,
     }
     return {k: v for k, v in filters.items() if v is not None}
@@ -2632,6 +2431,18 @@ async def get_filtered_holdings(filters: Dict[str, Any] = Depends(get_holding_fi
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Failed to retrieve holdings.")
+
+@app.put("/api/holdings/{holding_id}", tags=["Data"])
+async def update_holding(holding_id: str, payload: HoldingUpdate):
+    try:
+        db.update_holding(holding_id, payload.tags)
+        updated_holding = db.get_holding(holding_id)
+        if not updated_holding:
+            raise HTTPException(status_code=404, detail="Holding not found after update.")
+        return updated_holding
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"An internal error occurred: {e}")
 
 
 @app.post("/api/transactions/recategorize", tags=["Processing"])
@@ -2973,6 +2784,7 @@ const BarChart = ({ data, indexBy, keys, axisLeftLabel, axisBottomLabel }) => {
                     legendOffset: -80,
                     format: formatCurrency
                 }}
+                label={d => formatCurrency(d.value)} // Apply whole-dollar formatting to bar labels
                 labelSkipWidth={12}
                 labelSkipHeight={12}
                 labelTextColor={{ from: 'color', modifiers: [['darker', 1.6]] }}
@@ -3517,6 +3329,90 @@ const FilterPanel = ({ config, onFilterSubmit, initialValues = {} }) => {
 export default FilterPanel;
 
 
+--- FILE: projects/trust/src/components/HoldingEditorModal.css ---
+
+/* Using the same styles as TransactionEditorModal for consistency */
+@import url('./TransactionEditorModal.css');
+
+.modal-content p {
+    margin-top: -1rem;
+    margin-bottom: 1.5rem;
+    color: #ccc;
+    font-size: 0.9em;
+}
+
+.modal-content p strong {
+    color: #fff;
+}
+
+--- FILE: projects/trust/src/components/HoldingEditorModal.jsx ---
+
+import { useState, useEffect } from 'react';
+import './HoldingEditorModal.css'; // Re-using the same modal styles for consistency
+
+const HoldingEditorModal = ({ holding, onClose, onSave }) => {
+    const [tags, setTags] = useState('');
+
+    useEffect(() => {
+        if (holding) {
+            setTags(Array.isArray(holding.tags) ? holding.tags.join(', ') : '');
+        }
+    }, [holding]);
+
+    const handleSave = async (e) => {
+        e.preventDefault();
+        const updatePayload = {
+            tags: tags.split(',').map(t => t.trim()).filter(Boolean),
+        };
+
+        try {
+            const response = await fetch(`/api/holdings/${holding.holding_id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(updatePayload),
+            });
+            if (!response.ok) {
+                const errData = await response.json();
+                throw new Error(errData.detail || 'Failed to update holding');
+            }
+            onSave(); // This will trigger a refresh and close the modal
+        } catch (err) {
+            alert(`Error: ${err.message}`);
+        }
+    };
+
+    if (!holding) return null;
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+                <h2>Edit Tags for {holding.symbol}</h2>
+                <p><strong>Account:</strong> {holding.account_id}</p>
+                <form onSubmit={handleSave} className="modal-form">
+                    <div className="form-group full-width">
+                        <label>Tags (comma-separated)</label>
+                        <input 
+                            type="text" 
+                            name="tags" 
+                            value={tags} 
+                            onChange={(e) => setTags(e.target.value)} 
+                            placeholder="e.g., core, speculative"
+                            autoFocus
+                        />
+                    </div>
+                    <div className="modal-actions">
+                        <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
+                        <button type="submit" className="btn-primary">Save Changes</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    );
+};
+
+export default HoldingEditorModal;
+
+
 --- FILE: projects/trust/src/components/HomeView.css ---
 
 .net-worth-hero {
@@ -3953,6 +3849,110 @@ const PlaceholderView = ({ viewName }) => {
 export default PlaceholderView;
 
 
+--- FILE: projects/trust/src/components/PortfolioView.css ---
+
+.summary-container {
+    display: flex;
+    gap: 2rem;
+    padding: 1rem;
+    background-color: var(--light-bg);
+    border-radius: 6px;
+    margin-bottom: 2rem;
+}
+
+.summary-item {
+    display: flex;
+    flex-direction: column;
+}
+
+.summary-item .label {
+    font-size: 0.9em;
+    color: #ccc;
+    margin-bottom: 0.25rem;
+}
+
+.summary-item .value {
+    font-size: 1.8em;
+    font-weight: 500;
+    color: var(--text-color);
+}
+
+.summary-item .value.emphasis {
+    color: var(--gold-accent);
+    font-weight: bold;
+}
+
+.chart-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 1rem;
+    margin-bottom: 1rem;
+}
+
+.chart-header h2 {
+    border-bottom: none;
+    padding-bottom: 0;
+    margin: 0;
+}
+
+.table-container {
+    margin-top: 1rem;
+    max-height: 70vh;
+    overflow: auto;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+}
+
+.table-container table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.table-container th, 
+.table-container td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color);
+    text-align: left;
+    white-space: nowrap;
+}
+
+.table-container td:nth-last-child(-n+3) { /* Align numeric columns to the right */
+    text-align: right;
+}
+
+.table-container th.sortable {
+    cursor: pointer;
+    user-select: none;
+}
+
+.table-container th.sortable:hover {
+    background-color: #4a4a4a;
+}
+
+.table-container th .sort-indicator {
+    display: inline-block;
+    margin-left: 8px;
+    color: var(--gold-accent);
+}
+
+.table-container tbody tr:hover {
+    background-color: #4a4a4a;
+}
+
+.table-container tfoot td {
+    font-weight: bold;
+    background-color: var(--light-bg);
+}
+
+.table-container tfoot td:last-child {
+    text-align: right;
+    font-family: monospace;
+    font-size: 1.1em;
+}
+
+
 --- FILE: projects/trust/src/components/PortfolioView.jsx ---
 
 import { useState, useEffect, useMemo } from 'react';
@@ -3960,6 +3960,7 @@ import './PortfolioView.css';
 import FilterPanel from './FilterPanel';
 import BarChart from './BarChart';
 import TimeFilter from './TimeFilter';
+import HoldingEditorModal from './HoldingEditorModal';
 
 const PortfolioSummary = ({ holdings, formatCurrency }) => {
     const totalMarketValue = holdings.reduce((sum, h) => sum + (h.market_value || 0), 0);
@@ -3986,6 +3987,7 @@ const PortfolioSummary = ({ holdings, formatCurrency }) => {
 const filterConfig = [
     { id: 'account_id', label: 'Account', type: 'select', optionsKey: 'accounts' },
     { id: 'symbol', label: 'Symbol', type: 'text', placeholder: 'e.g., AAPL' },
+    { id: 'tags', label: 'Tag Contains', type: 'text', placeholder: 'e.g., ESG' },
 ];
 
 const PortfolioView = () => {
@@ -3995,6 +3997,7 @@ const PortfolioView = () => {
     const [error, setError] = useState(null);
     const [activeFilters, setActiveFilters] = useState({ period: 'all' });
     const [sortConfig, setSortConfig] = useState(null);
+    const [editingHolding, setEditingHolding] = useState(null);
 
     const fetchData = async (filters = activeFilters) => {
         try {
@@ -4075,6 +4078,11 @@ const PortfolioView = () => {
         fetchData(newFilters);
     };
 
+    const handleHoldingSave = () => {
+        setEditingHolding(null); // Close modal
+        fetchData(activeFilters); // Refresh data
+    };
+
     const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
         style: 'currency',
         currency: 'USD',
@@ -4088,7 +4096,11 @@ const PortfolioView = () => {
 
     return (
         <>
-            <FilterPanel config={filterConfig} onFilterSubmit={handlePanelFilterSubmit} />
+            <FilterPanel 
+                config={filterConfig} 
+                onFilterSubmit={handlePanelFilterSubmit} 
+                initialValues={activeFilters} 
+            />
 
             <div className="card">
                 <div className="chart-header">
@@ -4131,6 +4143,9 @@ const PortfolioView = () => {
                                             <th className="sortable" onClick={() => requestSort('account_id')}>
                                                 Account <span className="sort-indicator">{getSortIndicator('account_id')}</span>
                                             </th>
+                                            <th className="sortable" onClick={() => requestSort('tags')}>
+                                                Tags <span className="sort-indicator">{getSortIndicator('tags')}</span>
+                                            </th>
                                             <th className="sortable" onClick={() => requestSort('quantity')}>
                                                 Quantity <span className="sort-indicator">{getSortIndicator('quantity')}</span>
                                             </th>
@@ -4144,9 +4159,15 @@ const PortfolioView = () => {
                                     </thead>
                                     <tbody>
                                         {sortedHoldings.map(h => (
-                                            <tr key={h.holding_id}>
+                                            <tr 
+                                                key={h.holding_id} 
+                                                onDoubleClick={() => setEditingHolding(h)}
+                                                style={{cursor: 'pointer'}}
+                                                title="Double-click to edit tags"
+                                            >
                                                 <td>{h.symbol}</td>
                                                 <td>{h.account_id}</td>
+                                                <td>{h.tags ? h.tags.join(', ') : ''}</td>
                                                 <td>{h.quantity.toFixed(4)}</td>
                                                 <td>{formatCurrency(h.cost_basis)}</td>
                                                 <td>{formatCurrency(h.market_value)}</td>
@@ -4155,7 +4176,7 @@ const PortfolioView = () => {
                                     </tbody>
                                     <tfoot>
                                         <tr>
-                                            <td colSpan="4">Total Market Value</td>
+                                            <td colSpan="5">Total Market Value</td>
                                             <td>{formatCurrency(totalMarketValue)}</td>
                                         </tr>
                                     </tfoot>
@@ -4167,6 +4188,14 @@ const PortfolioView = () => {
                     </>
                 )}
             </div>
+
+            {editingHolding && (
+                <HoldingEditorModal
+                    holding={editingHolding}
+                    onClose={() => setEditingHolding(null)}
+                    onSave={handleHoldingSave}
+                />
+            )}
         </>
     );
 };
@@ -5862,6 +5891,7 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Hold
         'quantity': ['quantity', 'shares', 'units'],
         'cost_basis': ['costbasis', 'cost', 'totalcost', 'costbasis($)'],
         'market_value': ['marketvalue', 'value', 'totalvalue', 'value($)'],
+        'tags': ['tags', 'group', 'category'],
     }
 
     header_map = {}
@@ -5921,6 +5951,11 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Hold
         if market_value_key and row.get(market_value_key):
             market_value = _clean_decimal(row.get(market_value_key), row_num, 'market_value', warnings)
 
+        tags = []
+        tags_key = header_map.get('tags')
+        if tags_key and row.get(tags_key):
+            tags = [t.strip() for t in row[tags_key].split(',') if t.strip()]
+
         # --- AGGREGATION LOGIC ---
         if symbol in holdings_map:
             # Aggregate data for the existing symbol
@@ -5931,6 +5966,9 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Hold
                 existing_holding.market_value += market_value
             elif market_value is not None:
                 existing_holding.market_value = market_value
+            
+            # Merge tags, ensuring uniqueness
+            existing_holding.tags = list(set(existing_holding.tags) | set(tags))
             
             warnings.append({
                 "row_number": row_num,
@@ -5949,7 +5987,8 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Hold
                 symbol=symbol,
                 quantity=quantity,
                 cost_basis=cost_basis,
-                market_value=market_value
+                market_value=market_value,
+                tags=tags
             )
 
     holdings = list(holdings_map.values())

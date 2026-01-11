@@ -1,0 +1,100 @@
+.summary-container {
+    display: flex;
+    gap: 2rem;
+    padding: 1rem;
+    background-color: var(--light-bg);
+    border-radius: 6px;
+    margin-bottom: 2rem;
+}
+
+.summary-item {
+    display: flex;
+    flex-direction: column;
+}
+
+.summary-item .label {
+    font-size: 0.9em;
+    color: #ccc;
+    margin-bottom: 0.25rem;
+}
+
+.summary-item .value {
+    font-size: 1.8em;
+    font-weight: 500;
+    color: var(--text-color);
+}
+
+.summary-item .value.emphasis {
+    color: var(--gold-accent);
+    font-weight: bold;
+}
+
+.chart-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 1rem;
+    margin-bottom: 1rem;
+}
+
+.chart-header h2 {
+    border-bottom: none;
+    padding-bottom: 0;
+    margin: 0;
+}
+
+.table-container {
+    margin-top: 1rem;
+    max-height: 70vh;
+    overflow: auto;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+}
+
+.table-container table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.table-container th, 
+.table-container td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color);
+    text-align: left;
+    white-space: nowrap;
+}
+
+.table-container td:nth-last-child(-n+3) { /* Align numeric columns to the right */
+    text-align: right;
+}
+
+.table-container th.sortable {
+    cursor: pointer;
+    user-select: none;
+}
+
+.table-container th.sortable:hover {
+    background-color: #4a4a4a;
+}
+
+.table-container th .sort-indicator {
+    display: inline-block;
+    margin-left: 8px;
+    color: var(--gold-accent);
+}
+
+.table-container tbody tr:hover {
+    background-color: #4a4a4a;
+}
+
+.table-container tfoot td {
+    font-weight: bold;
+    background-color: var(--light-bg);
+}
+
+.table-container tfoot td:last-child {
+    text-align: right;
+    font-family: monospace;
+    font-size: 1.1em;
+}

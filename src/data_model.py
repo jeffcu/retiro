@@ -63,7 +63,7 @@ class Holding:
     symbol: str
     quantity: Decimal
     cost_basis: Decimal
-    # UPDATED for Phase 4.5: Added market_value, populated from CSV or API
     market_value: Decimal | None = None
     last_price: Decimal | None = None
     last_price_timestamp: datetime | None = None
+    tags: list[str] = field(default_factory=list)

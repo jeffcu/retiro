@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import SideBar from './components/SideBar';
 import HomeView from './components/HomeView';
-import PortfolioView from './PortfolioView';
+import PortfolioView from './components/PortfolioView';
 import DataImportView from './components/DataImportView';
 import PlaceholderView from './components/PlaceholderView';
 import TransactionListView from './components/TransactionListView';

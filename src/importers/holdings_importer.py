@@ -59,6 +59,7 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Hold
         'quantity': ['quantity', 'shares', 'units'],
         'cost_basis': ['costbasis', 'cost', 'totalcost', 'costbasis($)'],
         'market_value': ['marketvalue', 'value', 'totalvalue', 'value($)'],
+        'tags': ['tags', 'group', 'category'],
     }
 
     header_map = {}
@@ -118,6 +119,11 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Hold
         if market_value_key and row.get(market_value_key):
             market_value = _clean_decimal(row.get(market_value_key), row_num, 'market_value', warnings)
 
+        tags = []
+        tags_key = header_map.get('tags')
+        if tags_key and row.get(tags_key):
+            tags = [t.strip() for t in row[tags_key].split(',') if t.strip()]
+
         # --- AGGREGATION LOGIC ---
         if symbol in holdings_map:
             # Aggregate data for the existing symbol
@@ -128,6 +134,9 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Hold
                 existing_holding.market_value += market_value
             elif market_value is not None:
                 existing_holding.market_value = market_value
+            
+            # Merge tags, ensuring uniqueness
+            existing_holding.tags = list(set(existing_holding.tags) | set(tags))
             
             warnings.append({
                 "row_number": row_num,
@@ -146,7 +155,8 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Hold
                 symbol=symbol,
                 quantity=quantity,
                 cost_basis=cost_basis,
-                market_value=market_value
+                market_value=market_value,
+                tags=tags
             )
 
     holdings = list(holdings_map.values())

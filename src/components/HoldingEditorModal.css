@@ -1,0 +1,13 @@
+/* Using the same styles as TransactionEditorModal for consistency */
+@import url('./TransactionEditorModal.css');
+
+.modal-content p {
+    margin-top: -1rem;
+    margin-bottom: 1.5rem;
+    color: #ccc;
+    font-size: 0.9em;
+}
+
+.modal-content p strong {
+    color: #fff;
+}

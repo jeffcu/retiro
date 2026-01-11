@@ -3,6 +3,7 @@ import './PortfolioView.css';
 import FilterPanel from './FilterPanel';
 import BarChart from './BarChart';
 import TimeFilter from './TimeFilter';
+import HoldingEditorModal from './HoldingEditorModal';
 
 const PortfolioSummary = ({ holdings, formatCurrency }) => {
     const totalMarketValue = holdings.reduce((sum, h) => sum + (h.market_value || 0), 0);
@@ -29,6 +30,7 @@ const PortfolioSummary = ({ holdings, formatCurrency }) => {
 const filterConfig = [
     { id: 'account_id', label: 'Account', type: 'select', optionsKey: 'accounts' },
     { id: 'symbol', label: 'Symbol', type: 'text', placeholder: 'e.g., AAPL' },
+    { id: 'tags', label: 'Tag Contains', type: 'text', placeholder: 'e.g., ESG' },
 ];
 
 const PortfolioView = () => {
@@ -38,6 +40,7 @@ const PortfolioView = () => {
     const [error, setError] = useState(null);
     const [activeFilters, setActiveFilters] = useState({ period: 'all' });
     const [sortConfig, setSortConfig] = useState(null);
+    const [editingHolding, setEditingHolding] = useState(null);
 
     const fetchData = async (filters = activeFilters) => {
         try {
@@ -118,6 +121,11 @@ const PortfolioView = () => {
         fetchData(newFilters);
     };
 
+    const handleHoldingSave = () => {
+        setEditingHolding(null); // Close modal
+        fetchData(activeFilters); // Refresh data
+    };
+
     const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
         style: 'currency',
         currency: 'USD',
@@ -131,7 +139,11 @@ const PortfolioView = () => {
 
     return (
         <>
-            <FilterPanel config={filterConfig} onFilterSubmit={handlePanelFilterSubmit} />
+            <FilterPanel 
+                config={filterConfig} 
+                onFilterSubmit={handlePanelFilterSubmit} 
+                initialValues={activeFilters} 
+            />
 
             <div className="card">
                 <div className="chart-header">
@@ -174,6 +186,9 @@ const PortfolioView = () => {
                                             <th className="sortable" onClick={() => requestSort('account_id')}>
                                                 Account <span className="sort-indicator">{getSortIndicator('account_id')}</span>
                                             </th>
+                                            <th className="sortable" onClick={() => requestSort('tags')}>
+                                                Tags <span className="sort-indicator">{getSortIndicator('tags')}</span>
+                                            </th>
                                             <th className="sortable" onClick={() => requestSort('quantity')}>
                                                 Quantity <span className="sort-indicator">{getSortIndicator('quantity')}</span>
                                             </th>
@@ -187,9 +202,15 @@ const PortfolioView = () => {
                                     </thead>
                                     <tbody>
                                         {sortedHoldings.map(h => (
-                                            <tr key={h.holding_id}>
+                                            <tr 
+                                                key={h.holding_id} 
+                                                onDoubleClick={() => setEditingHolding(h)}
+                                                style={{cursor: 'pointer'}}
+                                                title="Double-click to edit tags"
+                                            >
                                                 <td>{h.symbol}</td>
                                                 <td>{h.account_id}</td>
+                                                <td>{h.tags ? h.tags.join(', ') : ''}</td>
                                                 <td>{h.quantity.toFixed(4)}</td>
                                                 <td>{formatCurrency(h.cost_basis)}</td>
                                                 <td>{formatCurrency(h.market_value)}</td>
@@ -198,7 +219,7 @@ const PortfolioView = () => {
                                     </tbody>
                                     <tfoot>
                                         <tr>
-                                            <td colSpan="4">Total Market Value</td>
+                                            <td colSpan="5">Total Market Value</td>
                                             <td>{formatCurrency(totalMarketValue)}</td>
                                         </tr>
                                     </tfoot>
@@ -210,6 +231,14 @@ const PortfolioView = () => {
                     </>
                 )}
             </div>
+
+            {editingHolding && (
+                <HoldingEditorModal
+                    holding={editingHolding}
+                    onClose={() => setEditingHolding(null)}
+                    onSave={handleHoldingSave}
+                />
+            )}
         </>
     );
 };
