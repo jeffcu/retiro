@@ -1,5 +1,14 @@
 --- START OF COMBINED SOURCE FOR PROJECT: trust ---
 
+--- FILE: projects/trust/.env ---
+
+# Alpha Vantage API Key
+# This is your local configuration file. It is NOT checked into version control.
+# Copy your API key from https://www.alphavantage.co/support/#api-key and paste it below.
+
+ALPHA_VANTAGE_API_KEY="F139DRPZDUBEP433"
+
+
 --- FILE: projects/trust/.env.example ---
 
 # Alpha Vantage API Key
@@ -238,6 +247,10 @@ uvicorn[standard]
 python-dotenv
 python-multipart
 httpx
+pandas
+pandas-datareader
+tenacity
+python-dateutil
 
 
 --- FILE: projects/trust/vite.config.js ---
@@ -1257,25 +1270,18 @@ class CashflowType(Enum):
 
     @classmethod
     def from_string(cls, value: str | None) -> CashflowType | None:
-        """Safely create a CashflowType from a string, ignoring case and whitespace."""
         if not value:
             return None
-        
         clean_value = value.strip().lower()
         for member in cls:
             if member.value.lower() == clean_value:
                 return member
-        
-        logging.warning(f"Unknown CashflowType value encountered: '{value}'. Treating as None.")
+        logging.warning(f"Unknown CashflowType value: '{value}'. Treating as None.")
         return None
 
 
 @dataclass
 class Transaction:
-    """
-    Represents a single, normalized financial transaction based on the internal data model.
-    See PRS Section 8.
-    """
     transaction_id: str
     account_id: str
     transaction_date: date
@@ -1295,10 +1301,6 @@ class Transaction:
 
 @dataclass
 class Holding:
-    """
-    Represents a single portfolio holding in a specific account.
-    (PRS Section 8)
-    """
     holding_id: str
     account_id: str
     symbol: str
@@ -1310,13 +1312,23 @@ class Holding:
     tags: list[str] = field(default_factory=list)
 
 
+@dataclass
+class PriceQuote:
+    """ Represents a single price point fetched from an external API. """
+    quote_id: str
+    symbol: str
+    price: Decimal
+    quote_timestamp: datetime
+    source: str | None = None
+
+
 --- FILE: projects/trust/src/database.py ---
 
 import sqlite3
 import uuid
 from pathlib import Path
 from typing import List, Dict, Any, Tuple
-from src.data_model import Transaction, Holding
+from src.data_model import Transaction, Holding, PriceQuote # Added PriceQuote
 
 # Per MDS, the database is a single file in the data/ directory.
 # We resolve the path to its absolute form to avoid ambiguity.
@@ -1377,6 +1389,17 @@ def _ensure_schema(conn: sqlite3.Connection):
     );
     """)
 
+    # --- NEW: Table for Price History ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS price_history (
+        quote_id TEXT PRIMARY KEY,
+        symbol TEXT NOT NULL,
+        price REAL NOT NULL,
+        quote_timestamp TEXT NOT NULL,
+        source TEXT
+    );
+    """)
+
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS import_runs (
         import_run_id TEXT PRIMARY KEY,
@@ -1390,7 +1413,6 @@ def _ensure_schema(conn: sqlite3.Connection):
     );
     """)
     
-    # --- NEW: Table for Account Visibility Settings --- #
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS account_visibility (
         account_id TEXT PRIMARY KEY,
@@ -1420,86 +1442,61 @@ def _ensure_schema(conn: sqlite3.Connection):
         print("--- MIGRATING SCHEMA: Adding 'tags' to 'transactions'. ---")
         cursor.execute("ALTER TABLE transactions ADD COLUMN tags TEXT;")
 
-    # --- Advanced Rules Table Migration ---
-    cursor.execute("PRAGMA table_info(rules)")
-    rules_info_rows = cursor.fetchall()
-    rules_cols_info = {row['name']: row for row in rules_info_rows}
-
-    # MIGRATION: Make 'rules.pattern' nullable if it was previously defined as NOT NULL.
-    if 'pattern' in rules_cols_info and rules_cols_info['pattern']['notnull'] == 1:
-        print("--- MIGRATING SCHEMA: Making 'pattern' column in 'rules' table nullable. ---")
-        try:
-            cursor.execute("PRAGMA foreign_keys=off;")
-            cursor.execute("BEGIN TRANSACTION;")
+    cursor.execute("PRAGMA foreign_keys=off;")
+    cursor.execute("BEGIN TRANSACTION;")
+    try:
+        cursor.execute("PRAGMA table_info(rules)")
+        rules_info_rows = cursor.fetchall()
+        rules_cols = {row['name'] for row in rules_info_rows}
+        if 'pattern' in rules_cols and any(row['name'] == 'pattern' and row['notnull'] for row in rules_info_rows):
+            print("--- MIGRATING SCHEMA: Making 'pattern' column in 'rules' table nullable. ---")
             cursor.execute("ALTER TABLE rules RENAME TO _rules_old;")
-            
-            # Recreate the table with the full, modern schema where 'pattern' is nullable.
             cursor.execute("""
             CREATE TABLE rules (
                 rule_id TEXT PRIMARY KEY,
-                pattern TEXT, -- This is now correctly nullable
+                pattern TEXT,
                 category TEXT NOT NULL,
                 cashflow_type TEXT NOT NULL,
                 tags TEXT,
-                priority INTEGER DEFAULT 100,
-                case_sensitive INTEGER DEFAULT 0,
-                account_filter_mode TEXT DEFAULT 'include',
-                account_filter_list TEXT,
-                condition_category TEXT,
-                condition_institution TEXT,
-                condition_cashflow_type TEXT,
-                condition_tags TEXT
+                priority INTEGER DEFAULT 100
             );
             """)
-            
-            # Copy data from the old table, matching existing columns.
-            old_cols = list(rules_cols_info.keys())
-            old_cols_str = ", ".join([f'\"{c}\"' for c in old_cols])
-            cursor.execute(f"INSERT INTO rules ({old_cols_str}) SELECT {old_cols_str} FROM _rules_old;")
-            
+            cursor.execute("INSERT INTO rules (rule_id, pattern, category, cashflow_type, tags, priority) SELECT rule_id, pattern, category, cashflow_type, tags, priority FROM _rules_old;")
             cursor.execute("DROP TABLE _rules_old;")
-            cursor.execute("COMMIT;")
-            print("--- 'rules' table migration successful. ---")
-        except Exception as e:
-            print(f"ERROR during 'rules' table migration: {e}. Rolling back.")
-            cursor.execute("ROLLBACK;")
-            raise e
-        finally:
-            cursor.execute("PRAGMA foreign_keys=on;")
-            # After migration, we need to refresh the column info.
-            cursor.execute("PRAGMA table_info(rules)")
-            rules_cols_info = {row['name']: row for row in cursor.fetchall()}
 
-    # Subsequent migrations for adding columns one-by-one.
-    rules_cols = set(rules_cols_info.keys())
-    if 'case_sensitive' not in rules_cols:
-        print("--- MIGRATING SCHEMA: Adding 'case_sensitive' to 'rules'. ---")
-        cursor.execute("ALTER TABLE rules ADD COLUMN case_sensitive INTEGER DEFAULT 0;")
-    if 'account_filter_mode' not in rules_cols:
-        print("--- MIGRATING SCHEMA: Adding 'account_filter_mode' to 'rules'. ---")
-        cursor.execute("ALTER TABLE rules ADD COLUMN account_filter_mode TEXT DEFAULT 'include';")
-    if 'account_filter_list' not in rules_cols:
-        print("--- MIGRATING SCHEMA: Adding 'account_filter_list' to 'rules'. ---")
-        cursor.execute("ALTER TABLE rules ADD COLUMN account_filter_list TEXT;")
-    if 'condition_category' not in rules_cols:
-        print("--- MIGRATING SCHEMA: Adding 'condition_category' to 'rules'. ---")
-        cursor.execute("ALTER TABLE rules ADD COLUMN condition_category TEXT;")
-    if 'condition_institution' not in rules_cols:
-        print("--- MIGRATING SCHEMA: Adding 'condition_institution' to 'rules'. ---")
-        cursor.execute("ALTER TABLE rules ADD COLUMN condition_institution TEXT;")
-    if 'condition_cashflow_type' not in rules_cols:
-        print("--- MIGRATING SCHEMA: Adding 'condition_cashflow_type' to 'rules'. ---")
-        cursor.execute("ALTER TABLE rules ADD COLUMN condition_cashflow_type TEXT;")
-    if 'condition_tags' not in rules_cols:
-        print("--- MIGRATING SCHEMA: Adding 'condition_tags' to 'rules'. ---")
-        cursor.execute("ALTER TABLE rules ADD COLUMN condition_tags TEXT;")
+        if 'case_sensitive' not in rules_cols:
+            print("--- MIGRATING SCHEMA: Adding 'case_sensitive' to 'rules'. ---")
+            cursor.execute("ALTER TABLE rules ADD COLUMN case_sensitive INTEGER DEFAULT 0;")
+        if 'account_filter_mode' not in rules_cols:
+            print("--- MIGRATING SCHEMA: Adding 'account_filter_mode' to 'rules'. ---")
+            cursor.execute("ALTER TABLE rules ADD COLUMN account_filter_mode TEXT DEFAULT 'include';")
+        if 'account_filter_list' not in rules_cols:
+            print("--- MIGRATING SCHEMA: Adding 'account_filter_list' to 'rules'. ---")
+            cursor.execute("ALTER TABLE rules ADD COLUMN account_filter_list TEXT;")
+        if 'condition_category' not in rules_cols:
+            print("--- MIGRATING SCHEMA: Adding 'condition_category' to 'rules'. ---")
+            cursor.execute("ALTER TABLE rules ADD COLUMN condition_category TEXT;")
+        if 'condition_institution' not in rules_cols:
+            print("--- MIGRATING SCHEMA: Adding 'condition_institution' to 'rules'. ---")
+            cursor.execute("ALTER TABLE rules ADD COLUMN condition_institution TEXT;")
+        if 'condition_cashflow_type' not in rules_cols:
+            print("--- MIGRATING SCHEMA: Adding 'condition_cashflow_type' to 'rules'. ---")
+            cursor.execute("ALTER TABLE rules ADD COLUMN condition_cashflow_type TEXT;")
+        if 'condition_tags' not in rules_cols:
+            print("--- MIGRATING SCHEMA: Adding 'condition_tags' to 'rules'. ---")
+            cursor.execute("ALTER TABLE rules ADD COLUMN condition_tags TEXT;")
+        conn.commit()
+    except Exception as e:
+        print(f"ERROR during 'rules' table migration: {e}. Rolling back.")
+        conn.rollback()
+        raise e
+    finally:
+        cursor.execute("PRAGMA foreign_keys=on;")
 
-    conn.commit()
     print("--- Database schema is OK. ---")
     _schema_ensured = True
 
 def get_db_connection():
-    """ Establishes a connection to the SQLite database and ensures the schema is present. """
     DB_FILE.parent.mkdir(exist_ok=True)
     conn = sqlite3.connect(str(DB_FILE))
     conn.row_factory = sqlite3.Row
@@ -1542,36 +1539,22 @@ def save_transactions(transactions: List[Transaction]):
         conn.close()
 
 def save_holdings_snapshot(holdings: List[Holding], account_id: str):
-    """
-    Saves a complete snapshot of holdings for a specific account.
-    This is a transactional operation that first deletes all existing holdings
-    for the account and then inserts the new ones.
-    (PRS Section 11: Idempotent Import)
-    """
-    cleaned_account_id = account_id.strip() # Defensively sanitize input
+    cleaned_account_id = account_id.strip()
     if not cleaned_account_id:
         print("ERROR: Cannot save holdings snapshot without an account_id.")
         return 0, 0
-
     conn = get_db_connection()
     cursor = conn.cursor()
     deleted_count = 0
     inserted_count = 0
-
     try:
-        # Step 1: Delete existing holdings (CASE-INSENSITIVE & WHITESPACE-INSENSITIVE)
-        # CORRECTED: Use trim() and lower() to handle existing dirty data.
         cursor.execute("DELETE FROM holdings WHERE trim(lower(account_id)) = trim(lower(?))", (cleaned_account_id,))
         deleted_count = cursor.rowcount
         print(f"Deleted {deleted_count} stale holdings for account '{cleaned_account_id}'.")
-
-        # Step 2: Insert the new holdings
         if holdings:
             sql = """INSERT INTO holdings (
                         holding_id, account_id, symbol, quantity, cost_basis, market_value, tags
                      ) VALUES (?, ?, ?, ?, ?, ?, ?);"""
-            # Note: The `h.account_id` in the holdings list is assumed to be cleaned
-            # at the API layer before this function is called.
             data_to_insert = [
                 (
                     h.holding_id, h.account_id, h.symbol, float(h.quantity), float(h.cost_basis),
@@ -1582,7 +1565,6 @@ def save_holdings_snapshot(holdings: List[Holding], account_id: str):
             cursor.executemany(sql, data_to_insert)
             inserted_count = cursor.rowcount
             print(f"Inserted {inserted_count} new holdings for account '{cleaned_account_id}'.")
-
         conn.commit()
     except sqlite3.Error as e:
         print(f"Database error during holdings snapshot save: {e}")
@@ -1590,7 +1572,6 @@ def save_holdings_snapshot(holdings: List[Holding], account_id: str):
         raise e
     finally:
         conn.close()
-    
     return deleted_count, inserted_count
 
 def save_import_run(run_data: Dict[str, Any]):
@@ -1600,18 +1581,11 @@ def save_import_run(run_data: Dict[str, Any]):
                  import_run_id, file_name, import_type, import_timestamp,
                  record_count, total_amount, total_market_value, total_cost_basis
              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);"""
-    
     data_tuple = (
-        run_data['import_run_id'],
-        run_data['file_name'],
-        run_data['import_type'],
-        run_data['import_timestamp'],
-        run_data.get('record_count'),
-        run_data.get('total_amount'),
-        run_data.get('total_market_value'),
-        run_data.get('total_cost_basis')
+        run_data['import_run_id'], run_data['file_name'], run_data['import_type'],
+        run_data['import_timestamp'], run_data.get('record_count'), run_data.get('total_amount'),
+        run_data.get('total_market_value'), run_data.get('total_cost_basis')
     )
-    
     try:
         cursor.execute(sql, data_tuple)
         conn.commit()
@@ -1623,31 +1597,19 @@ def save_import_run(run_data: Dict[str, Any]):
     finally:
         conn.close()
 
-# --- Data Retrieval --- #
 
 def _build_where_clause(filters: Dict, allowed_fields: List[str]) -> Tuple[List[str], List[Any]]:
-    """Helper to build a dynamic WHERE clause safely."""
-    clauses = []
-    params = []
-
+    clauses, params = [], []
     if not filters:
         return [], []
-
     for key, value in filters.items():
         if key not in allowed_fields or not value:
             continue
-        
-        if key in ['description', 'tags']:
-            clauses.append(f"{key} LIKE ?")
-            params.append(f"%{value}%")
-        else:
-            clauses.append(f"{key} = ?")
-            params.append(value)
-    
+        clauses.append(f"{key} LIKE ?" if key in ['description', 'tags'] else f"{key} = ?")
+        params.append(f"%{value}%" if key in ['description', 'tags'] else value)
     return clauses, params
 
 def get_transaction(transaction_id: str) -> Dict[str, Any] | None:
-    """Retrieves a single transaction by its ID."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM transactions WHERE transaction_id = ?", (transaction_id,))
@@ -1655,110 +1617,68 @@ def get_transaction(transaction_id: str) -> Dict[str, Any] | None:
     conn.close()
     return dict(row) if row else None
 
-def _apply_period_filter_to_query(
-    where_clauses: List[str], params: List[Any], period: str | None, date_column: str, table_prefix: str = ""
-):
-    """Applies a date range WHERE clause based on a period string."""
+def _apply_period_filter_to_query(where_clauses: List[str], params: List[Any], period: str | None, date_column: str, table_prefix: str = ""):
     if not period or period == 'all':
         return
-    
     column_ref = f"{table_prefix}{date_column}" if table_prefix else date_column
-
-    if period.isdigit() and len(period) == 4: # Year filter
+    if period.isdigit() and len(period) == 4:
         where_clauses.append(f"strftime('%Y', {column_ref}) = ?")
         params.append(period)
-    elif period == '6m':
-        where_clauses.append(f"{column_ref} >= date('now', '-6 months')")
-    elif period == '3m':
-        where_clauses.append(f"{column_ref} >= date('now', '-3 months')")
-    elif period == '1m':
-        where_clauses.append(f"{column_ref} >= date('now', '-1 month')")
+    elif period.endswith('m'):
+        months = period[:-1]
+        where_clauses.append(f"{column_ref} >= date('now', '-{months} months')")
 
 def get_transactions(filters: Dict[str, Any] = None, exclude_invisible: bool = False) -> List[Dict[str, Any]]:
-    """ 
-    Retrieves transactions, with options for filtering.
-    """
     conn = get_db_connection()
     cursor = conn.cursor()
-    
     filters = filters or {}
-    where_clauses = []
-    params = []
-
+    where_clauses, params = [], []
     if exclude_invisible:
         where_clauses.append("account_id NOT IN (SELECT account_id FROM account_visibility WHERE is_visible = 0)")
-
     period = filters.pop('period', None)
     allowed = ['category', 'account_id', 'institution', 'description', 'tags', 'cashflow_type']
-    
     field_clauses, field_params = _build_where_clause(filters, allowed)
     where_clauses.extend(field_clauses)
     params.extend(field_params)
-    
     _apply_period_filter_to_query(where_clauses, params, period, date_column='transaction_date')
-
-    query_where = ""
-    if where_clauses:
-        query_where = " WHERE " + " AND ".join(where_clauses)
-
+    query_where = " WHERE " + " AND ".join(where_clauses) if where_clauses else ""
     query = f"SELECT * FROM transactions{query_where} ORDER BY transaction_date DESC"
-
     cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
 
-
 def get_holdings(filters: Dict[str, Any] = None) -> List[Dict[str, Any]]:
     conn = get_db_connection()
     cursor = conn.cursor()
-
     filters = filters or {}
-    allowed_fields = ['account_id', 'symbol', 'tags']
-    period = filters.pop('period', None)
-
+    allowed_fields, period = ['account_id', 'symbol', 'tags'], filters.pop('period', None)
     clauses, params = _build_where_clause(filters, allowed_fields)
     _apply_period_filter_to_query(clauses, params, period, date_column='last_price_timestamp')
-
     where_str = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     query = f"SELECT * FROM holdings {where_str} ORDER BY symbol ASC"
-    
     cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
-
-    # Post-process tags from string to list
     results = []
     for row in rows:
         row_dict = dict(row)
-        if row_dict.get('tags'):
-            row_dict['tags'] = [tag.strip() for tag in row_dict['tags'].split(',')]
-        else:
-            row_dict['tags'] = []
+        row_dict['tags'] = [tag.strip() for tag in row_dict['tags'].split(',')] if row_dict.get('tags') else []
         results.append(row_dict)
-    
     return results
 
 def get_holding(holding_id: str) -> Dict[str, Any] | None:
-    """Retrieves a single holding by its ID."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM holdings WHERE holding_id = ?", (holding_id,))
     row = cursor.fetchone()
     conn.close()
-    if not row:
-        return None
-    
-    # Post-process tags from string to list
+    if not row: return None
     row_dict = dict(row)
-    if row_dict.get('tags'):
-        row_dict['tags'] = [tag.strip() for tag in row_dict['tags'].split(',')]
-    else:
-        row_dict['tags'] = []
+    row_dict['tags'] = [tag.strip() for tag in row_dict['tags'].split(',')] if row_dict.get('tags') else []
     return row_dict
 
 def update_holding(holding_id: str, tags: List[str]):
-    """Updates the tags for a specific holding."""
     conn = get_db_connection()
     cursor = conn.cursor()
     tags_str = ','.join(tags) if tags else None
@@ -1773,7 +1693,6 @@ def update_holding(holding_id: str, tags: List[str]):
     finally:
         conn.close()
 
-
 def get_all_import_runs() -> List[Dict[str, Any]]:
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -1782,194 +1701,84 @@ def get_all_import_runs() -> List[Dict[str, Any]]:
     conn.close()
     return [dict(row) for row in rows]
 
-# --- Filter Options --- #
-
 def get_filter_options() -> Dict[str, List[str]]:
-    """Gets unique values for filter dropdowns."""
-    conn = get_db_connection()
+    conn, options = get_db_connection(), {}
     cursor = conn.cursor()
-
-    options = {}
-
     cursor.execute("SELECT DISTINCT category FROM transactions WHERE category IS NOT NULL AND category != '' AND category != 'Uncategorized' ORDER BY category")
-    
-    fetched_rows = cursor.fetchall()
-    options['categories'] = [row['category'] for row in fetched_rows]
-
+    options['categories'] = [row['category'] for row in cursor.fetchall()]
     cursor.execute("SELECT DISTINCT account_id FROM transactions ORDER BY account_id")
     options['accounts'] = [row['account_id'] for row in cursor.fetchall()]
-
     cursor.execute("SELECT DISTINCT institution FROM transactions WHERE institution IS NOT NULL ORDER BY institution")
     options['institutions'] = [row['institution'] for row in cursor.fetchall()]
-
-    # ADDED: Hardcode cashflow types based on the spec
-    options['cashflowTypes'] = [
-        "Income", 
-        "Expense", 
-        "Transfer", 
-        "Capital Expenditure", 
-        "Investment"
-    ]
-
+    options['cashflowTypes'] = ["Income", "Expense", "Transfer", "Capital Expenditure", "Investment"]
     conn.close()
     return options
 
-
-# --- Aggregations for Charts --- #
-
 def get_sankey_aggregates(period: str, exclude_invisible: bool = False) -> List[Dict[str, Any]]:
-    """
-    Performs a direct SQL aggregation to get the data needed for the Income Sankey.
-    This is more efficient than fetching all transactions. It correctly filters by
-    account visibility and time period.
-    """
     conn = get_db_connection()
     cursor = conn.cursor()
-
     where_clauses = ["t.cashflow_type IN ('Income', 'Expense', 'Capital Expenditure')"]
     params = []
-    
     if exclude_invisible:
         where_clauses.append("t.account_id NOT IN (SELECT account_id FROM account_visibility WHERE is_visible = 0)")
-
     _apply_period_filter_to_query(where_clauses, params, period, date_column='transaction_date', table_prefix='t.')
-
     where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
-
-    query = f"""
-        SELECT 
-            cashflow_type,
-            category,
-            SUM(amount) as total
-        FROM transactions t
-        {where_sql}
-        GROUP BY cashflow_type, category
-    """
-    
+    query = f"""SELECT cashflow_type, category, SUM(amount) as total FROM transactions t {where_sql} GROUP BY cashflow_type, category"""
     cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
 
 def get_latest_transaction_year() -> int | None:
-    """Finds the most recent year present in the transaction data."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT MAX(strftime('%Y', transaction_date)) as latest_year FROM transactions")
     result = cursor.fetchone()
     conn.close()
-    if result and result['latest_year']:
-        return int(result['latest_year'])
-    return None
+    return int(result['latest_year']) if result and result['latest_year'] else None
 
 def get_cashflow_aggregation_by_month(year: int, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
     conn = get_db_connection()
     cursor = conn.cursor()
-
     allowed_fields = ['category', 'account_id', 'institution', 'description', 'tags', 'cashflow_type']
     clauses, params = _build_where_clause(filters, allowed_fields)
-    
     clauses.insert(0, "strftime('%Y', transaction_date) = ?")
     params.insert(0, str(year))
-    
     where_str = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-
-    query = f"""
-        SELECT 
-            CAST(strftime('%m', transaction_date) AS INTEGER) as month,
-            SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as income,
-            SUM(CASE WHEN amount < 0 AND cashflow_type = 'Expense' THEN amount ELSE 0 END) as expense
-        FROM transactions
-        {where_str}
-        GROUP BY month
-        ORDER BY month ASC
-    """
-
+    query = f"""SELECT CAST(strftime('%m', transaction_date) AS INTEGER) as month, SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as income, SUM(CASE WHEN amount < 0 AND cashflow_type = 'Expense' THEN amount ELSE 0 END) as expense FROM transactions {where_str} GROUP BY month ORDER BY month ASC"""
     cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
-
 
 def get_holdings_aggregation_by_symbol(filters: Dict[str, Any]) -> List[Dict[str, Any]]:
     conn = get_db_connection()
     cursor = conn.cursor()
-
     filters = filters or {}
-    allowed_fields = ['account_id', 'symbol', 'tags']
-    period = filters.pop('period', None)
-
+    allowed_fields, period = ['account_id', 'symbol', 'tags'], filters.pop('period', None)
     clauses, params = _build_where_clause(filters, allowed_fields)
     _apply_period_filter_to_query(clauses, params, period, date_column='last_price_timestamp')
-
     where_str = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-
-    query = f"""
-        SELECT
-            symbol,
-            SUM(market_value) as total_market_value
-        FROM holdings
-        {where_str}
-        GROUP BY symbol
-        HAVING total_market_value > 0
-        ORDER BY total_market_value DESC
-        LIMIT 20
-    """
+    query = f"""SELECT symbol, SUM(market_value) as total_market_value FROM holdings {where_str} GROUP BY symbol HAVING total_market_value > 0 ORDER BY total_market_value DESC LIMIT 20"""
     cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
 
-
-# --- Rules CRUD --- #
-
 def _transform_rule_record(rule_row: sqlite3.Row) -> Dict[str, Any]:
-    if not rule_row:
-        return None
+    if not rule_row: return None
     rule_dict = dict(rule_row)
-    
-    if rule_dict.get('tags') and isinstance(rule_dict['tags'], str):
-        rule_dict['tags'] = [tag.strip() for tag in rule_dict['tags'].split(',') if tag.strip()]
-    else:
-        rule_dict['tags'] = []
-
-    if rule_dict.get('account_filter_list') and isinstance(rule_dict['account_filter_list'], str):
-        rule_dict['account_filter_list'] = [acc.strip() for acc in rule_dict['account_filter_list'].split(',') if acc.strip()]
-    else:
-        rule_dict['account_filter_list'] = []
-        
+    rule_dict['tags'] = [t.strip() for t in rule_dict['tags'].split(',') if t.strip()] if rule_dict.get('tags') and isinstance(rule_dict['tags'], str) else []
+    rule_dict['account_filter_list'] = [a.strip() for a in rule_dict['account_filter_list'].split(',') if a.strip()] if rule_dict.get('account_filter_list') and isinstance(rule_dict['account_filter_list'], str) else []
     rule_dict['case_sensitive'] = bool(rule_dict.get('case_sensitive', 0))
-
     return rule_dict
 
 def create_rule(rule_data: Dict[str, Any]) -> Dict[str, Any]:
     conn = get_db_connection()
-    cursor = conn.cursor()
-    rule_id = str(uuid.uuid4())
-    sql = """INSERT INTO rules (
-                rule_id, pattern, category, cashflow_type, tags, priority, 
-                case_sensitive, account_filter_mode, account_filter_list,
-                condition_category, condition_institution, condition_cashflow_type, condition_tags
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"""
-    
-    tags_str = ','.join(rule_data.get('tags', []))
-    account_list_str = ','.join(rule_data.get('account_filter_list', []))
-    
-    cursor.execute(sql, (
-        rule_id,
-        rule_data.get('pattern'),
-        rule_data['category'],
-        rule_data['cashflow_type'],
-        tags_str,
-        rule_data.get('priority', 100),
-        1 if rule_data.get('case_sensitive') else 0,
-        rule_data.get('account_filter_mode', 'include'),
-        account_list_str,
-        rule_data.get('condition_category'),
-        rule_data.get('condition_institution'),
-        rule_data.get('condition_cashflow_type'),
-        rule_data.get('condition_tags')
-    ))
+    cursor, rule_id = conn.cursor(), str(uuid.uuid4())
+    sql = """INSERT INTO rules (rule_id, pattern, category, cashflow_type, tags, priority, case_sensitive, account_filter_mode, account_filter_list, condition_category, condition_institution, condition_cashflow_type, condition_tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"""
+    tags_str, account_list_str = ','.join(rule_data.get('tags', [])), ','.join(rule_data.get('account_filter_list', []))
+    cursor.execute(sql, (rule_id, rule_data.get('pattern'), rule_data['category'], rule_data['cashflow_type'], tags_str, rule_data.get('priority', 100), 1 if rule_data.get('case_sensitive') else 0, rule_data.get('account_filter_mode', 'include'), account_list_str, rule_data.get('condition_category'), rule_data.get('condition_institution'), rule_data.get('condition_cashflow_type'), rule_data.get('condition_tags')))
     conn.commit()
     new_rule_cursor = conn.cursor()
     new_rule_cursor.execute("SELECT * FROM rules WHERE rule_id = ?", (rule_id,))
@@ -2002,27 +1811,17 @@ def delete_rule(rule_id: str) -> bool:
     conn.close()
     return deleted_count > 0
 
-# --- Account Management --- #
-
 def get_all_account_ids() -> List[str]:
-    """ Gets all unique account IDs, ensuring they exist in the visibility table. """
     conn = get_db_connection()
     cursor = conn.cursor()
-    # This query finds all accounts in transactions and inserts any new ones
-    # into the visibility table with a default of visible (1).
-    cursor.execute("""
-        INSERT OR IGNORE INTO account_visibility (account_id, is_visible)
-        SELECT DISTINCT account_id, 1 FROM transactions WHERE account_id IS NOT NULL;
-    """)
+    cursor.execute("INSERT OR IGNORE INTO account_visibility (account_id, is_visible) SELECT DISTINCT account_id, 1 FROM transactions WHERE account_id IS NOT NULL;")
     conn.commit()
-    
     cursor.execute("SELECT account_id FROM account_visibility ORDER BY account_id ASC")
     rows = cursor.fetchall()
     conn.close()
     return [row['account_id'] for row in rows]
 
 def get_account_visibility() -> Dict[str, bool]:
-    """ Returns a dictionary of all known accounts and their visibility status. """
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT account_id, is_visible FROM account_visibility")
@@ -2031,16 +1830,11 @@ def get_account_visibility() -> Dict[str, bool]:
     return {row['account_id']: bool(row['is_visible']) for row in rows}
 
 def set_account_visibility(settings: Dict[str, bool]):
-    """ Persists visibility settings for multiple accounts. """
     conn = get_db_connection()
     cursor = conn.cursor()
     data_to_upsert = [(acc, 1 if is_visible else 0) for acc, is_visible in settings.items()]
-    
     try:
-        cursor.executemany("""
-            INSERT INTO account_visibility (account_id, is_visible) VALUES (?, ?)
-            ON CONFLICT(account_id) DO UPDATE SET is_visible = excluded.is_visible;
-        """, data_to_upsert)
+        cursor.executemany("INSERT INTO account_visibility (account_id, is_visible) VALUES (?, ?) ON CONFLICT(account_id) DO UPDATE SET is_visible = excluded.is_visible;", data_to_upsert)
         conn.commit()
         print(f"Updated visibility for {len(data_to_upsert)} accounts.")
     except sqlite3.Error as e:
@@ -2049,39 +1843,83 @@ def set_account_visibility(settings: Dict[str, bool]):
     finally:
         conn.close()
 
-# --- Admin Utilities --- #
-
 SAFE_TO_PURGE = ["transactions", "holdings"]
 
 def purge_table_data(target_table: str) -> dict:
-    """
-    Deletes all data from a specified table if it's in the SAFE_TO_PURGE list.
-    This is a destructive operation.
-    """
     if target_table not in SAFE_TO_PURGE:
         raise ValueError(f"'{target_table}' is not a table that can be purged.")
-
     conn = get_db_connection()
-    cursor = conn.cursor()
-    deleted_count = 0
-    
+    cursor, deleted_count = conn.cursor(), 0
     try:
         cursor.execute(f"SELECT COUNT(*) FROM {target_table}")
         initial_count = cursor.fetchone()[0]
-
         cursor.execute(f"DELETE FROM {target_table};")
         deleted_count = cursor.rowcount
         conn.commit()
-
         print(f"Successfully purged {deleted_count} records from '{target_table}'.")
-        return {
-            "table": target_table,
-            "purged_records": deleted_count,
-            "initial_records": initial_count,
-            "status": "success"
-        }
+        return {"table": target_table, "purged_records": deleted_count, "initial_records": initial_count, "status": "success"}
     except sqlite3.Error as e:
         print(f"Database error during purge of '{target_table}': {e}")
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+# --- NEW: Functions for Market Data ---
+
+def save_price_quotes(quotes: Dict[str, Dict[str, Any]]):
+    """Saves a batch of price quotes to the price_history table."""
+    if not quotes:
+        return
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    sql = """INSERT INTO price_history (quote_id, symbol, price, quote_timestamp, source) 
+             VALUES (?, ?, ?, ?, ?);"""
+    data_to_insert = [
+        (
+            str(uuid.uuid4()),
+            symbol,
+            float(data['price']),
+            data['timestamp'],
+            data['source']
+        ) for symbol, data in quotes.items()
+    ]
+    try:
+        cursor.executemany(sql, data_to_insert)
+        conn.commit()
+        print(f"Saved {cursor.rowcount} price quotes to history.")
+    except (sqlite3.Error, KeyError) as e:
+        print(f"Database error saving price quotes: {e}")
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def update_holdings_with_new_prices(quotes: Dict[str, Dict[str, Any]]):
+    """Updates the holdings table with the latest prices and recalculates market value."""
+    if not quotes:
+        return
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    updated_count = 0
+    try:
+        for symbol, data in quotes.items():
+            price = float(data['price'])
+            timestamp = data['timestamp']
+            # This single query updates all holdings for a given symbol across all accounts
+            cursor.execute("""
+                UPDATE holdings 
+                SET 
+                    last_price = ?,
+                    last_price_timestamp = ?,
+                    market_value = quantity * ?
+                WHERE symbol = ?;
+            """, (price, timestamp, price, symbol))
+            updated_count += cursor.rowcount
+        conn.commit()
+        print(f"Updated {updated_count} holding records with new prices.")
+    except (sqlite3.Error, KeyError) as e:
+        print(f"Database error updating holdings with new prices: {e}")
         conn.rollback()
         raise e
     finally:
@@ -2128,8 +1966,9 @@ ReactDOM.createRoot(document.getElementById('root')).render(
 
 import uvicorn
 import uuid
+import asyncio
 from datetime import datetime, timezone
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body, Response, Query, Depends
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body, Response, Query, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import os
@@ -2144,6 +1983,7 @@ from src.data_model import CashflowType, Transaction
 from src import database as db
 from src import analysis
 from src import rules_engine
+from src.market_data import polling_service
 
 load_dotenv()
 
@@ -2152,35 +1992,25 @@ app = FastAPI(
     version="1.0",
 )
 
-origins = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 class RuleCreate(BaseModel):
-    # Action fields
     category: str
-    cashflow_type: str # From frontend, will be string value of CashflowType enum
+    cashflow_type: str
     tags: Optional[List[str]] = []
-    
-    # Condition fields
-    pattern: Optional[str] = None # from description filter
+    pattern: Optional[str] = None
     case_sensitive: Optional[bool] = False
     account_filter_list: Optional[List[str]] = []
     condition_category: Optional[str] = None
     condition_institution: Optional[str] = None
     condition_cashflow_type: Optional[str] = None
     condition_tags: Optional[str] = None
-
-    # Meta
     priority: Optional[int] = 100
     account_filter_mode: Optional[str] = 'include'
 
@@ -2188,7 +2018,7 @@ class RuleResponse(RuleCreate):
     rule_id: str
 
 class PurgeRequest(BaseModel):
-    target: str = Field(..., description="The database table to purge, e.g., 'transactions' or 'holdings'.")
+    target: str
 
 class AccountVisibilitySettings(BaseModel):
     settings: Dict[str, bool]
@@ -2207,7 +2037,6 @@ class HoldingUpdate(BaseModel):
 async def startup_event():
     print("API is starting up...")
     initialize_database()
-    
     api_key = os.getenv("ALPHA_VANTAGE_API_KEY")
     if not api_key or api_key == "YOUR_API_KEY_HERE":
         print("WARNING: ALPHA_VANTAGE_API_KEY is not set. Market data features will fail.")
@@ -2220,32 +2049,19 @@ async def root():
 async def import_transactions_csv(account_id: str = Form(...), file: UploadFile = File(...)):
     if not file.filename or not file.filename.lower().endswith('.csv'):
         raise HTTPException(status_code=400, detail="Invalid file type. Please upload a CSV.")
-
     contents = await file.read()
     try:
-        # The account_id from the form is now a fallback if not provided in the CSV
         transactions, summary = csv_importer.parse_standard_csv(contents, account_id)
         if transactions:
             save_transactions(transactions)
-        
         run_data = {
-            "import_run_id": str(uuid.uuid4()),
-            "file_name": file.filename,
-            "import_type": "transactions",
-            "import_timestamp": datetime.now(timezone.utc).isoformat(),
-            "record_count": summary.get('record_count'),
+            "import_run_id": str(uuid.uuid4()), "file_name": file.filename, "import_type": "transactions",
+            "import_timestamp": datetime.now(timezone.utc).isoformat(), "record_count": summary.get('record_count'),
             "total_amount": float(summary.get('total_amount', 0.0))
         }
         db.save_import_run(run_data)
-        
-        print(f"Successfully processed {len(transactions)} transactions.")
-        return {
-            "message": f"Successfully imported and saved {len(transactions)} transactions.",
-            "filename": file.filename,
-            "transaction_count": len(transactions)
-        }
+        return {"message": f"Successfully imported and saved {len(transactions)} transactions.", "filename": file.filename, "transaction_count": len(transactions)}
     except Exception as e:
-        print(f"ERROR processing file {file.filename}: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to process CSV file: {e}")
 
@@ -2253,287 +2069,147 @@ async def import_transactions_csv(account_id: str = Form(...), file: UploadFile 
 async def import_holdings_csv(account_id: str = Form(...), file: UploadFile = File(...)):
     if not file.filename or not file.filename.lower().endswith('.csv'):
         raise HTTPException(status_code=400, detail="Invalid file type. Please upload a CSV.")
-    
-    # CORRECTED: Sanitize the account_id at the API boundary to remove whitespace.
     cleaned_account_id = account_id.strip()
     if not cleaned_account_id:
         raise HTTPException(status_code=400, detail="Account ID cannot be empty or just whitespace.")
-
     contents = await file.read()
     try:
-        # Pass the cleaned_account_id to the parser so Holding objects are created cleanly.
         holdings, summary, skipped, warnings = holdings_importer.parse_holdings_csv(contents, cleaned_account_id)
-        
-        # Pass the cleaned_account_id to the database function for the DELETE operation.
         deleted, inserted = db.save_holdings_snapshot(holdings, cleaned_account_id)
-        print(f"Holdings snapshot saved for account '{cleaned_account_id}': {deleted} deleted, {inserted} inserted.")
-
         run_data = {
-            "import_run_id": str(uuid.uuid4()),
-            "file_name": file.filename,
-            "import_type": "holdings",
-            "import_timestamp": datetime.now(timezone.utc).isoformat(),
-            "record_count": summary.get('record_count'),
+            "import_run_id": str(uuid.uuid4()), "file_name": file.filename, "import_type": "holdings",
+            "import_timestamp": datetime.now(timezone.utc).isoformat(), "record_count": summary.get('record_count'),
             "total_market_value": float(summary.get('total_market_value', 0.0)),
             "total_cost_basis": float(summary.get('total_cost_basis', 0.0))
         }
         db.save_import_run(run_data)
-
-        return {
-            "message": f"Import complete. Processed {summary.get('record_count', 0)} holdings.",
-            "filename": file.filename,
-            "holdings_count": len(holdings),
-            "deleted_stale_holdings": deleted,
-            "skipped_rows": skipped,
-            "import_warnings": warnings
-        }
+        return {"message": f"Import complete. Processed {summary.get('record_count', 0)} holdings.", "filename": file.filename, "holdings_count": len(holdings), "deleted_stale_holdings": deleted, "skipped_rows": skipped, "import_warnings": warnings}
     except Exception as e:
-        print(f"ERROR processing holdings file {file.filename}: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to process holdings CSV file: {e}")
 
 @app.get("/api/import/runs", tags=["Import"])
 async def get_all_import_runs():
-    try:
-        return db.get_all_import_runs()
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail="Failed to retrieve import runs.")
+    return db.get_all_import_runs()
 
 @app.post("/api/rules", response_model=RuleResponse, status_code=201, tags=["Rules"])
 async def create_new_rule(rule: RuleCreate):
     try:
-        rule_dict = rule.dict()
-        created_rule = db.create_rule(rule_dict)
-        return created_rule
+        return db.create_rule(rule.dict())
     except Exception as e:
         traceback.print_exc()
-        raise HTTPException(
-            status_code=500, 
-            detail=f"An internal error occurred while creating the rule: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"An internal error occurred: {str(e)}")
 
 @app.get("/api/rules", response_model=List[RuleResponse], tags=["Rules"])
 async def get_all_rules():
-    rules = db.get_all_rules()
-    return rules
+    return db.get_all_rules()
 
 @app.delete("/api/rules/{rule_id}", status_code=204, tags=["Rules"])
 async def delete_rule_by_id(rule_id: str):
-    success = db.delete_rule(rule_id)
-    if not success:
+    if not db.delete_rule(rule_id):
         raise HTTPException(status_code=404, detail="Rule not found.")
-    return Response(status_code=204) # Return empty response for success
+    return Response(status_code=204)
 
 @app.get("/api/sankey/income", tags=["Analysis"])
 async def get_income_sankey_data(period: str = "all") -> Dict[str, List[Dict[str, Any]]]:
-    try:
-        # This now implicitly uses the visibility settings stored in the DB
-        data = analysis.generate_income_sankey(period, exclude_invisible=True)
-        return data
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"An internal error occurred in the analysis engine: {e}")
+    return analysis.generate_income_sankey(period, exclude_invisible=True)
 
-# --- Filter Dependencies --- #
-# These functions gather filter parameters from the query string
-
-def get_transaction_filters(
-    category: Optional[str] = Query(None),
-    account_id: Optional[str] = Query(None),
-    institution: Optional[str] = Query(None),
-    description: Optional[str] = Query(None),
-    tags: Optional[str] = Query(None),
-    cashflow_type: Optional[str] = Query(None),
-    period: Optional[str] = Query(None), # Added period filter
-) -> Dict[str, Any]:
-    filters = {
-        "category": category,
-        "account_id": account_id,
-        "institution": institution,
-        "description": description,
-        "tags": tags,
-        "cashflow_type": cashflow_type,
-        "period": period,
-    }
+def get_transaction_filters(category: Optional[str] = Query(None), account_id: Optional[str] = Query(None), institution: Optional[str] = Query(None), description: Optional[str] = Query(None), tags: Optional[str] = Query(None), cashflow_type: Optional[str] = Query(None), period: Optional[str] = Query(None)) -> Dict[str, Any]:
+    filters = {"category": category, "account_id": account_id, "institution": institution, "description": description, "tags": tags, "cashflow_type": cashflow_type, "period": period}
     return {k: v for k, v in filters.items() if v is not None}
 
-def get_holding_filters(
-    account_id: Optional[str] = Query(None),
-    symbol: Optional[str] = Query(None),
-    tags: Optional[str] = Query(None),
-    period: Optional[str] = Query(None),
-) -> Dict[str, Any]:
-    filters = {
-        "account_id": account_id,
-        "symbol": symbol,
-        "tags": tags,
-        "period": period,
-    }
+def get_holding_filters(account_id: Optional[str] = Query(None), symbol: Optional[str] = Query(None), tags: Optional[str] = Query(None), period: Optional[str] = Query(None)) -> Dict[str, Any]:
+    filters = {"account_id": account_id, "symbol": symbol, "tags": tags, "period": period}
     return {k: v for k, v in filters.items() if v is not None}
 
 @app.get("/api/transactions", tags=["Data"])
 async def get_filtered_transactions(filters: Dict[str, Any] = Depends(get_transaction_filters)):
-    try:
-        return db.get_transactions(filters)
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"An internal error occurred while fetching transactions: {e}")
+    return db.get_transactions(filters)
 
 @app.put("/api/transactions/{transaction_id}", tags=["Data"])
 async def update_transaction(transaction_id: str, payload: TransactionUpdate):
-    try:
-        # 1. Fetch the existing transaction record
-        tx_dict = db.get_transaction(transaction_id)
-        if not tx_dict:
-            raise HTTPException(status_code=404, detail="Transaction not found.")
-
-        # 2. Re-constitute the full Transaction object
-        tx_obj = Transaction(
-            transaction_id=tx_dict['transaction_id'],
-            account_id=tx_dict['account_id'],
-            transaction_date=datetime.strptime(tx_dict['transaction_date'].split(' ')[0], '%Y-%m-%d').date(),
-            amount=Decimal(str(tx_dict['amount'])),
-            description=tx_dict['description'],
-            merchant=tx_dict.get('merchant'),
-            category=tx_dict.get('category'),
-            cashflow_type=CashflowType.from_string(tx_dict.get('cashflow_type')),
-            tags=tx_dict.get('tags', '').split(',') if tx_dict.get('tags') else [],
-            asset_id=tx_dict.get('asset_id'),
-            import_run_id=tx_dict.get('import_run_id'),
-            raw_data_hash=tx_dict.get('raw_data_hash'),
-            institution=tx_dict.get('institution'),
-            original_category=tx_dict.get('original_category')
-        )
-
-        # 3. Update fields from the payload
-        tx_obj.description = payload.description
-        tx_obj.category = payload.category
-        tx_obj.cashflow_type = CashflowType.from_string(payload.cashflow_type)
-        tx_obj.tags = payload.tags
-        tx_obj.is_transfer = tx_obj.cashflow_type == CashflowType.TRANSFER
-
-        # 4. Save the updated transaction back to the database
-        db.save_transactions([tx_obj])
-
-        return {"message": "Transaction updated successfully", "transaction": tx_obj}
-
-    except HTTPException as he:
-        raise he # Re-raise HTTP exceptions directly
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"An internal error occurred: {e}")
+    tx_dict = db.get_transaction(transaction_id)
+    if not tx_dict:
+        raise HTTPException(status_code=404, detail="Transaction not found.")
+    tx_obj = Transaction(
+        transaction_id=tx_dict['transaction_id'], account_id=tx_dict['account_id'],
+        transaction_date=datetime.strptime(tx_dict['transaction_date'].split(' ')[0], '%Y-%m-%d').date(),
+        amount=Decimal(str(tx_dict['amount'])), description=payload.description,
+        category=payload.category, cashflow_type=CashflowType.from_string(payload.cashflow_type),
+        tags=payload.tags, merchant=tx_dict.get('merchant'), asset_id=tx_dict.get('asset_id'),
+        import_run_id=tx_dict.get('import_run_id'), raw_data_hash=tx_dict.get('raw_data_hash'),
+        institution=tx_dict.get('institution'), original_category=tx_dict.get('original_category')
+    )
+    tx_obj.is_transfer = tx_obj.cashflow_type == CashflowType.TRANSFER
+    db.save_transactions([tx_obj])
+    return {"message": "Transaction updated successfully", "transaction": tx_obj}
 
 @app.get("/api/holdings", tags=["Data"])
 async def get_filtered_holdings(filters: Dict[str, Any] = Depends(get_holding_filters)):
-    try:
-        return db.get_holdings(filters)
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail="Failed to retrieve holdings.")
+    return db.get_holdings(filters)
 
 @app.put("/api/holdings/{holding_id}", tags=["Data"])
 async def update_holding(holding_id: str, payload: HoldingUpdate):
-    try:
-        db.update_holding(holding_id, payload.tags)
-        updated_holding = db.get_holding(holding_id)
-        if not updated_holding:
-            raise HTTPException(status_code=404, detail="Holding not found after update.")
-        return updated_holding
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"An internal error occurred: {e}")
-
+    db.update_holding(holding_id, payload.tags)
+    updated_holding = db.get_holding(holding_id)
+    if not updated_holding:
+        raise HTTPException(status_code=404, detail="Holding not found after update.")
+    return updated_holding
 
 @app.post("/api/transactions/recategorize", tags=["Processing"])
 async def trigger_recategorization():
-    try:
-        count = rules_engine.recategorize_all_transactions()
-        return {"message": f"Successfully re-categorized {count} transactions."}
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"An internal error occurred during re-categorization: {e}")
+    count = rules_engine.recategorize_all_transactions()
+    return {"message": f"Successfully re-categorized {count} transactions."}
 
 @app.get("/api/portfolio/summary", tags=["Analysis"])
 async def get_portfolio_summary():
-    """Calculates the total market value of all holdings."""
-    try:
-        holdings = db.get_holdings()
-        # Robustly sum market value, ignoring any holdings where it is not set.
-        total_market_value = sum(h.get('market_value', 0) for h in holdings if h.get('market_value') is not None)
-        return {"total_market_value": total_market_value}
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail="Failed to calculate portfolio summary.")
-
-
-# --- NEW Endpoints for Filtering and Charts --- #
+    holdings = db.get_holdings()
+    total_market_value = sum(h.get('market_value', 0) for h in holdings if h.get('market_value') is not None)
+    return {"total_market_value": total_market_value}
 
 @app.get("/api/filter-options", tags=["Filters"])
 async def get_filter_options():
-    try:
-        options = db.get_filter_options()
-        return options
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail="Failed to retrieve filter options.")
+    return db.get_filter_options()
 
 @app.get("/api/analysis/cashflow-chart", tags=["Analysis"])
 async def get_cashflow_chart(filters: Dict[str, Any] = Depends(get_transaction_filters)):
-    try:
-        chart_data = analysis.prepare_cashflow_chart_data(filters)
-        return chart_data
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail="Failed to generate cashflow chart data.")
+    return analysis.prepare_cashflow_chart_data(filters)
 
 @app.get("/api/analysis/portfolio-chart", tags=["Analysis"])
 async def get_portfolio_chart(filters: Dict[str, Any] = Depends(get_holding_filters)):
-    try:
-        chart_data = analysis.prepare_portfolio_chart_data(filters)
-        return chart_data
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail="Failed to generate portfolio chart data.")
-
-
-# --- Account Management --- #
+    return analysis.prepare_portfolio_chart_data(filters)
 
 @app.get("/api/accounts", response_model=List[str], tags=["Accounts"])
 async def get_all_accounts():
-    """Returns a list of all unique account IDs known to the system."""
     return db.get_all_account_ids()
 
 @app.get("/api/accounts/visibility", response_model=Dict[str, bool], tags=["Accounts"])
 async def get_visibility_settings():
-    """Returns the current visibility settings for all accounts."""
     return db.get_account_visibility()
 
 @app.put("/api/accounts/visibility", status_code=204, tags=["Accounts"])
 async def update_visibility_settings(payload: AccountVisibilitySettings):
-    """Updates the visibility settings for one or more accounts."""
-    try:
-        db.set_account_visibility(payload.settings)
-        return Response(status_code=204)
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to update settings: {e}")
+    db.set_account_visibility(payload.settings)
+    return Response(status_code=204)
 
 @app.post("/api/data/purge", tags=["Admin"])
 async def purge_data(request: PurgeRequest):
-    """
-    [DANGEROUS] Purges all data from a specified table.
-    Currently supports 'transactions' and 'holdings'.
-    This is a permanent and irreversible action.
-    """
     try:
         result = db.purge_table_data(request.target)
         return {"message": f"Successfully purged table: {request.target}", "details": result}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"An internal error occurred during data purge: {e}")
+
+# --- NEW: Endpoint for Market Data --- #
+@app.post("/api/market-data/refresh", tags=["Market Data"])
+async def trigger_market_data_refresh(background_tasks: BackgroundTasks):
+    """
+    Triggers a background task to refresh market data for the top 25 holdings.
+    Returns an immediate response to the client.
+    """
+    background_tasks.add_task(polling_service.refresh_market_data, top_n=25)
+    return {"message": "Market data refresh initiated in the background for top 25 holdings."}
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)
@@ -4914,7 +4590,7 @@ const SideBar = ({ activeView, setActiveView }) => {
     return (
         <nav className="sidebar">
             <div className="logo">
-                Curie Trust
+                Trust Financial
             </div>
             <ul>
                 {navItems.map(item => (
@@ -4934,7 +4610,6 @@ const SideBar = ({ activeView, setActiveView }) => {
 };
 
 export default SideBar;
-
 
 --- FILE: projects/trust/src/components/TimeFilter.css ---
 
@@ -6022,32 +5697,29 @@ Implementation of the market data provider interface for Alpha Vantage.
 import os
 import httpx
 from typing import List, Dict, Any
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
 BASE_URL = "https://www.alphavantage.co/query"
 
-async def get_quotes(symbols: List[str]) -> Dict[str, Any]:
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+async def get_quotes(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     """
     Fetches the latest quote for a list of symbols using Alpha Vantage.
-
-    To respect API limits, this function should be used with batching
-    and timing managed by a calling service.
 
     Args:
         symbols: A list of stock/ETF symbols.
 
     Returns:
-        A dictionary where keys are symbols and values are the quote data, 
-        or an error message if the fetch failed for that symbol.
+        A dictionary where keys are symbols and values are a dict containing the quote data 
+        (price, timestamp, etc.) or an error message.
     """
     if not API_KEY or API_KEY == "YOUR_API_KEY_HERE":
         print("ERROR: ALPHA_VANTAGE_API_KEY is not set.")
         return {symbol: {"error": "API key not configured"} for symbol in symbols}
 
     results = {}
-    # Use an async client to make concurrent requests if needed in the future,
-    # but for now, we'll process them sequentially to respect rate limits.
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=15.0) as client:
         for symbol in symbols:
             params = {
                 "function": "GLOBAL_QUOTE",
@@ -6056,30 +5728,270 @@ async def get_quotes(symbols: List[str]) -> Dict[str, Any]:
             }
             try:
                 response = await client.get(BASE_URL, params=params)
-                response.raise_for_status() # Raise an exception for 4xx/5xx responses
+                response.raise_for_status() 
                 data = response.json()
                 
                 quote_data = data.get('Global Quote')
-                if not quote_data:
-                    # This often happens with an invalid symbol or an API limit message.
-                    error_message = data.get('Note', f"No 'Global Quote' in response for {symbol}")
+                if not quote_data or not quote_data.get('05. price'):
+                    error_message = data.get('Note', f"No valid 'Global Quote' in response for {symbol}")
                     results[symbol] = {"error": error_message}
-                    print(f"WARNING: Could not fetch quote for {symbol}: {error_message}")
+                    print(f"WARNING: AlphaVantage could not fetch quote for {symbol}: {error_message}")
                     continue
 
                 results[symbol] = {
                     "price": quote_data.get('05. price'),
-                    "change_percent": quote_data.get('10. change percent'),
-                    "latest_trading_day": quote_data.get('07. latest trading day')
+                    "timestamp": quote_data.get('07. latest trading day'),
+                    "source": "alpha_vantage"
                 }
 
             except httpx.HTTPStatusError as e:
-                print(f"HTTP error fetching quote for {symbol}: {e}")
+                print(f"HTTP error fetching quote for {symbol} from AlphaVantage: {e}")
                 results[symbol] = {"error": f"HTTP Error: {e.response.status_code}"}
             except Exception as e:
-                print(f"An unexpected error occurred fetching quote for {symbol}: {e}")
+                print(f"An unexpected error occurred fetching {symbol} from AlphaVantage: {e}")
                 results[symbol] = {"error": "An unexpected error occurred."}
     
+    return results
+
+--- FILE: projects/trust/src/market_data/market_scheduler.py ---
+
+import asyncio
+from datetime import datetime, time, timezone
+from src.market_data.polling_service import refresh_market_data
+
+# Market hours (US Eastern Time) adjusted for UTC approximations
+# Assuming Daylight Saving Time (DST) for standard market definition: 9:30 ET to 4:00 ET
+# UTC equivalents: 13:30 UTC to 20:00 UTC
+MARKET_OPEN_HOUR_UTC = 13
+MARKET_CLOSE_HOUR_UTC = 20
+POLL_INTERVAL_SECONDS = 3600 # 1 hour
+
+def is_market_open_time(now_utc: datetime) -> bool:
+    """Checks if the current UTC time falls within approximate US market hours (13:30 to 20:00 UTC) on a weekday."""
+    # Check for weekends (Monday=0, Sunday=6)
+    if now_utc.weekday() >= 5:
+        return False
+
+    now_time_utc = now_utc.time()
+    
+    # Check the hour range, focusing on the 13:30 to 20:00 window
+    market_open_time = time(MARKET_OPEN_HOUR_UTC, 30, 0)
+    market_close_time = time(MARKET_CLOSE_HOUR_UTC, 0, 0)
+    
+    if now_time_utc >= market_open_time and now_time_utc < market_close_time:
+        return True
+    
+    return False
+
+async def background_market_poller():
+    """
+    The main background worker loop for the market data drip service.
+    Runs hourly checks during market hours for the Top 25 (PRS 6.3).
+    Runs an additional check for EOD (Long Tail) updates in the hour after close.
+    """
+    print("Market Polling Scheduler: Background task initialized. Polling interval: 1 hour.")
+    
+    # Initial wait: Wait 10 seconds on startup to allow the API to fully initialize.
+    await asyncio.sleep(10)
+    
+    while True:
+        now_utc = datetime.now(timezone.utc)
+        
+        # --- Hourly Refresh (Top 25) ---
+        if is_market_open_time(now_utc):
+            print(f"[{now_utc.isoformat(timespec='minutes')}] Market is open. Triggering hourly Top 25 refresh.")
+            try:
+                # Only refresh top 25, the polling service handles rate limiting.
+                summary = await refresh_market_data(top_n=25)
+                print(f"Hourly refresh successful: {len(summary['refreshed_symbols'])} symbols updated.")
+            except Exception as e:
+                print(f"ERROR: Market polling failed: {e}")
+        
+        # --- EOD Refresh (Long Tail) ---
+        # EOD Window: The hour immediately after market close (20:00 UTC to 21:00 UTC).
+        # We assume the polling service, when given a high Top N, handles all symbols.
+        eod_window = now_utc.hour == MARKET_CLOSE_HOUR_UTC and now_utc.weekday() < 5
+        
+        if eod_window and now_utc.minute < 30: # Only run EOD once early in the hour (e.g., 20:00 - 20:29 UTC)
+            print(f"[{now_utc.isoformat(timespec='minutes')}] Entering EOD window. Triggering full daily refresh.")
+            try:
+                # Use a large number to target the 'long tail' for daily refresh.
+                summary = await refresh_market_data(top_n=1000)
+                print(f"EOD refresh complete: {len(summary['refreshed_symbols'])} symbols updated.")
+            except Exception as e:
+                print(f"ERROR: EOD polling failed: {e}")
+        
+        # Sleep for exactly one hour to maintain hourly frequency.
+        await asyncio.sleep(POLL_INTERVAL_SECONDS)
+
+
+--- FILE: projects/trust/src/market_data/polling_service.py ---
+
+"""
+Service to orchestrate the fetching of market data from various providers,
+apply rate-limiting, and persist the results to the database.
+(PRS Section 6.3)
+"""
+import asyncio
+from datetime import datetime, timezone
+from typing import Dict, Any, List
+
+from src import database as db
+from src.market_data import alpha_vantage_provider, stooq_provider
+
+# Per AlphaVantage free tier: 5 calls per minute.
+# We will make calls one by one, with a delay.
+SECONDS_BETWEEN_CALLS = 15 # (60 seconds / 4 calls = 15s/call)
+
+async def refresh_market_data(top_n: int = 25) -> Dict[str, Any]:
+    """
+    Refreshes market data for top N holdings by market value.
+    Tries the primary provider first, then falls back to a secondary provider.
+    Respects API rate limits by delaying individual calls.
+    """
+    print(f"--- Starting market data refresh for top {top_n} holdings... ---")
+    
+    all_holdings = db.get_holdings()
+    if not all_holdings:
+        return {"message": "No holdings found. Nothing to refresh.", "refreshed_symbols": [], "failed_symbols": []}
+
+    all_holdings.sort(key=lambda h: h.get('market_value', 0) or 0, reverse=True)
+    
+    seen = set()
+    unique_symbols_ranked = [h['symbol'] for h in all_holdings if not (h['symbol'] in seen or seen.add(h['symbol']))]
+    
+    symbols_to_refresh = unique_symbols_ranked[:top_n]
+    if not symbols_to_refresh:
+        return {"message": "Holdings exist, but no symbols to refresh.", "refreshed_symbols": [], "failed_symbols": []}
+        
+    print(f"Identified {len(symbols_to_refresh)} unique symbols to refresh: {symbols_to_refresh}")
+
+    successful_quotes: Dict[str, Dict[str, Any]] = {}
+    symbols_for_fallback: List[str] = []
+
+    # --- Primary Provider: Alpha Vantage ---
+    print("--- Stage 1: Querying Primary Provider (Alpha Vantage) ---")
+    for i, symbol in enumerate(symbols_to_refresh):
+        print(f"Processing {symbol} ({i+1}/{len(symbols_to_refresh)})...")
+        quotes = await alpha_vantage_provider.get_quotes([symbol])
+        quote_data = quotes.get(symbol, {})
+
+        if "error" in quote_data or not quote_data.get("price"):
+            print(f"Primary provider failed for {symbol}. Adding to fallback queue.")
+            symbols_for_fallback.append(symbol)
+        else:
+            successful_quotes[symbol] = {
+                "price": quote_data['price'],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "source": quote_data['source']
+            }
+        
+        # Wait before the next call to respect rate limits
+        if (i + 1) < len(symbols_to_refresh):
+            await asyncio.sleep(SECONDS_BETWEEN_CALLS)
+
+    # --- Fallback Provider: Stooq ---
+    if symbols_for_fallback:
+        print(f"--- Stage 2: Querying Fallback Provider (Stooq) for {len(symbols_for_fallback)} symbols ---")
+        # Stooq is safe to batch
+        fallback_quotes = await stooq_provider.get_quotes(symbols_for_fallback)
+        for symbol, data in fallback_quotes.items():
+            if "error" in data or not data.get("price"):
+                print(f"Fallback provider also failed for {symbol}: {data.get('error')}")
+            else:
+                print(f"Successfully fetched {symbol} from fallback.")
+                successful_quotes[symbol] = {
+                    "price": data['price'],
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "source": data['source']
+                }
+
+    # --- Persist results to the database ---
+    if successful_quotes:
+        print(f"Updating database with {len(successful_quotes)} new price points.")
+        db.update_holdings_with_new_prices(successful_quotes)
+        db.save_price_quotes(successful_quotes)
+    else:
+        print("No new price points to update in the database.")
+
+    print("--- Market data refresh complete. ---")
+    
+    final_failed_symbols = [s for s in symbols_to_refresh if s not in successful_quotes]
+    
+    return {
+        "message": "Market data refresh process finished.",
+        "refreshed_symbols": list(successful_quotes.keys()),
+        "failed_symbols": final_failed_symbols,
+        "total_symbols_processed": len(symbols_to_refresh)
+    }
+
+--- FILE: projects/trust/src/market_data/stooq_provider.py ---
+
+"""
+Implementation of the market data provider interface for Stooq.
+This provider serves as a fallback.
+"""
+import pandas_datareader.data as web
+import pandas as pd
+from datetime import date, timedelta
+from typing import List, Dict, Any
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+def _map_symbol_to_stooq(symbol: str) -> str:
+    """Converts a standard ticker to a Stooq-compatible ticker. Defaults to .US suffix."""
+    if '.' in symbol:
+        return symbol # Already has a suffix
+    return f"{symbol}.US"
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=6))
+async def get_quotes(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
+    """
+    Fetches the latest quote for a list of symbols using Stooq.
+    This function is async to maintain a consistent interface with other providers.
+
+    Args:
+        symbols: A list of standard stock/ETF symbols.
+
+    Returns:
+        A dictionary formatted similarly to the Alpha Vantage provider.
+    """
+    results = {}
+    stooq_symbols = [_map_symbol_to_stooq(s) for s in symbols]
+    
+    end_date = date.today()
+    start_date = end_date - timedelta(days=14) # Look back 2 weeks to find a trading day
+
+    try:
+        df = web.DataReader(stooq_symbols, "stooq", start=start_date, end=end_date)
+        close_prices = df['Close']
+
+        for original_symbol, stooq_symbol in zip(symbols, stooq_symbols):
+            if stooq_symbol not in close_prices.columns:
+                results[original_symbol] = {"error": f"Symbol {stooq_symbol} not found by Stooq."}
+                continue
+
+            latest_data = close_prices[stooq_symbol].dropna()
+            if latest_data.empty:
+                results[original_symbol] = {"error": f"No recent data for {stooq_symbol}."}
+                continue
+
+            # Most recent data is at the top for Stooq
+            latest_price = latest_data.iloc[0]
+            latest_date = latest_data.index[0]
+
+            results[original_symbol] = {
+                "price": str(latest_price),
+                "timestamp": latest_date.strftime('%Y-%m-%d'),
+                "source": "stooq"
+            }
+            
+    except Exception as e:
+        print(f"Error fetching data from Stooq: {e}")
+        # If the entire request fails, mark all symbols as failed for this provider
+        for symbol in symbols:
+            if symbol not in results:
+                results[symbol] = {"error": f"Stooq API failed: {e}"}
+
     return results
 
 

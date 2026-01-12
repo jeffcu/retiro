@@ -3,3 +3,7 @@ uvicorn[standard]
 python-dotenv
 python-multipart
 httpx
+pandas
+pandas-datareader
+tenacity
+python-dateutil

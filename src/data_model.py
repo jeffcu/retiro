@@ -16,25 +16,18 @@ class CashflowType(Enum):
 
     @classmethod
     def from_string(cls, value: str | None) -> CashflowType | None:
-        """Safely create a CashflowType from a string, ignoring case and whitespace."""
         if not value:
             return None
-        
         clean_value = value.strip().lower()
         for member in cls:
             if member.value.lower() == clean_value:
                 return member
-        
-        logging.warning(f"Unknown CashflowType value encountered: '{value}'. Treating as None.")
+        logging.warning(f"Unknown CashflowType value: '{value}'. Treating as None.")
         return None
 
 
 @dataclass
 class Transaction:
-    """
-    Represents a single, normalized financial transaction based on the internal data model.
-    See PRS Section 8.
-    """
     transaction_id: str
     account_id: str
     transaction_date: date
@@ -54,10 +47,6 @@ class Transaction:
 
 @dataclass
 class Holding:
-    """
-    Represents a single portfolio holding in a specific account.
-    (PRS Section 8)
-    """
     holding_id: str
     account_id: str
     symbol: str
@@ -67,3 +56,13 @@ class Holding:
     last_price: Decimal | None = None
     last_price_timestamp: datetime | None = None
     tags: list[str] = field(default_factory=list)
+
+
+@dataclass
+class PriceQuote:
+    """ Represents a single price point fetched from an external API. """
+    quote_id: str
+    symbol: str
+    price: Decimal
+    quote_timestamp: datetime
+    source: str | None = None
