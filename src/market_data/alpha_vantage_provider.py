@@ -7,7 +7,6 @@ import httpx
 from typing import List, Dict, Any
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
 BASE_URL = "https://www.alphavantage.co/query"
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
@@ -22,6 +21,7 @@ async def get_quotes(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
         A dictionary where keys are symbols and values are a dict containing the quote data 
         (price, timestamp, etc.) or an error message.
     """
+    API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
     if not API_KEY or API_KEY == "YOUR_API_KEY_HERE":
         print("ERROR: ALPHA_VANTAGE_API_KEY is not set.")
         return {symbol: {"error": "API key not configured"} for symbol in symbols}

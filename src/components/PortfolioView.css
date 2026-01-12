@@ -1,6 +1,7 @@
 .summary-container {
     display: flex;
     gap: 2rem;
+    align-items: center;
     padding: 1rem;
     background-color: var(--light-bg);
     border-radius: 6px;
@@ -67,6 +68,11 @@
 
 .table-container td:nth-last-child(-n+3) { /* Align numeric columns to the right */
     text-align: right;
+}
+
+.table-container .timestamp-cell {
+    color: #ccc;
+    font-size: 0.9em;
 }
 
 .table-container th.sortable {

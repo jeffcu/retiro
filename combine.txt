@@ -3530,6 +3530,7 @@ export default PlaceholderView;
 .summary-container {
     display: flex;
     gap: 2rem;
+    align-items: center;
     padding: 1rem;
     background-color: var(--light-bg);
     border-radius: 6px;
@@ -3556,6 +3557,27 @@ export default PlaceholderView;
 .summary-item .value.emphasis {
     color: var(--gold-accent);
     font-weight: bold;
+}
+
+.summary-actions {
+    margin-left: auto; /* Pushes the button to the far right */
+}
+
+.summary-actions button {
+    background-color: var(--gold-accent);
+    color: var(--dark-bg);
+    border: none;
+    padding: 0.8rem 1.5rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+    white-space: nowrap;
+}
+
+.summary-actions button:disabled {
+    background-color: #555;
+    cursor: not-allowed;
+    color: #999;
 }
 
 .chart-header {
@@ -3598,6 +3620,11 @@ export default PlaceholderView;
     text-align: right;
 }
 
+.table-container .timestamp-cell {
+    color: #ccc;
+    font-size: 0.9em;
+}
+
 .table-container th.sortable {
     cursor: pointer;
     user-select: none;
@@ -3638,7 +3665,7 @@ import BarChart from './BarChart';
 import TimeFilter from './TimeFilter';
 import HoldingEditorModal from './HoldingEditorModal';
 
-const PortfolioSummary = ({ holdings, formatCurrency }) => {
+const PortfolioSummary = ({ holdings, formatCurrency, onRefresh, isRefreshing }) => {
     const totalMarketValue = holdings.reduce((sum, h) => sum + (h.market_value || 0), 0);
     const totalCostBasis = holdings.reduce((sum, h) => sum + (h.cost_basis || 0), 0);
 
@@ -3656,6 +3683,11 @@ const PortfolioSummary = ({ holdings, formatCurrency }) => {
                 <span className="label">Filtered Market Value</span>
                 <span className="value emphasis">{formatCurrency(totalMarketValue)}</span>
             </div>
+            <div className="summary-actions">
+                 <button onClick={onRefresh} disabled={isRefreshing}>
+                    {isRefreshing ? 'Refreshing Prices...' : 'Refresh Market Prices'}
+                </button>
+            </div>
         </div>
     );
 };
@@ -3670,6 +3702,7 @@ const PortfolioView = () => {
     const [holdings, setHoldings] = useState([]);
     const [chartData, setChartData] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [isRefreshing, setIsRefreshing] = useState(false);
     const [error, setError] = useState(null);
     const [activeFilters, setActiveFilters] = useState({ period: 'all' });
     const [sortConfig, setSortConfig] = useState(null);
@@ -3705,6 +3738,25 @@ const PortfolioView = () => {
     useEffect(() => {
         fetchData();
     }, []);
+
+    const handleRefreshPrices = async () => {
+        setIsRefreshing(true);
+        try {
+            const response = await fetch('/api/market-data/refresh', { method: 'POST' });
+            if (!response.ok) {
+                const errData = await response.json();
+                throw new Error(errData.detail || 'Failed to start refresh');
+            }
+            // Give the background task a moment to work before refetching
+            setTimeout(() => {
+                fetchData(activeFilters);
+                setIsRefreshing(false);
+            }, 5000); // 5-second delay to allow backend processing
+        } catch (err) {
+            alert(`Error: ${err.message}`);
+            setIsRefreshing(false);
+        }
+    };
 
     const sortedHoldings = useMemo(() => {
         let sortableItems = [...holdings];
@@ -3766,6 +3818,12 @@ const PortfolioView = () => {
         maximumFractionDigits: 0,
     }).format(value || 0);
 
+    const formatTimestamp = (isoString) => {
+        if (!isoString) return 'N/A';
+        const date = new Date(isoString);
+        return date.toLocaleString();
+    };
+
     const totalMarketValue = holdings.reduce((sum, h) => sum + (h.market_value || 0), 0);
 
     if (error) return <p>Error loading portfolio: {error}</p>;
@@ -3779,7 +3837,12 @@ const PortfolioView = () => {
             />
 
             {!loading && holdings.length > 0 && (
-                <PortfolioSummary holdings={holdings} formatCurrency={formatCurrency} />
+                <PortfolioSummary 
+                    holdings={holdings} 
+                    formatCurrency={formatCurrency} 
+                    onRefresh={handleRefreshPrices}
+                    isRefreshing={isRefreshing}
+                />
             )}
 
             <div className="card">
@@ -3825,6 +3888,9 @@ const PortfolioView = () => {
                                             <th className="sortable" onClick={() => requestSort('tags')}>
                                                 Tags <span className="sort-indicator">{getSortIndicator('tags')}</span>
                                             </th>
+                                            <th className="sortable" onClick={() => requestSort('last_price_timestamp')}>
+                                                Last Updated <span className="sort-indicator">{getSortIndicator('last_price_timestamp')}</span>
+                                            </th>
                                             <th className="sortable" onClick={() => requestSort('quantity')}>
                                                 Quantity <span className="sort-indicator">{getSortIndicator('quantity')}</span>
                                             </th>
@@ -3847,6 +3913,7 @@ const PortfolioView = () => {
                                                 <td>{h.symbol}</td>
                                                 <td>{h.account_id}</td>
                                                 <td>{h.tags ? h.tags.join(', ') : ''}</td>
+                                                <td className="timestamp-cell">{formatTimestamp(h.last_price_timestamp)}</td>
                                                 <td>{h.quantity.toFixed(4)}</td>
                                                 <td>{formatCurrency(h.cost_basis)}</td>
                                                 <td>{formatCurrency(h.market_value)}</td>
@@ -3855,7 +3922,7 @@ const PortfolioView = () => {
                                     </tbody>
                                     <tfoot>
                                         <tr>
-                                            <td colSpan="5">Total Market Value</td>
+                                            <td colSpan="6">Total Market Value</td>
                                             <td>{formatCurrency(totalMarketValue)}</td>
                                         </tr>
                                     </tfoot>

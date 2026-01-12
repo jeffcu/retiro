@@ -133,6 +133,12 @@ const PortfolioView = () => {
         maximumFractionDigits: 0,
     }).format(value || 0);
 
+    const formatTimestamp = (isoString) => {
+        if (!isoString) return 'N/A';
+        const date = new Date(isoString);
+        return date.toLocaleString();
+    };
+
     const totalMarketValue = holdings.reduce((sum, h) => sum + (h.market_value || 0), 0);
 
     if (error) return <p>Error loading portfolio: {error}</p>;
@@ -146,7 +152,10 @@ const PortfolioView = () => {
             />
 
             {!loading && holdings.length > 0 && (
-                <PortfolioSummary holdings={holdings} formatCurrency={formatCurrency} />
+                <PortfolioSummary 
+                    holdings={holdings} 
+                    formatCurrency={formatCurrency} 
+                />
             )}
 
             <div className="card">
@@ -192,6 +201,9 @@ const PortfolioView = () => {
                                             <th className="sortable" onClick={() => requestSort('tags')}>
                                                 Tags <span className="sort-indicator">{getSortIndicator('tags')}</span>
                                             </th>
+                                            <th className="sortable" onClick={() => requestSort('last_price_timestamp')}>
+                                                Last Updated <span className="sort-indicator">{getSortIndicator('last_price_timestamp')}</span>
+                                            </th>
                                             <th className="sortable" onClick={() => requestSort('quantity')}>
                                                 Quantity <span className="sort-indicator">{getSortIndicator('quantity')}</span>
                                             </th>
@@ -214,6 +226,7 @@ const PortfolioView = () => {
                                                 <td>{h.symbol}</td>
                                                 <td>{h.account_id}</td>
                                                 <td>{h.tags ? h.tags.join(', ') : ''}</td>
+                                                <td className="timestamp-cell">{formatTimestamp(h.last_price_timestamp)}</td>
                                                 <td>{h.quantity.toFixed(4)}</td>
                                                 <td>{formatCurrency(h.cost_basis)}</td>
                                                 <td>{formatCurrency(h.market_value)}</td>
@@ -222,7 +235,7 @@ const PortfolioView = () => {
                                     </tbody>
                                     <tfoot>
                                         <tr>
-                                            <td colSpan="5">Total Market Value</td>
+                                            <td colSpan="6">Total Market Value</td>
                                             <td>{formatCurrency(totalMarketValue)}</td>
                                         </tr>
                                     </tfoot>
