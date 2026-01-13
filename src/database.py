@@ -380,8 +380,17 @@ def get_filter_options() -> Dict[str, List[str]]:
     cursor = conn.cursor()
     cursor.execute("SELECT DISTINCT category FROM transactions WHERE category IS NOT NULL AND category != '' AND category != 'Uncategorized' ORDER BY category")
     options['categories'] = [row['category'] for row in cursor.fetchall()]
-    cursor.execute("SELECT DISTINCT account_id FROM transactions ORDER BY account_id")
+
+    # --- FIX: Query both tables for a complete list of accounts ---
+    cursor.execute("""
+        SELECT account_id FROM transactions WHERE account_id IS NOT NULL
+        UNION
+        SELECT account_id FROM holdings WHERE account_id IS NOT NULL
+        ORDER BY account_id ASC
+    """)
     options['accounts'] = [row['account_id'] for row in cursor.fetchall()]
+    # --- END FIX ---
+
     cursor.execute("SELECT DISTINCT institution FROM transactions WHERE institution IS NOT NULL ORDER BY institution")
     options['institutions'] = [row['institution'] for row in cursor.fetchall()]
     options['cashflowTypes'] = ["Income", "Expense", "Transfer", "Capital Expenditure", "Investment"]

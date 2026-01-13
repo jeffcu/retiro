@@ -1,4 +1,4 @@
-Curie Trust Financial Control Center — Project Requirements Specification (PRS) v1.1
+Curie Trust Financial Control Center — Project Requirements Specification (PRS) v1.2
 
 1) Mission
 
@@ -17,11 +17,12 @@ Sankey diagrams are not decorative. They are the primary language for “money a
 
 2.1 Required Sankey Diagrams (Must-Haves)
 
-A) Income → Uses of Money (Home Screen Primary Sankey)
-	•	Left node: Total Income for selected period
-	•	Middle split: Expenses (consumption), CapEx (asset-building), Net Savings/Surplus
-	•	Right split for Expenses: Top 5–7 budget categories, remainder as Other
-	•	CapEx flows to specific asset(s) (e.g., “Main Residence Basis”)
+A) Income Sources → Uses of Money (Home Screen Primary Sankey) - REVISED
+	•	Left tier: Income sources, broken down by category (e.g., "Social Security", "Interest Income", "Tax Refunds", "Other Income"). This is driven by user-defined rules that assign a category to transactions with the 'Income' cashflow type.
+	•	Middle-left node: A single aggregation node for "Total Income" for the selected period.
+	•	Middle-right split: From "Total Income", flows to Expenses (consumption), CapEx (asset-building), and Net Savings/Surplus.
+	•	Right split for Expenses: Top 5–7 budget categories, remainder as Other.
+	•	CapEx flows to specific asset(s) (e.g., “Main Residence Basis”).
 
 B) Estate Flow (Net Worth / Estate Screen Sankey)
 	•	Left: Income + portfolio distributions (if modeled)
@@ -42,7 +43,7 @@ C) Portfolio Return Waterfall as Sankey (Portfolio Screen)
 	•	CapEx → asset ledger entries
 	•	Fees/taxes → supporting manual records
 	•	Must support: month, YTD, rolling 12 months, custom range.
-	•	Must cap complexity: max ~9–12 nodes per Sankey; enforce “Other” aggregation.
+	•	Must cap complexity: max ~12-15 nodes per Sankey; enforce “Other” aggregation.
 
 ⸻
 
@@ -53,12 +54,15 @@ C) Portfolio Return Waterfall as Sankey (Portfolio Screen)
 Every transaction is exactly one:
 	•	Income: Money entering the trust's operational cash flow.
 	•	Expense (consumption): Money leaving the trust for goods/services.
-	•	Transfer (between trust-controlled accounts; net-zero for cash flow).
+	•	Transfer (between trust-controlled accounts; net-zero for cash flow). Transfers are NOT considered income or expenses and are excluded from the primary Sankey.
 	•	CapEx (capital improvement; increases asset basis).
 	•	Investment: A transaction affecting portfolio value but not operational cash flow (e.g., security purchases, sales, reinvested dividends). Investment-type transactions are excluded from the main Income→Uses Sankey.
 
 Expenses drive “spend/burn.”
 CapEx is excluded from “spend/burn” but included in net worth via asset basis.
+
+3.1.1 Semantic Clarification on Rebates & Returns
+	•	While technically negative expenses, credits, rebates, and returns from merchants can be treated as a form of income for visualization simplicity. The recommended method is to create a rule that assigns these transactions the `Income` cashflow type and a specific category like "Rebates & Returns". This allows them to appear as a distinct income stream in the Sankey chart, aligning with user mental models.
 
 3.2 Tags (Non-Exclusive, Multi-Label)
 	•	A transaction can have 0..N tags (e.g., Travel AND Italy26).
@@ -77,7 +81,7 @@ CapEx is excluded from “spend/burn” but included in net worth via asset basi
 
 Priority order:
 	1.	Latest Net Worth Hero
-	2.	Income→Uses Sankey
+	2.	Income→Uses Sankey (Revised with income sources)
 	3.	Portfolio Return Sankey (Gross→Fees→Taxes→After-Tax)
 	4.	Alerts/insights (spend spikes, missing imports, stale prices)
 

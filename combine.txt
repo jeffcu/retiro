@@ -398,7 +398,7 @@ Development will follow the user-feature centric plan outlined in the PRS (Secti
 
 --- FILE: projects/trust/library/Trust Financial System.txt ---
 
-Curie Trust Financial Control Center — Project Requirements Specification (PRS) v1.1
+Curie Trust Financial Control Center — Project Requirements Specification (PRS) v1.2
 
 1) Mission
 
@@ -417,11 +417,12 @@ Sankey diagrams are not decorative. They are the primary language for “money a
 
 2.1 Required Sankey Diagrams (Must-Haves)
 
-A) Income → Uses of Money (Home Screen Primary Sankey)
-	•	Left node: Total Income for selected period
-	•	Middle split: Expenses (consumption), CapEx (asset-building), Net Savings/Surplus
-	•	Right split for Expenses: Top 5–7 budget categories, remainder as Other
-	•	CapEx flows to specific asset(s) (e.g., “Main Residence Basis”)
+A) Income Sources → Uses of Money (Home Screen Primary Sankey) - REVISED
+	•	Left tier: Income sources, broken down by category (e.g., "Social Security", "Interest Income", "Tax Refunds", "Other Income"). This is driven by user-defined rules that assign a category to transactions with the 'Income' cashflow type.
+	•	Middle-left node: A single aggregation node for "Total Income" for the selected period.
+	•	Middle-right split: From "Total Income", flows to Expenses (consumption), CapEx (asset-building), and Net Savings/Surplus.
+	•	Right split for Expenses: Top 5–7 budget categories, remainder as Other.
+	•	CapEx flows to specific asset(s) (e.g., “Main Residence Basis”).
 
 B) Estate Flow (Net Worth / Estate Screen Sankey)
 	•	Left: Income + portfolio distributions (if modeled)
@@ -442,7 +443,7 @@ C) Portfolio Return Waterfall as Sankey (Portfolio Screen)
 	•	CapEx → asset ledger entries
 	•	Fees/taxes → supporting manual records
 	•	Must support: month, YTD, rolling 12 months, custom range.
-	•	Must cap complexity: max ~9–12 nodes per Sankey; enforce “Other” aggregation.
+	•	Must cap complexity: max ~12-15 nodes per Sankey; enforce “Other” aggregation.
 
 ⸻
 
@@ -453,12 +454,15 @@ C) Portfolio Return Waterfall as Sankey (Portfolio Screen)
 Every transaction is exactly one:
 	•	Income: Money entering the trust's operational cash flow.
 	•	Expense (consumption): Money leaving the trust for goods/services.
-	•	Transfer (between trust-controlled accounts; net-zero for cash flow).
+	•	Transfer (between trust-controlled accounts; net-zero for cash flow). Transfers are NOT considered income or expenses and are excluded from the primary Sankey.
 	•	CapEx (capital improvement; increases asset basis).
 	•	Investment: A transaction affecting portfolio value but not operational cash flow (e.g., security purchases, sales, reinvested dividends). Investment-type transactions are excluded from the main Income→Uses Sankey.
 
 Expenses drive “spend/burn.”
 CapEx is excluded from “spend/burn” but included in net worth via asset basis.
+
+3.1.1 Semantic Clarification on Rebates & Returns
+	•	While technically negative expenses, credits, rebates, and returns from merchants can be treated as a form of income for visualization simplicity. The recommended method is to create a rule that assigns these transactions the `Income` cashflow type and a specific category like "Rebates & Returns". This allows them to appear as a distinct income stream in the Sankey chart, aligning with user mental models.
 
 3.2 Tags (Non-Exclusive, Multi-Label)
 	•	A transaction can have 0..N tags (e.g., Travel AND Italy26).
@@ -477,7 +481,7 @@ CapEx is excluded from “spend/burn” but included in net worth via asset basi
 
 Priority order:
 	1.	Latest Net Worth Hero
-	2.	Income→Uses Sankey
+	2.	Income→Uses Sankey (Revised with income sources)
 	3.	Portfolio Return Sankey (Gross→Fees→Taxes→After-Tax)
 	4.	Alerts/insights (spend spikes, missing imports, stale prices)
 
@@ -695,6 +699,7 @@ Phase 7: Forecasting
 	•	increases the selected asset’s basis ledger
 	•	Top 25 holdings refresh hourly during market hours; others refresh after market; UI clearly indicates quote staleness.
 	•	Portfolio screen displays before fees / after fees / after taxes and the Sankey that explains the difference.
+
 
 --- FILE: projects/trust/library/acceptance_test.md.txt ---
 
@@ -1706,8 +1711,17 @@ def get_filter_options() -> Dict[str, List[str]]:
     cursor = conn.cursor()
     cursor.execute("SELECT DISTINCT category FROM transactions WHERE category IS NOT NULL AND category != '' AND category != 'Uncategorized' ORDER BY category")
     options['categories'] = [row['category'] for row in cursor.fetchall()]
-    cursor.execute("SELECT DISTINCT account_id FROM transactions ORDER BY account_id")
+
+    # --- FIX: Query both tables for a complete list of accounts ---
+    cursor.execute("""
+        SELECT account_id FROM transactions WHERE account_id IS NOT NULL
+        UNION
+        SELECT account_id FROM holdings WHERE account_id IS NOT NULL
+        ORDER BY account_id ASC
+    """)
     options['accounts'] = [row['account_id'] for row in cursor.fetchall()]
+    # --- END FIX ---
+
     cursor.execute("SELECT DISTINCT institution FROM transactions WHERE institution IS NOT NULL ORDER BY institution")
     options['institutions'] = [row['institution'] for row in cursor.fetchall()]
     options['cashflowTypes'] = ["Income", "Expense", "Transfer", "Capital Expenditure", "Investment"]
@@ -3559,27 +3573,6 @@ export default PlaceholderView;
     font-weight: bold;
 }
 
-.summary-actions {
-    margin-left: auto; /* Pushes the button to the far right */
-}
-
-.summary-actions button {
-    background-color: var(--gold-accent);
-    color: var(--dark-bg);
-    border: none;
-    padding: 0.8rem 1.5rem;
-    border-radius: 4px;
-    cursor: pointer;
-    font-weight: bold;
-    white-space: nowrap;
-}
-
-.summary-actions button:disabled {
-    background-color: #555;
-    cursor: not-allowed;
-    color: #999;
-}
-
 .chart-header {
     display: flex;
     justify-content: space-between;
@@ -3665,7 +3658,7 @@ import BarChart from './BarChart';
 import TimeFilter from './TimeFilter';
 import HoldingEditorModal from './HoldingEditorModal';
 
-const PortfolioSummary = ({ holdings, formatCurrency, onRefresh, isRefreshing }) => {
+const PortfolioSummary = ({ holdings, formatCurrency }) => {
     const totalMarketValue = holdings.reduce((sum, h) => sum + (h.market_value || 0), 0);
     const totalCostBasis = holdings.reduce((sum, h) => sum + (h.cost_basis || 0), 0);
 
@@ -3683,11 +3676,6 @@ const PortfolioSummary = ({ holdings, formatCurrency, onRefresh, isRefreshing })
                 <span className="label">Filtered Market Value</span>
                 <span className="value emphasis">{formatCurrency(totalMarketValue)}</span>
             </div>
-            <div className="summary-actions">
-                 <button onClick={onRefresh} disabled={isRefreshing}>
-                    {isRefreshing ? 'Refreshing Prices...' : 'Refresh Market Prices'}
-                </button>
-            </div>
         </div>
     );
 };
@@ -3702,7 +3690,6 @@ const PortfolioView = () => {
     const [holdings, setHoldings] = useState([]);
     const [chartData, setChartData] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [isRefreshing, setIsRefreshing] = useState(false);
     const [error, setError] = useState(null);
     const [activeFilters, setActiveFilters] = useState({ period: 'all' });
     const [sortConfig, setSortConfig] = useState(null);
@@ -3738,25 +3725,6 @@ const PortfolioView = () => {
     useEffect(() => {
         fetchData();
     }, []);
-
-    const handleRefreshPrices = async () => {
-        setIsRefreshing(true);
-        try {
-            const response = await fetch('/api/market-data/refresh', { method: 'POST' });
-            if (!response.ok) {
-                const errData = await response.json();
-                throw new Error(errData.detail || 'Failed to start refresh');
-            }
-            // Give the background task a moment to work before refetching
-            setTimeout(() => {
-                fetchData(activeFilters);
-                setIsRefreshing(false);
-            }, 5000); // 5-second delay to allow backend processing
-        } catch (err) {
-            alert(`Error: ${err.message}`);
-            setIsRefreshing(false);
-        }
-    };
 
     const sortedHoldings = useMemo(() => {
         let sortableItems = [...holdings];
@@ -3840,8 +3808,6 @@ const PortfolioView = () => {
                 <PortfolioSummary 
                     holdings={holdings} 
                     formatCurrency={formatCurrency} 
-                    onRefresh={handleRefreshPrices}
-                    isRefreshing={isRefreshing}
                 />
             )}
 
@@ -5766,7 +5732,6 @@ import httpx
 from typing import List, Dict, Any
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
 BASE_URL = "https://www.alphavantage.co/query"
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
@@ -5781,6 +5746,7 @@ async def get_quotes(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
         A dictionary where keys are symbols and values are a dict containing the quote data 
         (price, timestamp, etc.) or an error message.
     """
+    API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
     if not API_KEY or API_KEY == "YOUR_API_KEY_HERE":
         print("ERROR: ALPHA_VANTAGE_API_KEY is not set.")
         return {symbol: {"error": "API key not configured"} for symbol in symbols}
@@ -5819,6 +5785,7 @@ async def get_quotes(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
                 results[symbol] = {"error": "An unexpected error occurred."}
     
     return results
+
 
 --- FILE: projects/trust/src/market_data/market_scheduler.py ---
 
