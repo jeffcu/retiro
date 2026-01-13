@@ -60,6 +60,7 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Hold
         'cost_basis': ['costbasis', 'cost', 'totalcost', 'costbasis($)'],
         'market_value': ['marketvalue', 'value', 'totalvalue', 'value($)'],
         'tags': ['tags', 'group', 'category'],
+        'asset_type': ['assettype', 'type', 'assetclass', 'securitytypedescription'],
     }
 
     header_map = {}
@@ -124,6 +125,11 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Hold
         if tags_key and row.get(tags_key):
             tags = [t.strip() for t in row[tags_key].split(',') if t.strip()]
 
+        asset_type = None
+        asset_type_key = header_map.get('asset_type')
+        if asset_type_key and row.get(asset_type_key):
+            asset_type = row[asset_type_key].strip()
+
         # --- AGGREGATION LOGIC ---
         if symbol in holdings_map:
             # Aggregate data for the existing symbol
@@ -137,6 +143,9 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Hold
             
             # Merge tags, ensuring uniqueness
             existing_holding.tags = list(set(existing_holding.tags) | set(tags))
+            # First non-empty asset type wins
+            if asset_type and not existing_holding.asset_type:
+                 existing_holding.asset_type = asset_type
             
             warnings.append({
                 "row_number": row_num,
@@ -156,7 +165,8 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Hold
                 quantity=quantity,
                 cost_basis=cost_basis,
                 market_value=market_value,
-                tags=tags
+                tags=tags,
+                asset_type=asset_type
             )
 
     holdings = list(holdings_map.values())

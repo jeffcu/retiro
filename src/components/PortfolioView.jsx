@@ -29,6 +29,7 @@ const PortfolioSummary = ({ holdings, formatCurrency }) => {
 
 const filterConfig = [
     { id: 'account_id', label: 'Account', type: 'select', optionsKey: 'accounts' },
+    { id: 'asset_type', label: 'Asset Type', type: 'select', optionsKey: 'assetTypes' },
     { id: 'symbol', label: 'Symbol', type: 'text', placeholder: 'e.g., AAPL' },
     { id: 'tags', label: 'Tag Contains', type: 'text', placeholder: 'e.g., ESG' },
 ];
@@ -198,6 +199,9 @@ const PortfolioView = () => {
                                             <th className="sortable" onClick={() => requestSort('account_id')}>
                                                 Account <span className="sort-indicator">{getSortIndicator('account_id')}</span>
                                             </th>
+                                            <th className="sortable" onClick={() => requestSort('asset_type')}>
+                                                Asset Type <span className="sort-indicator">{getSortIndicator('asset_type')}</span>
+                                            </th>
                                             <th className="sortable" onClick={() => requestSort('tags')}>
                                                 Tags <span className="sort-indicator">{getSortIndicator('tags')}</span>
                                             </th>
@@ -225,6 +229,7 @@ const PortfolioView = () => {
                                             >
                                                 <td>{h.symbol}</td>
                                                 <td>{h.account_id}</td>
+                                                <td>{h.asset_type}</td>
                                                 <td>{h.tags ? h.tags.join(', ') : ''}</td>
                                                 <td className="timestamp-cell">{formatTimestamp(h.last_price_timestamp)}</td>
                                                 <td>{h.quantity.toFixed(4)}</td>
@@ -235,7 +240,7 @@ const PortfolioView = () => {
                                     </tbody>
                                     <tfoot>
                                         <tr>
-                                            <td colSpan="6">Total Market Value</td>
+                                            <td colSpan="7">Total Market Value</td>
                                             <td>{formatCurrency(totalMarketValue)}</td>
                                         </tr>
                                     </tfoot>

@@ -52,6 +52,7 @@ class Holding:
     symbol: str
     quantity: Decimal
     cost_basis: Decimal
+    asset_type: str | None = None
     market_value: Decimal | None = None
     last_price: Decimal | None = None
     last_price_timestamp: datetime | None = None

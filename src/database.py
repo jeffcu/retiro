@@ -103,6 +103,9 @@ def _ensure_schema(conn: sqlite3.Connection):
     if 'tags' not in holdings_cols:
         print("--- MIGRATING SCHEMA: Adding 'tags' to 'holdings'. ---")
         cursor.execute("ALTER TABLE holdings ADD COLUMN tags TEXT;")
+    if 'asset_type' not in holdings_cols:
+        print("--- MIGRATING SCHEMA: Adding 'asset_type' to 'holdings'. ---")
+        cursor.execute("ALTER TABLE holdings ADD COLUMN asset_type TEXT;")
 
     cursor.execute("PRAGMA table_info(transactions)")
     trans_cols = {row[1] for row in cursor.fetchall()}
@@ -227,13 +230,14 @@ def save_holdings_snapshot(holdings: List[Holding], account_id: str):
         print(f"Deleted {deleted_count} stale holdings for account '{cleaned_account_id}'.")
         if holdings:
             sql = """INSERT INTO holdings (
-                        holding_id, account_id, symbol, quantity, cost_basis, market_value, tags
-                     ) VALUES (?, ?, ?, ?, ?, ?, ?);"""
+                        holding_id, account_id, symbol, quantity, cost_basis, market_value, tags, asset_type
+                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);"""
             data_to_insert = [
                 (
                     h.holding_id, h.account_id, h.symbol, float(h.quantity), float(h.cost_basis),
                     float(h.market_value) if h.market_value is not None else None,
-                    ','.join(h.tags) if h.tags else None
+                    ','.join(h.tags) if h.tags else None,
+                    h.asset_type
                 ) for h in holdings
             ]
             cursor.executemany(sql, data_to_insert)
@@ -326,7 +330,7 @@ def get_holdings(filters: Dict[str, Any] = None) -> List[Dict[str, Any]]:
     conn = get_db_connection()
     cursor = conn.cursor()
     filters = filters or {}
-    allowed_fields, period = ['account_id', 'symbol', 'tags'], filters.pop('period', None)
+    allowed_fields, period = ['account_id', 'symbol', 'tags', 'asset_type'], filters.pop('period', None)
     clauses, params = _build_where_clause(filters, allowed_fields)
     _apply_period_filter_to_query(clauses, params, period, date_column='last_price_timestamp')
     where_str = f"WHERE {' AND '.join(clauses)}" if clauses else ""
@@ -381,7 +385,6 @@ def get_filter_options() -> Dict[str, List[str]]:
     cursor.execute("SELECT DISTINCT category FROM transactions WHERE category IS NOT NULL AND category != '' AND category != 'Uncategorized' ORDER BY category")
     options['categories'] = [row['category'] for row in cursor.fetchall()]
 
-    # --- FIX: Query both tables for a complete list of accounts ---
     cursor.execute("""
         SELECT account_id FROM transactions WHERE account_id IS NOT NULL
         UNION
@@ -389,10 +392,13 @@ def get_filter_options() -> Dict[str, List[str]]:
         ORDER BY account_id ASC
     """)
     options['accounts'] = [row['account_id'] for row in cursor.fetchall()]
-    # --- END FIX ---
 
     cursor.execute("SELECT DISTINCT institution FROM transactions WHERE institution IS NOT NULL ORDER BY institution")
     options['institutions'] = [row['institution'] for row in cursor.fetchall()]
+
+    cursor.execute("SELECT DISTINCT asset_type FROM holdings WHERE asset_type IS NOT NULL AND asset_type != '' ORDER BY asset_type")
+    options['assetTypes'] = [row['asset_type'] for row in cursor.fetchall()]
+
     options['cashflowTypes'] = ["Income", "Expense", "Transfer", "Capital Expenditure", "Investment"]
     conn.close()
     return options
@@ -438,7 +444,7 @@ def get_holdings_aggregation_by_symbol(filters: Dict[str, Any]) -> List[Dict[str
     conn = get_db_connection()
     cursor = conn.cursor()
     filters = filters or {}
-    allowed_fields, period = ['account_id', 'symbol', 'tags'], filters.pop('period', None)
+    allowed_fields, period = ['account_id', 'symbol', 'tags', 'asset_type'], filters.pop('period', None)
     clauses, params = _build_where_clause(filters, allowed_fields)
     _apply_period_filter_to_query(clauses, params, period, date_column='last_price_timestamp')
     where_str = f"WHERE {' AND '.join(clauses)}" if clauses else ""
