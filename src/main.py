@@ -65,6 +65,7 @@ class TransactionUpdate(BaseModel):
 
 class HoldingUpdate(BaseModel):
     tags: List[str] = []
+    asset_type: Optional[str] = None
 
 
 @app.on_event("startup")
@@ -152,8 +153,20 @@ def get_transaction_filters(category: Optional[str] = Query(None), account_id: O
     filters = {"category": category, "account_id": account_id, "institution": institution, "description": description, "tags": tags, "cashflow_type": cashflow_type, "period": period}
     return {k: v for k, v in filters.items() if v is not None}
 
-def get_holding_filters(account_id: Optional[str] = Query(None), symbol: Optional[str] = Query(None), tags: Optional[str] = Query(None), period: Optional[str] = Query(None)) -> Dict[str, Any]:
-    filters = {"account_id": account_id, "symbol": symbol, "tags": tags, "period": period}
+def get_holding_filters(
+    account_id: Optional[str] = Query(None),
+    symbol: Optional[str] = Query(None),
+    tags: Optional[str] = Query(None),
+    asset_type: Optional[str] = Query(None),  
+    period: Optional[str] = Query(None)
+) -> Dict[str, Any]:
+    filters = {
+        "account_id": account_id,
+        "symbol": symbol,
+        "tags": tags,
+        "asset_type": asset_type,  
+        "period": period
+    }
     return {k: v for k, v in filters.items() if v is not None}
 
 @app.get("/api/transactions", tags=["Data"])
@@ -184,7 +197,8 @@ async def get_filtered_holdings(filters: Dict[str, Any] = Depends(get_holding_fi
 
 @app.put("/api/holdings/{holding_id}", tags=["Data"])
 async def update_holding(holding_id: str, payload: HoldingUpdate):
-    db.update_holding(holding_id, payload.tags)
+    updates = payload.dict()
+    db.update_holding(holding_id, updates)
     updated_holding = db.get_holding(holding_id)
     if not updated_holding:
         raise HTTPException(status_code=404, detail="Holding not found after update.")
@@ -234,15 +248,27 @@ async def purge_data(request: PurgeRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-# --- NEW: Endpoint for Market Data --- #
+# --- Market Data Endpoints --- #
 @app.post("/api/market-data/refresh", tags=["Market Data"])
-async def trigger_market_data_refresh(background_tasks: BackgroundTasks):
+async def trigger_market_data_refresh(
+    background_tasks: BackgroundTasks,
+    limit: int = Query(25, description="Number of top holdings to refresh. Use 0 for all.")
+):
     """
-    Triggers a background task to refresh market data for the top 25 holdings.
-    Returns an immediate response to the client.
+    Triggers a background task to refresh market data for top holdings using the live provider.
     """
-    background_tasks.add_task(polling_service.refresh_market_data, top_n=25)
-    return {"message": "Market data refresh initiated in the background for top 25 holdings."}
+    limit = limit if limit > 0 else 1000 # Use a high number for 'all'
+    background_tasks.add_task(polling_service.refresh_market_data, top_n=limit)
+    return {"message": f"Live market data refresh initiated in the background for top {limit} holdings."}
+
+@app.post("/api/market-data/refresh-eod", tags=["Market Data"])
+async def trigger_eod_market_data_refresh(background_tasks: BackgroundTasks):
+    """
+    Triggers a background task to refresh all holdings with yesterday's closing price
+    using the bulk EOD provider.
+    """
+    background_tasks.add_task(polling_service.refresh_eod_data)
+    return {"message": "Bulk EOD data refresh initiated in the background for ALL holdings."}
 
 
 if __name__ == "__main__":

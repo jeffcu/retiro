@@ -6,17 +6,19 @@ echo "--- Starting Curie Trust Backend Server ---"
 
 PORT=8000
 
-# Find the process ID (PID) listening on the port
-PID=$(lsof -t -i:$PORT)
-
-# If a PID is found, terminate the process
-if [ -n "$PID" ]; then
-    echo "Found existing process on port $PORT with PID $PID. Terminating..."
-    kill -9 $PID
+# Find and terminate any process(es) listening on the port.
+# This version uses a more robust method to handle multiple PIDs.
+PIDS=$(lsof -t -i:$PORT)
+if [ -n "$PIDS" ]; then
+    # The tr command replaces newlines with spaces for cleaner logging.
+    echo "Found existing process(es) on port $PORT with PID(s): $(echo $PIDS | tr '\n' ' '). Terminating..."
+    # Pipe the PIDs to xargs to kill them all reliably.
+    echo "$PIDS" | xargs kill -9
     sleep 1 # Give a moment for the OS to release the port
 else
     echo "No existing process found on port $PORT. Starting fresh."
 fi
+
 
 # Check for a virtual environment and activate it
 if [ -d ".venv" ]; then

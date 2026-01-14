@@ -356,12 +356,35 @@ def get_holding(holding_id: str) -> Dict[str, Any] | None:
     row_dict['tags'] = [tag.strip() for tag in row_dict['tags'].split(',')] if row_dict.get('tags') else []
     return row_dict
 
-def update_holding(holding_id: str, tags: List[str]):
+def update_holding(holding_id: str, updates: Dict[str, Any]):
     conn = get_db_connection()
     cursor = conn.cursor()
-    tags_str = ','.join(tags) if tags else None
+    
+    allowed_fields = ['tags', 'asset_type']
+    set_clauses = []
+    params = []
+
+    for field, value in updates.items():
+        if field not in allowed_fields:
+            continue
+
+        if field == 'tags' and isinstance(value, list):
+            set_clauses.append("tags = ?")
+            params.append(','.join(value) if value else None)
+        elif field == 'asset_type':
+            set_clauses.append("asset_type = ?")
+            # Ensure empty strings are saved as NULL
+            params.append(value if value and str(value).strip() else None)
+    
+    if not set_clauses:
+        print(f"Warning: No valid fields to update for holding {holding_id}.")
+        return
+
+    sql = f"UPDATE holdings SET {', '.join(set_clauses)} WHERE holding_id = ?"
+    params.append(holding_id)
+
     try:
-        cursor.execute("UPDATE holdings SET tags = ? WHERE holding_id = ?", (tags_str, holding_id))
+        cursor.execute(sql, tuple(params))
         conn.commit()
         if cursor.rowcount == 0:
             print(f"Warning: Attempted to update holding {holding_id}, but no record was found.")
@@ -613,3 +636,4 @@ def update_holdings_with_new_prices(quotes: Dict[str, Dict[str, Any]]):
         raise e
     finally:
         conn.close()
+

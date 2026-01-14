@@ -1,68 +1,70 @@
 import asyncio
-from datetime import datetime, time, timezone
+from datetime import datetime, time, timezone, timedelta
 from src.market_data.polling_service import refresh_market_data
 
-# Market hours (US Eastern Time) adjusted for UTC approximations
-# Assuming Daylight Saving Time (DST) for standard market definition: 9:30 ET to 4:00 ET
-# UTC equivalents: 13:30 UTC to 20:00 UTC
-MARKET_OPEN_HOUR_UTC = 13
-MARKET_CLOSE_HOUR_UTC = 20
-POLL_INTERVAL_SECONDS = 3600 # 1 hour
+# Target times in US Eastern Time
+MID_DAY_REFRESH_EST = time(12, 0, 0)
+AFTER_MARKET_REFRESH_EST = time(16, 0, 0)
 
-def is_market_open_time(now_utc: datetime) -> bool:
-    """Checks if the current UTC time falls within approximate US market hours (13:30 to 20:00 UTC) on a weekday."""
-    # Check for weekends (Monday=0, Sunday=6)
-    if now_utc.weekday() >= 5:
-        return False
+def get_seconds_until(target_time_est: time) -> float:
+    """
+    Calculates seconds until the next occurrence of a target time in EST.
+    Handles timezone conversion from UTC.
+    """
+    # EST is UTC-5, EDT is UTC-4. We'll approximate with UTC-4 for modern relevance.
+    est = timezone(timedelta(hours=-4), 'EDT')
+    now_est = datetime.now(est)
+    
+    target_today = now_est.replace(hour=target_time_est.hour, minute=target_time_est.minute, second=0, microsecond=0)
+    
+    # If the target time has already passed today, schedule for tomorrow.
+    if target_today < now_est:
+        target_tomorrow = target_today + timedelta(days=1)
+        # Handle weekends: if tomorrow is Sat, schedule for Mon. If Sun, schedule for Mon.
+        if target_tomorrow.weekday() == 5: # Saturday
+            target_tomorrow += timedelta(days=2)
+        elif target_tomorrow.weekday() == 6: # Sunday
+            target_tomorrow += timedelta(days=1)
+        return (target_tomorrow - now_est).total_seconds()
+    
+    # Handle weekends for today's schedule
+    if now_est.weekday() >= 5: # It's currently Sat or Sun
+        # Find next Monday
+        next_monday = now_est + timedelta(days=(7 - now_est.weekday()))
+        next_run_time = next_monday.replace(hour=target_time_est.hour, minute=target_time_est.minute, second=0, microsecond=0)
+        return (next_run_time - now_est).total_seconds()
 
-    now_time_utc = now_utc.time()
-    
-    # Check the hour range, focusing on the 13:30 to 20:00 window
-    market_open_time = time(MARKET_OPEN_HOUR_UTC, 30, 0)
-    market_close_time = time(MARKET_CLOSE_HOUR_UTC, 0, 0)
-    
-    if now_time_utc >= market_open_time and now_time_utc < market_close_time:
-        return True
-    
-    return False
+    return (target_today - now_est).total_seconds()
 
 async def background_market_poller():
     """
-    The main background worker loop for the market data drip service.
-    Runs hourly checks during market hours for the Top 25 (PRS 6.3).
-    Runs an additional check for EOD (Long Tail) updates in the hour after close.
+    Background worker that triggers data refreshes at scheduled times.
+    - 12:00 PM EST: Top 25 holdings
+    - 04:00 PM EST: All holdings
     """
-    print("Market Polling Scheduler: Background task initialized. Polling interval: 1 hour.")
-    
-    # Initial wait: Wait 10 seconds on startup to allow the API to fully initialize.
-    await asyncio.sleep(10)
+    print("Market Polling Scheduler: Background task initialized.")
+    await asyncio.sleep(5) # Initial wait for app startup
     
     while True:
-        now_utc = datetime.now(timezone.utc)
-        
-        # --- Hourly Refresh (Top 25) ---
-        if is_market_open_time(now_utc):
-            print(f"[{now_utc.isoformat(timespec='minutes')}] Market is open. Triggering hourly Top 25 refresh.")
-            try:
-                # Only refresh top 25, the polling service handles rate limiting.
-                summary = await refresh_market_data(top_n=25)
-                print(f"Hourly refresh successful: {len(summary['refreshed_symbols'])} symbols updated.")
-            except Exception as e:
-                print(f"ERROR: Market polling failed: {e}")
-        
-        # --- EOD Refresh (Long Tail) ---
-        # EOD Window: The hour immediately after market close (20:00 UTC to 21:00 UTC).
-        # We assume the polling service, when given a high Top N, handles all symbols.
-        eod_window = now_utc.hour == MARKET_CLOSE_HOUR_UTC and now_utc.weekday() < 5
-        
-        if eod_window and now_utc.minute < 30: # Only run EOD once early in the hour (e.g., 20:00 - 20:29 UTC)
-            print(f"[{now_utc.isoformat(timespec='minutes')}] Entering EOD window. Triggering full daily refresh.")
-            try:
-                # Use a large number to target the 'long tail' for daily refresh.
-                summary = await refresh_market_data(top_n=1000)
-                print(f"EOD refresh complete: {len(summary['refreshed_symbols'])} symbols updated.")
-            except Exception as e:
-                print(f"ERROR: EOD polling failed: {e}")
-        
-        # Sleep for exactly one hour to maintain hourly frequency.
-        await asyncio.sleep(POLL_INTERVAL_SECONDS)
+        seconds_to_mid_day = get_seconds_until(MID_DAY_REFRESH_EST)
+        seconds_to_after_market = get_seconds_until(AFTER_MARKET_REFRESH_EST)
+
+        if seconds_to_mid_day < seconds_to_after_market:
+            sleep_duration = seconds_to_mid_day
+            task_name = "Mid-Day Top 25"
+            top_n = 25
+        else:
+            sleep_duration = seconds_to_after_market
+            task_name = "After-Market Full Refresh"
+            top_n = 0 # 0 means all holdings
+
+        print(f"Scheduler: Next run is '{task_name}' in {timedelta(seconds=sleep_duration)}.")
+        await asyncio.sleep(sleep_duration + 5) # Add 5s buffer
+
+        now = datetime.now(timezone(timedelta(hours=-4), 'EDT'))
+        print(f"[{now.isoformat()}] Waking up for scheduled task: '{task_name}'.")
+        try:
+            summary = await refresh_market_data(top_n=top_n)
+            print(f"Scheduled refresh successful: {len(summary['refreshed_symbols'])} symbols updated.")
+        except Exception as e:
+            print(f"ERROR: Scheduled market polling failed: {e}")

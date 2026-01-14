@@ -27,7 +27,7 @@ graph TD
     B <--> C{Backend API (Python/FastAPI)};
     C --> D[Business Logic];
     D <--> E[SQLite Database];
-    D <--> F(External API: Alpha Vantage);
+    D <--> F(External API: Massive);
     G[CSV/Spreadsheet Files] --> C;
 ```
 
@@ -39,7 +39,7 @@ The system is decomposed into the following distinct modules within the `src` di
 *   `src/database.py`: Manages all interaction with the SQLite database, including schema creation, CRUD operations, and transaction management.
 *   `src/importers/`: A package for data ingestion. Contains parsers for different CSV formats and the logic for mapping, normalization, and deduplication.
 *   `src/rules_engine.py`: Handles the logic for automatically categorizing transactions based on user-defined rules (e.g., merchant regex matching).
-*   `src/market_data/`: A package for fetching external market data. Contains the provider interface and a specific implementation for Alpha Vantage.
+*   `src/market_data/`: A package for fetching external market data. Contains the provider interface and a specific implementation for the Massive API.
 *   `src/analysis.py`: Contains functions for financial calculations, generating Sankey diagram data, calculating portfolio returns, and running forecasts.
 *   `src/main.py` or `src/api.py`: The main application entry point. Runs the web server (e.g., FastAPI) and exposes the API endpoints for the frontend.
 
@@ -69,27 +69,26 @@ The backend will expose RESTful endpoints for the frontend, such as:
 *   `GET /api/transactions?category=Travel`: Retrieves transactions based on filters.
 *   `PUT /api/transaction/{id}`: Updates a single transaction (e.g., manual re-categorization).
 
-#### 5.2 External API (Alpha Vantage)
+#### 5.2 External API (Massive API)
 
-*   **Provider:** Alpha Vantage
-*   **Authentication:** API Key (`ALPHA_VANTAGE_API_KEY`) must be used for all requests.
-*   **Module:** `src/market_data/alpha_vantage_provider.py`
+*   **Provider:** Massive API
+*   **Authentication:** API Key (`MASSIVE_API_KEY`) must be used for all requests.
+*   **Module:** `src/market_data/massive_provider.py`
 
 **Required API Functions:**
-1.  `GLOBAL_QUOTE`: For fetching the latest price for a single symbol. Ideal for the hourly refresh of the Top 25 holdings.
-2.  `TIME_SERIES_DAILY_ADJUSTED`: For backfilling historical prices and for the after-market EOD refresh.
+1.  `get_eod_single`: For fetching the latest end-of-day price for a single symbol. This is used for all market data refreshes.
 
 **Implementation Details:**
 *   The provider will implement a `get_quotes(symbols: list)` method.
-*   To respect rate limits (5 calls per minute / 100 per day on free tier), the implementation must batch requests and manage timing carefully.
-*   The polling algorithm from PRS Section 6.3 will be implemented in a dedicated service that uses this provider.
-*   All API responses will be cached in the `price_history` table to minimize redundant calls.
+*   To respect the rate limit of 5 calls per minute, the `polling_service` will enforce a 12-second delay between individual API calls.
+*   The polling algorithm from PRS Section 6.3 will be implemented in the `polling_service` and orchestrated by the `market_scheduler`.
+*   All API responses will be cached in the `price_history` table to minimize redundant calls and provide an audit trail.
 
 ### 6. Security
 
 As a local-first application, the primary security concerns are key management and data integrity.
 
-*   **API Key Storage:** The `ALPHA_VANTAGE_API_KEY` must not be hardcoded. It will be stored in a configuration file (e.g., `.env`) that is explicitly excluded from version control via `.gitignore`. The application will load the key into its environment at runtime.
+*   **API Key Storage:** The `MASSIVE_API_KEY` must not be hardcoded. It will be stored in a configuration file (e.g., `.env`) that is explicitly excluded from version control via `.gitignore`. The application will load the key into its environment at runtime.
 *   **Data Storage:** The `trust.db` SQLite file contains sensitive financial data. While encryption-at-rest is optional for v1.0, the design should accommodate a future implementation using a library like `sqlcipher`.
 *   **Input Validation:** All data from imported files will be strictly validated and sanitized before being inserted into the database to prevent corruption or injection attacks.
 *   **No Inbound Network Access:** The application server will bind to `localhost` by default, ensuring it is not exposed to the local network.
@@ -118,3 +117,4 @@ Development will follow the user-feature centric plan outlined in the PRS (Secti
 
 *   **Phase 6: Forecasting**
     *   Goal: Provide future-looking financial projections.
+

@@ -5,8 +5,8 @@
 # Alpha Vantage API Key
 # This is your local configuration file. It is NOT checked into version control.
 # Copy your API key from https://www.alphavantage.co/support/#api-key and paste it below.
-
 ALPHA_VANTAGE_API_KEY="F139DRPZDUBEP433"
+MASSIVE_API_KEY="pNap64SHddP80cTAFP9SKdMyhiIYTSd7"
 
 
 --- FILE: projects/trust/.env.example ---
@@ -248,10 +248,9 @@ python-dotenv
 python-multipart
 httpx
 pandas
-pandas-datareader
 tenacity
 python-dateutil
-
+massive-client
 
 --- FILE: projects/trust/vite.config.js ---
 
@@ -304,7 +303,7 @@ graph TD
     B <--> C{Backend API (Python/FastAPI)};
     C --> D[Business Logic];
     D <--> E[SQLite Database];
-    D <--> F(External API: Alpha Vantage);
+    D <--> F(External API: Massive);
     G[CSV/Spreadsheet Files] --> C;
 ```
 
@@ -316,7 +315,7 @@ The system is decomposed into the following distinct modules within the `src` di
 *   `src/database.py`: Manages all interaction with the SQLite database, including schema creation, CRUD operations, and transaction management.
 *   `src/importers/`: A package for data ingestion. Contains parsers for different CSV formats and the logic for mapping, normalization, and deduplication.
 *   `src/rules_engine.py`: Handles the logic for automatically categorizing transactions based on user-defined rules (e.g., merchant regex matching).
-*   `src/market_data/`: A package for fetching external market data. Contains the provider interface and a specific implementation for Alpha Vantage.
+*   `src/market_data/`: A package for fetching external market data. Contains the provider interface and a specific implementation for the Massive API.
 *   `src/analysis.py`: Contains functions for financial calculations, generating Sankey diagram data, calculating portfolio returns, and running forecasts.
 *   `src/main.py` or `src/api.py`: The main application entry point. Runs the web server (e.g., FastAPI) and exposes the API endpoints for the frontend.
 
@@ -346,27 +345,26 @@ The backend will expose RESTful endpoints for the frontend, such as:
 *   `GET /api/transactions?category=Travel`: Retrieves transactions based on filters.
 *   `PUT /api/transaction/{id}`: Updates a single transaction (e.g., manual re-categorization).
 
-#### 5.2 External API (Alpha Vantage)
+#### 5.2 External API (Massive API)
 
-*   **Provider:** Alpha Vantage
-*   **Authentication:** API Key (`ALPHA_VANTAGE_API_KEY`) must be used for all requests.
-*   **Module:** `src/market_data/alpha_vantage_provider.py`
+*   **Provider:** Massive API
+*   **Authentication:** API Key (`MASSIVE_API_KEY`) must be used for all requests.
+*   **Module:** `src/market_data/massive_provider.py`
 
 **Required API Functions:**
-1.  `GLOBAL_QUOTE`: For fetching the latest price for a single symbol. Ideal for the hourly refresh of the Top 25 holdings.
-2.  `TIME_SERIES_DAILY_ADJUSTED`: For backfilling historical prices and for the after-market EOD refresh.
+1.  `get_eod_single`: For fetching the latest end-of-day price for a single symbol. This is used for all market data refreshes.
 
 **Implementation Details:**
 *   The provider will implement a `get_quotes(symbols: list)` method.
-*   To respect rate limits (5 calls per minute / 100 per day on free tier), the implementation must batch requests and manage timing carefully.
-*   The polling algorithm from PRS Section 6.3 will be implemented in a dedicated service that uses this provider.
-*   All API responses will be cached in the `price_history` table to minimize redundant calls.
+*   To respect the rate limit of 5 calls per minute, the `polling_service` will enforce a 12-second delay between individual API calls.
+*   The polling algorithm from PRS Section 6.3 will be implemented in the `polling_service` and orchestrated by the `market_scheduler`.
+*   All API responses will be cached in the `price_history` table to minimize redundant calls and provide an audit trail.
 
 ### 6. Security
 
 As a local-first application, the primary security concerns are key management and data integrity.
 
-*   **API Key Storage:** The `ALPHA_VANTAGE_API_KEY` must not be hardcoded. It will be stored in a configuration file (e.g., `.env`) that is explicitly excluded from version control via `.gitignore`. The application will load the key into its environment at runtime.
+*   **API Key Storage:** The `MASSIVE_API_KEY` must not be hardcoded. It will be stored in a configuration file (e.g., `.env`) that is explicitly excluded from version control via `.gitignore`. The application will load the key into its environment at runtime.
 *   **Data Storage:** The `trust.db` SQLite file contains sensitive financial data. While encryption-at-rest is optional for v1.0, the design should accommodate a future implementation using a library like `sqlcipher`.
 *   **Input Validation:** All data from imported files will be strictly validated and sanitized before being inserted into the database to prevent corruption or injection attacks.
 *   **No Inbound Network Access:** The application server will bind to `localhost` by default, ensuring it is not exposed to the local network.
@@ -395,6 +393,8 @@ Development will follow the user-feature centric plan outlined in the PRS (Secti
 
 *   **Phase 6: Forecasting**
     *   Goal: Provide future-looking financial projections.
+
+
 
 --- FILE: projects/trust/library/Trust Financial System.txt ---
 
@@ -784,13 +784,60 @@ This document outlines the acceptance criteria and testing strategy for each pha
 
 ---
 
+## 6.1 Core Feature Verification: Account Visibility Exclusion
+
+**Objective**: Verify that excluding an Account via the settings accurately removes its transactions from the Income -> Uses Sankey, satisfying PRS 2.1.A and PRS 11 (Core feature accuracy).
+
+**Result**: COMPLETED (Verified by user test)
+
+**Acceptance Criteria Met**:
+- [x] **Setup**: Import transactions across two distinct `account_id`s (e.g., 'Checking A' and 'Checking B'). Verify both accounts contribute to the initial Sankey chart (Income/Expenses).
+- [x] **Action**: Navigate to 'Data & Settings' > 'Account Visibility Manager'. Uncheck the visibility toggle for 'Checking B' and click 'Save Settings'.
+- [x] **Verification (Sankey)**: Navigate back to the 'Home' screen. The Sankey chart must immediately recalculate and exclude all transactions from 'Checking B'. Total Income and Total Expenses must be reduced accordingly.
+- [x] **Verification (Transactions)**: Navigate to the 'Cashflow' screen. Apply a filter for 'Checking B'. Transactions from 'Checking B' are still visible here, confirming they were only excluded from the Sankey visualization (Flow analysis), not purged from the system.
+- [x] **Cleanup**: Re-check the visibility toggle for 'Checking B'. The Sankey chart must return to its original state.
+
+---
+
 ## 7. Future Phases (High-Level Plan)
 
 ### Phase 5: Automated Market Data & Layered Returns
 - **Verification**: Manually trigger the market data fetch process. Verify prices are updated in the database. Verify the Portfolio screen now shows correct market values.
 
-### Phase 6: Forecasting
+### Phase 6: Advanced Rules Engine & Portfolio Separation
+- **Verification**: Create a rule that assigns `CashflowType: Investment`. Verify these transactions are correctly excluded from the primary Income Sankey (PRS 3.1).
+
+### Phase 7: Forecasting
 - **Verification**: Create a simple forecast scenario via an API. Verify the projected net worth from the API matches a manual calculation.
+
+
+--- FILE: projects/trust/scripts/refresh_eod.sh ---
+
+#!/bin/bash
+# This script triggers a bulk refresh of all portfolio holdings using
+# yesterday's closing price from the EOD data provider.
+
+echo "--- Sending command to refresh portfolio with End-of-Day prices... ---"
+
+# The API endpoint for the EOD refresh
+URL="http://127.0.0.1:8000/api/market-data/refresh-eod"
+
+# Use curl to send a POST request. The API handles this as a background task.
+RESPONSE=$(curl -s -X POST "$URL" -H "accept: application/json")
+
+# Check if the response contains 'message', which indicates success
+if echo "$RESPONSE" | grep -q '"message"'; then
+    echo "SUCCESS: Backend has accepted the request."
+    echo "Response from server: $RESPONSE"
+    echo "You can monitor the backend logs for progress."
+else
+    echo "ERROR: Failed to trigger EOD refresh."
+    echo "The backend might not be running or the endpoint is wrong."
+    echo "Response from server: $RESPONSE"
+    exit 1
+fi
+
+echo "--- Command sent. ---_"
 
 
 --- FILE: projects/trust/scripts/start_backend.sh ---
@@ -803,17 +850,19 @@ echo "--- Starting Curie Trust Backend Server ---"
 
 PORT=8000
 
-# Find the process ID (PID) listening on the port
-PID=$(lsof -t -i:$PORT)
-
-# If a PID is found, terminate the process
-if [ -n "$PID" ]; then
-    echo "Found existing process on port $PORT with PID $PID. Terminating..."
-    kill -9 $PID
+# Find and terminate any process(es) listening on the port.
+# This version uses a more robust method to handle multiple PIDs.
+PIDS=$(lsof -t -i:$PORT)
+if [ -n "$PIDS" ]; then
+    # The tr command replaces newlines with spaces for cleaner logging.
+    echo "Found existing process(es) on port $PORT with PID(s): $(echo $PIDS | tr '\n' ' '). Terminating..."
+    # Pipe the PIDs to xargs to kill them all reliably.
+    echo "$PIDS" | xargs kill -9
     sleep 1 # Give a moment for the OS to release the port
 else
     echo "No existing process found on port $PORT. Starting fresh."
 fi
+
 
 # Check for a virtual environment and activate it
 if [ -d ".venv" ]; then
@@ -1688,12 +1737,35 @@ def get_holding(holding_id: str) -> Dict[str, Any] | None:
     row_dict['tags'] = [tag.strip() for tag in row_dict['tags'].split(',')] if row_dict.get('tags') else []
     return row_dict
 
-def update_holding(holding_id: str, tags: List[str]):
+def update_holding(holding_id: str, updates: Dict[str, Any]):
     conn = get_db_connection()
     cursor = conn.cursor()
-    tags_str = ','.join(tags) if tags else None
+    
+    allowed_fields = ['tags', 'asset_type']
+    set_clauses = []
+    params = []
+
+    for field, value in updates.items():
+        if field not in allowed_fields:
+            continue
+
+        if field == 'tags' and isinstance(value, list):
+            set_clauses.append("tags = ?")
+            params.append(','.join(value) if value else None)
+        elif field == 'asset_type':
+            set_clauses.append("asset_type = ?")
+            # Ensure empty strings are saved as NULL
+            params.append(value if value and str(value).strip() else None)
+    
+    if not set_clauses:
+        print(f"Warning: No valid fields to update for holding {holding_id}.")
+        return
+
+    sql = f"UPDATE holdings SET {', '.join(set_clauses)} WHERE holding_id = ?"
+    params.append(holding_id)
+
     try:
-        cursor.execute("UPDATE holdings SET tags = ? WHERE holding_id = ?", (tags_str, holding_id))
+        cursor.execute(sql, tuple(params))
         conn.commit()
         if cursor.rowcount == 0:
             print(f"Warning: Attempted to update holding {holding_id}, but no record was found.")
@@ -1947,6 +2019,7 @@ def update_holdings_with_new_prices(quotes: Dict[str, Dict[str, Any]]):
         conn.close()
 
 
+
 --- FILE: projects/trust/src/index.css ---
 
 :root {
@@ -2052,6 +2125,7 @@ class TransactionUpdate(BaseModel):
 
 class HoldingUpdate(BaseModel):
     tags: List[str] = []
+    asset_type: Optional[str] = None
 
 
 @app.on_event("startup")
@@ -2139,8 +2213,20 @@ def get_transaction_filters(category: Optional[str] = Query(None), account_id: O
     filters = {"category": category, "account_id": account_id, "institution": institution, "description": description, "tags": tags, "cashflow_type": cashflow_type, "period": period}
     return {k: v for k, v in filters.items() if v is not None}
 
-def get_holding_filters(account_id: Optional[str] = Query(None), symbol: Optional[str] = Query(None), tags: Optional[str] = Query(None), period: Optional[str] = Query(None)) -> Dict[str, Any]:
-    filters = {"account_id": account_id, "symbol": symbol, "tags": tags, "period": period}
+def get_holding_filters(
+    account_id: Optional[str] = Query(None),
+    symbol: Optional[str] = Query(None),
+    tags: Optional[str] = Query(None),
+    asset_type: Optional[str] = Query(None),  
+    period: Optional[str] = Query(None)
+) -> Dict[str, Any]:
+    filters = {
+        "account_id": account_id,
+        "symbol": symbol,
+        "tags": tags,
+        "asset_type": asset_type,  
+        "period": period
+    }
     return {k: v for k, v in filters.items() if v is not None}
 
 @app.get("/api/transactions", tags=["Data"])
@@ -2171,7 +2257,8 @@ async def get_filtered_holdings(filters: Dict[str, Any] = Depends(get_holding_fi
 
 @app.put("/api/holdings/{holding_id}", tags=["Data"])
 async def update_holding(holding_id: str, payload: HoldingUpdate):
-    db.update_holding(holding_id, payload.tags)
+    updates = payload.dict()
+    db.update_holding(holding_id, updates)
     updated_holding = db.get_holding(holding_id)
     if not updated_holding:
         raise HTTPException(status_code=404, detail="Holding not found after update.")
@@ -2221,15 +2308,27 @@ async def purge_data(request: PurgeRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-# --- NEW: Endpoint for Market Data --- #
+# --- Market Data Endpoints --- #
 @app.post("/api/market-data/refresh", tags=["Market Data"])
-async def trigger_market_data_refresh(background_tasks: BackgroundTasks):
+async def trigger_market_data_refresh(
+    background_tasks: BackgroundTasks,
+    limit: int = Query(25, description="Number of top holdings to refresh. Use 0 for all.")
+):
     """
-    Triggers a background task to refresh market data for the top 25 holdings.
-    Returns an immediate response to the client.
+    Triggers a background task to refresh market data for top holdings using the live provider.
     """
-    background_tasks.add_task(polling_service.refresh_market_data, top_n=25)
-    return {"message": "Market data refresh initiated in the background for top 25 holdings."}
+    limit = limit if limit > 0 else 1000 # Use a high number for 'all'
+    background_tasks.add_task(polling_service.refresh_market_data, top_n=limit)
+    return {"message": f"Live market data refresh initiated in the background for top {limit} holdings."}
+
+@app.post("/api/market-data/refresh-eod", tags=["Market Data"])
+async def trigger_eod_market_data_refresh(background_tasks: BackgroundTasks):
+    """
+    Triggers a background task to refresh all holdings with yesterday's closing price
+    using the bulk EOD provider.
+    """
+    background_tasks.add_task(polling_service.refresh_eod_data)
+    return {"message": "Bulk EOD data refresh initiated in the background for ALL holdings."}
 
 
 if __name__ == "__main__":
@@ -3049,10 +3148,27 @@ import './HoldingEditorModal.css'; // Re-using the same modal styles for consist
 
 const HoldingEditorModal = ({ holding, onClose, onSave }) => {
     const [tags, setTags] = useState('');
+    const [assetType, setAssetType] = useState('');
+    const [assetTypeOptions, setAssetTypeOptions] = useState([]);
+
+    useEffect(() => {
+        const fetchOptions = async () => {
+            try {
+                const response = await fetch('/api/filter-options');
+                if (!response.ok) throw new Error('Failed to fetch options');
+                const data = await response.json();
+                setAssetTypeOptions(data.assetTypes || []);
+            } catch (error) {
+                console.error("Failed to fetch asset type options", error);
+            }
+        };
+        fetchOptions();
+    }, []);
 
     useEffect(() => {
         if (holding) {
             setTags(Array.isArray(holding.tags) ? holding.tags.join(', ') : '');
+            setAssetType(holding.asset_type || '');
         }
     }, [holding]);
 
@@ -3060,6 +3176,7 @@ const HoldingEditorModal = ({ holding, onClose, onSave }) => {
         e.preventDefault();
         const updatePayload = {
             tags: tags.split(',').map(t => t.trim()).filter(Boolean),
+            asset_type: assetType.trim() || null,
         };
 
         try {
@@ -3083,9 +3200,25 @@ const HoldingEditorModal = ({ holding, onClose, onSave }) => {
     return (
         <div className="modal-overlay" onClick={onClose}>
             <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-                <h2>Edit Tags for {holding.symbol}</h2>
+                <h2>Edit Holding: {holding.symbol}</h2>
                 <p><strong>Account:</strong> {holding.account_id}</p>
                 <form onSubmit={handleSave} className="modal-form">
+                    <div className="form-group full-width">
+                        <label>Asset Type</label>
+                        <input 
+                            type="text" 
+                            name="asset_type" 
+                            value={assetType} 
+                            onChange={(e) => setAssetType(e.target.value)} 
+                            placeholder="e.g., Stock, ETF, Mutual Fund"
+                            list="asset-type-options"
+                        />
+                         <datalist id="asset-type-options">
+                            {assetTypeOptions.map(opt => (
+                                <option key={opt} value={opt} />
+                            ))}
+                        </datalist>
+                    </div>
                     <div className="form-group full-width">
                         <label>Tags (comma-separated)</label>
                         <input 
@@ -3094,7 +3227,6 @@ const HoldingEditorModal = ({ holding, onClose, onSave }) => {
                             value={tags} 
                             onChange={(e) => setTags(e.target.value)} 
                             placeholder="e.g., core, speculative"
-                            autoFocus
                         />
                     </div>
                     <div className="modal-actions">
@@ -5615,7 +5747,7 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Hold
         'cost_basis': ['costbasis', 'cost', 'totalcost', 'costbasis($)'],
         'market_value': ['marketvalue', 'value', 'totalvalue', 'value($)'],
         'tags': ['tags', 'group', 'category'],
-        'asset_type': ['assettype', 'type', 'assetclass'],
+        'asset_type': ['assettype', 'type', 'assetclass', 'securitytypedescription'],
     }
 
     header_map = {}
@@ -5743,169 +5875,171 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Hold
 # (PRS Section 6, MDS Section 5.2)
 
 
---- FILE: projects/trust/src/market_data/alpha_vantage_provider.py ---
-
-"""
-Implementation of the market data provider interface for Alpha Vantage.
-(MDS Section 5.2)
-"""
-import os
-import httpx
-from typing import List, Dict, Any
-from tenacity import retry, stop_after_attempt, wait_exponential
-
-BASE_URL = "https://www.alphavantage.co/query"
-
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-async def get_quotes(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
-    """
-    Fetches the latest quote for a list of symbols using Alpha Vantage.
-
-    Args:
-        symbols: A list of stock/ETF symbols.
-
-    Returns:
-        A dictionary where keys are symbols and values are a dict containing the quote data 
-        (price, timestamp, etc.) or an error message.
-    """
-    API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
-    if not API_KEY or API_KEY == "YOUR_API_KEY_HERE":
-        print("ERROR: ALPHA_VANTAGE_API_KEY is not set.")
-        return {symbol: {"error": "API key not configured"} for symbol in symbols}
-
-    results = {}
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        for symbol in symbols:
-            params = {
-                "function": "GLOBAL_QUOTE",
-                "symbol": symbol,
-                "apikey": API_KEY
-            }
-            try:
-                response = await client.get(BASE_URL, params=params)
-                response.raise_for_status() 
-                data = response.json()
-                
-                quote_data = data.get('Global Quote')
-                if not quote_data or not quote_data.get('05. price'):
-                    error_message = data.get('Note', f"No valid 'Global Quote' in response for {symbol}")
-                    results[symbol] = {"error": error_message}
-                    print(f"WARNING: AlphaVantage could not fetch quote for {symbol}: {error_message}")
-                    continue
-
-                results[symbol] = {
-                    "price": quote_data.get('05. price'),
-                    "timestamp": quote_data.get('07. latest trading day'),
-                    "source": "alpha_vantage"
-                }
-
-            except httpx.HTTPStatusError as e:
-                print(f"HTTP error fetching quote for {symbol} from AlphaVantage: {e}")
-                results[symbol] = {"error": f"HTTP Error: {e.response.status_code}"}
-            except Exception as e:
-                print(f"An unexpected error occurred fetching {symbol} from AlphaVantage: {e}")
-                results[symbol] = {"error": "An unexpected error occurred."}
-    
-    return results
-
-
 --- FILE: projects/trust/src/market_data/market_scheduler.py ---
 
 import asyncio
-from datetime import datetime, time, timezone
+from datetime import datetime, time, timezone, timedelta
 from src.market_data.polling_service import refresh_market_data
 
-# Market hours (US Eastern Time) adjusted for UTC approximations
-# Assuming Daylight Saving Time (DST) for standard market definition: 9:30 ET to 4:00 ET
-# UTC equivalents: 13:30 UTC to 20:00 UTC
-MARKET_OPEN_HOUR_UTC = 13
-MARKET_CLOSE_HOUR_UTC = 20
-POLL_INTERVAL_SECONDS = 3600 # 1 hour
+# Target times in US Eastern Time
+MID_DAY_REFRESH_EST = time(12, 0, 0)
+AFTER_MARKET_REFRESH_EST = time(16, 0, 0)
 
-def is_market_open_time(now_utc: datetime) -> bool:
-    """Checks if the current UTC time falls within approximate US market hours (13:30 to 20:00 UTC) on a weekday."""
-    # Check for weekends (Monday=0, Sunday=6)
-    if now_utc.weekday() >= 5:
-        return False
+def get_seconds_until(target_time_est: time) -> float:
+    """
+    Calculates seconds until the next occurrence of a target time in EST.
+    Handles timezone conversion from UTC.
+    """
+    # EST is UTC-5, EDT is UTC-4. We'll approximate with UTC-4 for modern relevance.
+    est = timezone(timedelta(hours=-4), 'EDT')
+    now_est = datetime.now(est)
+    
+    target_today = now_est.replace(hour=target_time_est.hour, minute=target_time_est.minute, second=0, microsecond=0)
+    
+    # If the target time has already passed today, schedule for tomorrow.
+    if target_today < now_est:
+        target_tomorrow = target_today + timedelta(days=1)
+        # Handle weekends: if tomorrow is Sat, schedule for Mon. If Sun, schedule for Mon.
+        if target_tomorrow.weekday() == 5: # Saturday
+            target_tomorrow += timedelta(days=2)
+        elif target_tomorrow.weekday() == 6: # Sunday
+            target_tomorrow += timedelta(days=1)
+        return (target_tomorrow - now_est).total_seconds()
+    
+    # Handle weekends for today's schedule
+    if now_est.weekday() >= 5: # It's currently Sat or Sun
+        # Find next Monday
+        next_monday = now_est + timedelta(days=(7 - now_est.weekday()))
+        next_run_time = next_monday.replace(hour=target_time_est.hour, minute=target_time_est.minute, second=0, microsecond=0)
+        return (next_run_time - now_est).total_seconds()
 
-    now_time_utc = now_utc.time()
-    
-    # Check the hour range, focusing on the 13:30 to 20:00 window
-    market_open_time = time(MARKET_OPEN_HOUR_UTC, 30, 0)
-    market_close_time = time(MARKET_CLOSE_HOUR_UTC, 0, 0)
-    
-    if now_time_utc >= market_open_time and now_time_utc < market_close_time:
-        return True
-    
-    return False
+    return (target_today - now_est).total_seconds()
 
 async def background_market_poller():
     """
-    The main background worker loop for the market data drip service.
-    Runs hourly checks during market hours for the Top 25 (PRS 6.3).
-    Runs an additional check for EOD (Long Tail) updates in the hour after close.
+    Background worker that triggers data refreshes at scheduled times.
+    - 12:00 PM EST: Top 25 holdings
+    - 04:00 PM EST: All holdings
     """
-    print("Market Polling Scheduler: Background task initialized. Polling interval: 1 hour.")
-    
-    # Initial wait: Wait 10 seconds on startup to allow the API to fully initialize.
-    await asyncio.sleep(10)
+    print("Market Polling Scheduler: Background task initialized.")
+    await asyncio.sleep(5) # Initial wait for app startup
     
     while True:
-        now_utc = datetime.now(timezone.utc)
-        
-        # --- Hourly Refresh (Top 25) ---
-        if is_market_open_time(now_utc):
-            print(f"[{now_utc.isoformat(timespec='minutes')}] Market is open. Triggering hourly Top 25 refresh.")
-            try:
-                # Only refresh top 25, the polling service handles rate limiting.
-                summary = await refresh_market_data(top_n=25)
-                print(f"Hourly refresh successful: {len(summary['refreshed_symbols'])} symbols updated.")
-            except Exception as e:
-                print(f"ERROR: Market polling failed: {e}")
-        
-        # --- EOD Refresh (Long Tail) ---
-        # EOD Window: The hour immediately after market close (20:00 UTC to 21:00 UTC).
-        # We assume the polling service, when given a high Top N, handles all symbols.
-        eod_window = now_utc.hour == MARKET_CLOSE_HOUR_UTC and now_utc.weekday() < 5
-        
-        if eod_window and now_utc.minute < 30: # Only run EOD once early in the hour (e.g., 20:00 - 20:29 UTC)
-            print(f"[{now_utc.isoformat(timespec='minutes')}] Entering EOD window. Triggering full daily refresh.")
-            try:
-                # Use a large number to target the 'long tail' for daily refresh.
-                summary = await refresh_market_data(top_n=1000)
-                print(f"EOD refresh complete: {len(summary['refreshed_symbols'])} symbols updated.")
-            except Exception as e:
-                print(f"ERROR: EOD polling failed: {e}")
-        
-        # Sleep for exactly one hour to maintain hourly frequency.
-        await asyncio.sleep(POLL_INTERVAL_SECONDS)
+        seconds_to_mid_day = get_seconds_until(MID_DAY_REFRESH_EST)
+        seconds_to_after_market = get_seconds_until(AFTER_MARKET_REFRESH_EST)
 
+        if seconds_to_mid_day < seconds_to_after_market:
+            sleep_duration = seconds_to_mid_day
+            task_name = "Mid-Day Top 25"
+            top_n = 25
+        else:
+            sleep_duration = seconds_to_after_market
+            task_name = "After-Market Full Refresh"
+            top_n = 0 # 0 means all holdings
+
+        print(f"Scheduler: Next run is '{task_name}' in {timedelta(seconds=sleep_duration)}.")
+        await asyncio.sleep(sleep_duration + 5) # Add 5s buffer
+
+        now = datetime.now(timezone(timedelta(hours=-4), 'EDT'))
+        print(f"[{now.isoformat()}] Waking up for scheduled task: '{task_name}'.")
+        try:
+            summary = await refresh_market_data(top_n=top_n)
+            print(f"Scheduled refresh successful: {len(summary['refreshed_symbols'])} symbols updated.")
+        except Exception as e:
+            print(f"ERROR: Scheduled market polling failed: {e}")
+
+--- FILE: projects/trust/src/market_data/massive_provider.py ---
+
+"""
+Implementation of the market data provider interface for the Massive API.
+"""
+import os
+from typing import List, Dict, Any
+from datetime import date
+from tenacity import retry, stop_after_attempt, wait_exponential
+from massive_client import MassiveClient
+
+# Initialize the client once. It will be shared.
+API_KEY = os.getenv("MASSIVE_API_KEY")
+if not API_KEY or API_KEY == "pNap64SHddxxxxxxx":
+    print("WARNING: MASSIVE_API_KEY is not set correctly in .env")
+    CLIENT = None
+else:
+    CLIENT = MassiveClient(api_key=API_KEY)
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=6))
+def get_quotes_sync(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
+    """
+    Synchronous wrapper to fetch the latest EOD quote for a list of symbols using the Massive API client.
+    NOTE: The client library is not async, so we run it synchronously.
+
+    Args:
+        symbols: A list of standard stock/ETF symbols.
+
+    Returns:
+        A dictionary formatted similarly to other providers.
+    """
+    if not CLIENT:
+        return {symbol: {"error": "Massive API client not initialized."} for symbol in symbols}
+
+    results = {}
+    today = date.today().isoformat()
+
+    for symbol in symbols:
+        # Massive API expects a suffix for US stocks, e.g., 'AAPL.US'
+        # We will assume '.US' for now as it's the most common case.
+        massive_symbol = f"{symbol.upper()}.US"
+        try:
+            # The get_eod_single function is perfect for getting the latest closing price.
+            data = CLIENT.get_eod_single(massive_symbol, today)
+            
+            if data and data.get('close') is not None:
+                results[symbol] = {
+                    "price": str(data['close']),
+                    "timestamp": data.get('date', today),
+                    "source": "massive"
+                }
+            else:
+                error_msg = data.get('message', f"No data returned for {symbol}")
+                print(f"Massive API Warning for {symbol}: {error_msg}")
+                results[symbol] = {"error": error_msg}
+
+        except Exception as e:
+            print(f"Error fetching data from Massive API for {symbol}: {e}")
+            results[symbol] = {"error": f"Massive API client failed: {e}"}
+            
+    return results
 
 --- FILE: projects/trust/src/market_data/polling_service.py ---
 
-"""
-Service to orchestrate the fetching of market data from various providers,
-apply rate-limiting, and persist the results to the database.
-(PRS Section 6.3)
-"""
 import asyncio
 from datetime import datetime, timezone
 from typing import Dict, Any, List
+import re
 
 from src import database as db
-from src.market_data import alpha_vantage_provider, stooq_provider
+from src.market_data import massive_provider
 
-# Per AlphaVantage free tier: 5 calls per minute.
-# We will make calls one by one, with a delay.
-SECONDS_BETWEEN_CALLS = 15 # (60 seconds / 4 calls = 15s/call)
+# Per user requirement: 5 calls per minute.
+SECONDS_BETWEEN_CALLS = 12 # (60 seconds / 5 calls = 12s/call)
 
-async def refresh_market_data(top_n: int = 25) -> Dict[str, Any]:
+def _is_supported_symbol(symbol: str) -> bool:
+    """Validates if a symbol is likely supported by the API."""
+    symbol = symbol.strip().upper()
+    # Exclude junk, numeric-only, CUSIP-like, or internal identifiers.
+    if not symbol or symbol == '----' or symbol.isdigit() or re.match(r'^[0-9A-Z]{9,}$', symbol):
+        return False
+    return True
+
+async def refresh_market_data(top_n: int = 0) -> Dict[str, Any]:
     """
-    Refreshes market data for top N holdings by market value.
-    Tries the primary provider first, then falls back to a secondary provider.
-    Respects API rate limits by delaying individual calls.
+    Refreshes market data for holdings using the Massive API, respecting rate limits.
+
+    Args:
+        top_n: Number of top holdings to refresh. If 0, refreshes all holdings.
     """
-    print(f"--- Starting market data refresh for top {top_n} holdings... ---")
+    mode = f"top {top_n}" if top_n > 0 else "ALL"
+    print(f"--- Starting market data refresh for {mode} holdings via Massive API... ---")
     
     all_holdings = db.get_holdings()
     if not all_holdings:
@@ -5916,51 +6050,44 @@ async def refresh_market_data(top_n: int = 25) -> Dict[str, Any]:
     seen = set()
     unique_symbols_ranked = [h['symbol'] for h in all_holdings if not (h['symbol'] in seen or seen.add(h['symbol']))]
     
-    symbols_to_refresh = unique_symbols_ranked[:top_n]
+    symbols_to_process = unique_symbols_ranked[:top_n] if top_n > 0 else unique_symbols_ranked
+    symbols_to_refresh = [s for s in symbols_to_process if _is_supported_symbol(s)]
+    
     if not symbols_to_refresh:
-        return {"message": "Holdings exist, but no symbols to refresh.", "refreshed_symbols": [], "failed_symbols": []}
+        return {"message": "No supported symbols found to refresh.", "refreshed_symbols": [], "failed_symbols": []}
         
-    print(f"Identified {len(symbols_to_refresh)} unique symbols to refresh: {symbols_to_refresh}")
+    print(f"Identified {len(symbols_to_refresh)} unique, supported symbols for refresh.")
 
     successful_quotes: Dict[str, Dict[str, Any]] = {}
-    symbols_for_fallback: List[str] = []
+    failed_symbols: List[str] = [s for s in symbols_to_process if not _is_supported_symbol(s)]
 
-    # --- Primary Provider: Alpha Vantage ---
-    print("--- Stage 1: Querying Primary Provider (Alpha Vantage) ---")
+    loop = asyncio.get_running_loop()
+
     for i, symbol in enumerate(symbols_to_refresh):
-        print(f"Processing {symbol} ({i+1}/{len(symbols_to_refresh)})...")
-        quotes = await alpha_vantage_provider.get_quotes([symbol])
-        quote_data = quotes.get(symbol, {})
+        print(f"Processing {symbol} ({i+1}/{len(symbols_to_refresh)})... ")
+        try:
+            # The Massive client is not async, so we run it in a default executor.
+            quotes = await loop.run_in_executor(
+                None, massive_provider.get_quotes_sync, [symbol]
+            )
+            quote_data = quotes.get(symbol, {})
 
-        if "error" in quote_data or not quote_data.get("price"):
-            print(f"Primary provider failed for {symbol}. Adding to fallback queue.")
-            symbols_for_fallback.append(symbol)
-        else:
-            successful_quotes[symbol] = {
-                "price": quote_data['price'],
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "source": quote_data['source']
-            }
-        
-        # Wait before the next call to respect rate limits
+            if "error" in quote_data or not quote_data.get("price"):
+                print(f"Provider failed for {symbol}: {quote_data.get('error')}")
+                failed_symbols.append(symbol)
+            else:
+                successful_quotes[symbol] = {
+                    "price": quote_data['price'],
+                    "timestamp": datetime.now(timezone.utc).isoformat(), # Use current time for live refresh
+                    "source": quote_data['source']
+                }
+        except Exception as e:
+            print(f"An unexpected error occurred while processing {symbol}: {e}")
+            failed_symbols.append(symbol)
+
+        # Wait before the next call to respect rate limits.
         if (i + 1) < len(symbols_to_refresh):
             await asyncio.sleep(SECONDS_BETWEEN_CALLS)
-
-    # --- Fallback Provider: Stooq ---
-    if symbols_for_fallback:
-        print(f"--- Stage 2: Querying Fallback Provider (Stooq) for {len(symbols_for_fallback)} symbols ---")
-        # Stooq is safe to batch
-        fallback_quotes = await stooq_provider.get_quotes(symbols_for_fallback)
-        for symbol, data in fallback_quotes.items():
-            if "error" in data or not data.get("price"):
-                print(f"Fallback provider also failed for {symbol}: {data.get('error')}")
-            else:
-                print(f"Successfully fetched {symbol} from fallback.")
-                successful_quotes[symbol] = {
-                    "price": data['price'],
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "source": data['source']
-                }
 
     # --- Persist results to the database ---
     if successful_quotes:
@@ -5972,84 +6099,16 @@ async def refresh_market_data(top_n: int = 25) -> Dict[str, Any]:
 
     print("--- Market data refresh complete. ---")
     
-    final_failed_symbols = [s for s in symbols_to_refresh if s not in successful_quotes]
-    
     return {
         "message": "Market data refresh process finished.",
         "refreshed_symbols": list(successful_quotes.keys()),
-        "failed_symbols": final_failed_symbols,
-        "total_symbols_processed": len(symbols_to_refresh)
+        "failed_symbols": failed_symbols,
+        "total_symbols_processed": len(symbols_to_process)
     }
 
---- FILE: projects/trust/src/market_data/stooq_provider.py ---
-
-"""
-Implementation of the market data provider interface for Stooq.
-This provider serves as a fallback.
-"""
-import pandas_datareader.data as web
-import pandas as pd
-from datetime import date, timedelta
-from typing import List, Dict, Any
-from tenacity import retry, stop_after_attempt, wait_exponential
-
-def _map_symbol_to_stooq(symbol: str) -> str:
-    """Converts a standard ticker to a Stooq-compatible ticker. Defaults to .US suffix."""
-    if '.' in symbol:
-        return symbol # Already has a suffix
-    return f"{symbol}.US"
-
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=6))
-async def get_quotes(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
-    """
-    Fetches the latest quote for a list of symbols using Stooq.
-    This function is async to maintain a consistent interface with other providers.
-
-    Args:
-        symbols: A list of standard stock/ETF symbols.
-
-    Returns:
-        A dictionary formatted similarly to the Alpha Vantage provider.
-    """
-    results = {}
-    stooq_symbols = [_map_symbol_to_stooq(s) for s in symbols]
-    
-    end_date = date.today()
-    start_date = end_date - timedelta(days=14) # Look back 2 weeks to find a trading day
-
-    try:
-        df = web.DataReader(stooq_symbols, "stooq", start=start_date, end=end_date)
-        close_prices = df['Close']
-
-        for original_symbol, stooq_symbol in zip(symbols, stooq_symbols):
-            if stooq_symbol not in close_prices.columns:
-                results[original_symbol] = {"error": f"Symbol {stooq_symbol} not found by Stooq."}
-                continue
-
-            latest_data = close_prices[stooq_symbol].dropna()
-            if latest_data.empty:
-                results[original_symbol] = {"error": f"No recent data for {stooq_symbol}."}
-                continue
-
-            # Most recent data is at the top for Stooq
-            latest_price = latest_data.iloc[0]
-            latest_date = latest_data.index[0]
-
-            results[original_symbol] = {
-                "price": str(latest_price),
-                "timestamp": latest_date.strftime('%Y-%m-%d'),
-                "source": "stooq"
-            }
-            
-    except Exception as e:
-        print(f"Error fetching data from Stooq: {e}")
-        # If the entire request fails, mark all symbols as failed for this provider
-        for symbol in symbols:
-            if symbol not in results:
-                results[symbol] = {"error": f"Stooq API failed: {e}"}
-
-    return results
-
+# The EOD refresh is now just a call to the main function with no limit.
+async def refresh_eod_data() -> Dict[str, Any]:
+    return await refresh_market_data(top_n=0)
 
 --- AGENT MANIFEST FOR PROJECT: trust ---
 --- FILE: projects/trust/agent_manifests.json ---

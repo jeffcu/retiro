@@ -79,10 +79,28 @@ This document outlines the acceptance criteria and testing strategy for each pha
 
 ---
 
+## 6.1 Core Feature Verification: Account Visibility Exclusion
+
+**Objective**: Verify that excluding an Account via the settings accurately removes its transactions from the Income -> Uses Sankey, satisfying PRS 2.1.A and PRS 11 (Core feature accuracy).
+
+**Result**: COMPLETED (Verified by user test)
+
+**Acceptance Criteria Met**:
+- [x] **Setup**: Import transactions across two distinct `account_id`s (e.g., 'Checking A' and 'Checking B'). Verify both accounts contribute to the initial Sankey chart (Income/Expenses).
+- [x] **Action**: Navigate to 'Data & Settings' > 'Account Visibility Manager'. Uncheck the visibility toggle for 'Checking B' and click 'Save Settings'.
+- [x] **Verification (Sankey)**: Navigate back to the 'Home' screen. The Sankey chart must immediately recalculate and exclude all transactions from 'Checking B'. Total Income and Total Expenses must be reduced accordingly.
+- [x] **Verification (Transactions)**: Navigate to the 'Cashflow' screen. Apply a filter for 'Checking B'. Transactions from 'Checking B' are still visible here, confirming they were only excluded from the Sankey visualization (Flow analysis), not purged from the system.
+- [x] **Cleanup**: Re-check the visibility toggle for 'Checking B'. The Sankey chart must return to its original state.
+
+---
+
 ## 7. Future Phases (High-Level Plan)
 
 ### Phase 5: Automated Market Data & Layered Returns
 - **Verification**: Manually trigger the market data fetch process. Verify prices are updated in the database. Verify the Portfolio screen now shows correct market values.
 
-### Phase 6: Forecasting
+### Phase 6: Advanced Rules Engine & Portfolio Separation
+- **Verification**: Create a rule that assigns `CashflowType: Investment`. Verify these transactions are correctly excluded from the primary Income Sankey (PRS 3.1).
+
+### Phase 7: Forecasting
 - **Verification**: Create a simple forecast scenario via an API. Verify the projected net worth from the API matches a manual calculation.

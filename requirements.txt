@@ -4,6 +4,6 @@ python-dotenv
 python-multipart
 httpx
 pandas
-pandas-datareader
 tenacity
 python-dateutil
+massive-client

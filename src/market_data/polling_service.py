@@ -1,26 +1,31 @@
-"""
-Service to orchestrate the fetching of market data from various providers,
-apply rate-limiting, and persist the results to the database.
-(PRS Section 6.3)
-"""
 import asyncio
 from datetime import datetime, timezone
 from typing import Dict, Any, List
+import re
 
 from src import database as db
-from src.market_data import alpha_vantage_provider, stooq_provider
+from src.market_data import massive_provider
 
-# Per AlphaVantage free tier: 5 calls per minute.
-# We will make calls one by one, with a delay.
-SECONDS_BETWEEN_CALLS = 15 # (60 seconds / 4 calls = 15s/call)
+# Per user requirement: 5 calls per minute.
+SECONDS_BETWEEN_CALLS = 12 # (60 seconds / 5 calls = 12s/call)
 
-async def refresh_market_data(top_n: int = 25) -> Dict[str, Any]:
+def _is_supported_symbol(symbol: str) -> bool:
+    """Validates if a symbol is likely supported by the API."""
+    symbol = symbol.strip().upper()
+    # Exclude junk, numeric-only, CUSIP-like, or internal identifiers.
+    if not symbol or symbol == '----' or symbol.isdigit() or re.match(r'^[0-9A-Z]{9,}$', symbol):
+        return False
+    return True
+
+async def refresh_market_data(top_n: int = 0) -> Dict[str, Any]:
     """
-    Refreshes market data for top N holdings by market value.
-    Tries the primary provider first, then falls back to a secondary provider.
-    Respects API rate limits by delaying individual calls.
+    Refreshes market data for holdings using the Massive API, respecting rate limits.
+
+    Args:
+        top_n: Number of top holdings to refresh. If 0, refreshes all holdings.
     """
-    print(f"--- Starting market data refresh for top {top_n} holdings... ---")
+    mode = f"top {top_n}" if top_n > 0 else "ALL"
+    print(f"--- Starting market data refresh for {mode} holdings via Massive API... ---")
     
     all_holdings = db.get_holdings()
     if not all_holdings:
@@ -31,51 +36,44 @@ async def refresh_market_data(top_n: int = 25) -> Dict[str, Any]:
     seen = set()
     unique_symbols_ranked = [h['symbol'] for h in all_holdings if not (h['symbol'] in seen or seen.add(h['symbol']))]
     
-    symbols_to_refresh = unique_symbols_ranked[:top_n]
+    symbols_to_process = unique_symbols_ranked[:top_n] if top_n > 0 else unique_symbols_ranked
+    symbols_to_refresh = [s for s in symbols_to_process if _is_supported_symbol(s)]
+    
     if not symbols_to_refresh:
-        return {"message": "Holdings exist, but no symbols to refresh.", "refreshed_symbols": [], "failed_symbols": []}
+        return {"message": "No supported symbols found to refresh.", "refreshed_symbols": [], "failed_symbols": []}
         
-    print(f"Identified {len(symbols_to_refresh)} unique symbols to refresh: {symbols_to_refresh}")
+    print(f"Identified {len(symbols_to_refresh)} unique, supported symbols for refresh.")
 
     successful_quotes: Dict[str, Dict[str, Any]] = {}
-    symbols_for_fallback: List[str] = []
+    failed_symbols: List[str] = [s for s in symbols_to_process if not _is_supported_symbol(s)]
 
-    # --- Primary Provider: Alpha Vantage ---
-    print("--- Stage 1: Querying Primary Provider (Alpha Vantage) ---")
+    loop = asyncio.get_running_loop()
+
     for i, symbol in enumerate(symbols_to_refresh):
-        print(f"Processing {symbol} ({i+1}/{len(symbols_to_refresh)})...")
-        quotes = await alpha_vantage_provider.get_quotes([symbol])
-        quote_data = quotes.get(symbol, {})
+        print(f"Processing {symbol} ({i+1}/{len(symbols_to_refresh)})... ")
+        try:
+            # The Massive client is not async, so we run it in a default executor.
+            quotes = await loop.run_in_executor(
+                None, massive_provider.get_quotes_sync, [symbol]
+            )
+            quote_data = quotes.get(symbol, {})
 
-        if "error" in quote_data or not quote_data.get("price"):
-            print(f"Primary provider failed for {symbol}. Adding to fallback queue.")
-            symbols_for_fallback.append(symbol)
-        else:
-            successful_quotes[symbol] = {
-                "price": quote_data['price'],
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "source": quote_data['source']
-            }
-        
-        # Wait before the next call to respect rate limits
+            if "error" in quote_data or not quote_data.get("price"):
+                print(f"Provider failed for {symbol}: {quote_data.get('error')}")
+                failed_symbols.append(symbol)
+            else:
+                successful_quotes[symbol] = {
+                    "price": quote_data['price'],
+                    "timestamp": datetime.now(timezone.utc).isoformat(), # Use current time for live refresh
+                    "source": quote_data['source']
+                }
+        except Exception as e:
+            print(f"An unexpected error occurred while processing {symbol}: {e}")
+            failed_symbols.append(symbol)
+
+        # Wait before the next call to respect rate limits.
         if (i + 1) < len(symbols_to_refresh):
             await asyncio.sleep(SECONDS_BETWEEN_CALLS)
-
-    # --- Fallback Provider: Stooq ---
-    if symbols_for_fallback:
-        print(f"--- Stage 2: Querying Fallback Provider (Stooq) for {len(symbols_for_fallback)} symbols ---")
-        # Stooq is safe to batch
-        fallback_quotes = await stooq_provider.get_quotes(symbols_for_fallback)
-        for symbol, data in fallback_quotes.items():
-            if "error" in data or not data.get("price"):
-                print(f"Fallback provider also failed for {symbol}: {data.get('error')}")
-            else:
-                print(f"Successfully fetched {symbol} from fallback.")
-                successful_quotes[symbol] = {
-                    "price": data['price'],
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "source": data['source']
-                }
 
     # --- Persist results to the database ---
     if successful_quotes:
@@ -87,11 +85,13 @@ async def refresh_market_data(top_n: int = 25) -> Dict[str, Any]:
 
     print("--- Market data refresh complete. ---")
     
-    final_failed_symbols = [s for s in symbols_to_refresh if s not in successful_quotes]
-    
     return {
         "message": "Market data refresh process finished.",
         "refreshed_symbols": list(successful_quotes.keys()),
-        "failed_symbols": final_failed_symbols,
-        "total_symbols_processed": len(symbols_to_refresh)
+        "failed_symbols": failed_symbols,
+        "total_symbols_processed": len(symbols_to_process)
     }
+
+# The EOD refresh is now just a call to the main function with no limit.
+async def refresh_eod_data() -> Dict[str, Any]:
+    return await refresh_market_data(top_n=0)
