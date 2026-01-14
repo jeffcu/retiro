@@ -1,59 +1,93 @@
-"""
-Implementation of the market data provider interface for the Massive API.
-"""
 import os
+import httpx
+from dotenv import load_dotenv
 from typing import List, Dict, Any
-from datetime import date
-from tenacity import retry, stop_after_attempt, wait_exponential
-from massive_client import MassiveClient
+from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
+from datetime import date, timedelta
 
-# Initialize the client once. It will be shared.
+# This module implements the live Massive API client.
+# It handles network requests, authentication, and error handling.
+API_BASE_URL = "https://api.massive.com" # Base URL, path will be constructed per-function.
+
+# Load the API key from the .env file
+load_dotenv()
 API_KEY = os.getenv("MASSIVE_API_KEY")
-if not API_KEY:
-    print("WARNING: MASSIVE_API_KEY is not set in the .env file. The market data provider will be disabled.")
-    CLIENT = None
-else:
-    CLIENT = MassiveClient(api_key=API_KEY)
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=6))
-def get_quotes_sync(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
+# Define retry strategy for API calls: 3 attempts, 5 seconds apart.
+RETRY_DECORATOR = retry(
+    stop=stop_after_attempt(3),
+    wait=wait_fixed(5),
+    retry=retry_if_exception_type((httpx.RequestError, httpx.HTTPStatusError)),
+    reraise=True
+)
+
+@RETRY_DECORATOR
+def get_eod_single(symbol: str) -> Dict[str, Any]:
     """
-    Synchronous wrapper to fetch the latest EOD quote for a list of symbols using the Massive API client.
-    NOTE: The client library is not async, so we run it synchronously.
-
-    Args:
-        symbols: A list of standard stock/ETF symbols.
-
-    Returns:
-        A dictionary formatted similarly to other providers.
+    Fetches the previous day's closing price for a single symbol from the LIVE API.
+    This now uses the documented v1 endpoint.
+    (MDS Section 5.2)
     """
-    if not CLIENT:
-        return {symbol: {"error": "Massive API client not initialized."} for symbol in symbols}
+    if not API_KEY or len(API_KEY) < 10 or "YOUR_API_KEY_HERE" in API_KEY:
+        print(f"[Massive Provider] CRITICAL: API key is not configured for symbol {symbol}.")
+        return {"error": "MASSIVE_API_KEY is not set correctly."}
 
-    results = {}
-    today = date.today().isoformat()
+    # The API requires a date. For latest EOD, we use yesterday's date.
+    # This also handles weekends by looking back to the last weekday.
+    yesterday = date.today() - timedelta(days=1)
+    if yesterday.weekday() == 6: # Sunday
+        yesterday -= timedelta(days=2)
+    elif yesterday.weekday() == 5: # Saturday
+        yesterday -= timedelta(days=1)
+    date_str = yesterday.strftime('%Y-%m-%d')
 
-    for symbol in symbols:
-        # Massive API expects a suffix for US stocks, e.g., 'AAPL.US'
-        # We will assume '.US' for now as it's the most common case.
-        massive_symbol = f"{symbol.upper()}.US"
-        try:
-            # The get_eod_single function is perfect for getting the latest closing price.
-            data = CLIENT.get_eod_single(massive_symbol, today)
-            
-            if data and data.get('close') is not None:
-                results[symbol] = {
-                    "price": str(data['close']),
-                    "timestamp": data.get('date', today),
-                    "source": "massive"
+    # CORRECTED: Using the documented endpoint structure from their client library.
+    # e.g., /v1/open-close/AAPL/2024-07-29
+    endpoint = f"{API_BASE_URL}/v1/open-close/{symbol.upper()}/{date_str}"
+    params = {"apiKey": API_KEY}
+
+    try:
+        with httpx.Client() as client:
+            print(f"[Massive Provider] Connecting to LIVE endpoint: {endpoint}")
+            response = client.get(endpoint, params=params, timeout=10.0)
+            response.raise_for_status()
+            data = response.json()
+
+            # Validate the response structure from the v1 endpoint
+            if data.get('status') == 'OK' and 'close' in data:
+                return {
+                    "symbol": data.get('symbol', symbol),
+                    "price": float(data['close']),
+                    "source": "Massive API (Live EOD)"
                 }
             else:
-                error_msg = data.get('message', f"No data returned for {symbol}")
-                print(f"Massive API Warning for {symbol}: {error_msg}")
-                results[symbol] = {"error": error_msg}
+                error_message = data.get('error', 'Invalid or unexpected JSON response.')
+                print(f"[Massive Provider] API Error for {symbol}: {error_message}")
+                return {"error": error_message, "data": data}
 
-        except Exception as e:
-            print(f"Error fetching data from Massive API for {symbol}: {e}")
-            results[symbol] = {"error": f"Massive API client failed: {e}"}
-            
+    except httpx.HTTPStatusError as e:
+        error_text = e.response.text
+        print(f"[Massive Provider] HTTP Error for {symbol}: {e.response.status_code} - {error_text}")
+        # Try to parse error from JSON response if possible
+        try:
+            error_json = e.response.json()
+            return {"error": error_json.get('error', f"API returned status {e.response.status_code}")}
+        except Exception:
+            return {"error": f"API returned status {e.response.status_code}"}
+    except httpx.RequestError as e:
+        print(f"[Massive Provider] Network Error for {symbol}: {e}")
+        return {"error": "A network error occurred."}
+    except Exception as e:
+        print(f"[Massive Provider] An unexpected error occurred for {symbol}: {e}")
+        return {"error": "An unexpected error occurred."}
+
+
+def get_quotes_sync(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
+    """
+    Fetches the latest price for a list of symbols by calling the EOD function.
+    """
+    results = {}
+    for symbol in symbols:
+        quote = get_eod_single(symbol)
+        results[symbol] = quote
     return results

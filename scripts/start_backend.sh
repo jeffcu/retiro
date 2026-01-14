@@ -31,6 +31,10 @@ else
     echo "Warning: No virtual environment found (.venv or venv). Using system Python."
 fi
 
+# --- NEW: Ensure all dependencies are installed ---
+echo "Synchronizing Python dependencies from requirements.txt..."
+pip install -r requirements.txt
+
 # Launch the uvicorn server with hot-reloading
 echo "Launching uvicorn with --reload on http://127.0.0.1:$PORT..."
 uvicorn src.main:app --reload --host 127.0.0.1 --port $PORT

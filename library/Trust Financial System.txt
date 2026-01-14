@@ -181,8 +181,7 @@ Provider Interface (example)
 	•	get_eod_prices(symbols[], date) -> ...
 	•	get_metadata(symbol) -> {name, currency, type}
 
-Reality check on rate limits: many “free” tiers are too limited for frequent polling; design must include caching and batching. Alpha Vantage explicitly documents free-tier usage constraints and offers premium scaling.  
-If you consider alternatives, Marketstack also publishes very low free quotas (e.g., limited monthly requests), which reinforces the need for batching and tiering.  
+The primary provider is the Massive API, which has a free tier with a rate limit of 5 calls per minute. The polling service design must accommodate this constraint through careful scheduling (e.g., 12 seconds between calls), batching where possible, and robust caching to ensure the service remains responsive and within vendor limits.
 
 6.3 Polling Algorithm
 	•	Rank holdings by current market value daily.

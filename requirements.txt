@@ -6,4 +6,3 @@ httpx
 pandas
 tenacity
 python-dateutil
-massive-client

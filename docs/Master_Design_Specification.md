@@ -71,16 +71,17 @@ The backend will expose RESTful endpoints for the frontend, such as:
 
 #### 5.2 External API (Massive API)
 
-*   **Provider:** Massive API
+*   **Provider:** Massive API (the selected primary provider).
 *   **Authentication:** API Key (`MASSIVE_API_KEY`) must be used for all requests.
 *   **Module:** `src/market_data/massive_provider.py`
 
 **Required API Functions:**
-1.  `get_eod_single`: For fetching the latest end-of-day price for a single symbol. This is used for all market data refreshes.
+1.  `get_quotes_sync`: For fetching the latest price for a list of symbols.
+2.  `get_eod_single`: For fetching the latest end-of-day price for a single symbol. This is used for all market data refreshes.
 
 **Implementation Details:**
 *   The provider will implement a `get_quotes(symbols: list)` method.
-*   To respect the rate limit of 5 calls per minute, the `polling_service` will enforce a 12-second delay between individual API calls.
+*   To respect the free-tier rate limit of 5 calls per minute, the `polling_service` will enforce a 12-second delay between individual API calls.
 *   The polling algorithm from PRS Section 6.3 will be implemented in the `polling_service` and orchestrated by the `market_scheduler`.
 *   All API responses will be cached in the `price_history` table to minimize redundant calls and provide an audit trail.
 
@@ -117,4 +118,3 @@ Development will follow the user-feature centric plan outlined in the PRS (Secti
 
 *   **Phase 6: Forecasting**
     *   Goal: Provide future-looking financial projections.
-

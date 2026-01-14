@@ -2,18 +2,16 @@
 
 --- FILE: projects/trust/.env ---
 
-# Alpha Vantage API Key
-# This is your local configuration file. It is NOT checked into version control.
-# Copy your API key from https://www.alphavantage.co/support/#api-key and paste it below.
-ALPHA_VANTAGE_API_KEY="F139DRPZDUBEP433"
+# The Massive API is the primary market data provider for this system.
+# Ensure your key is set in your local .env file.
 MASSIVE_API_KEY="pNap64SHddP80cTAFP9SKdMyhiIYTSd7"
 
 
 --- FILE: projects/trust/.env.example ---
 
-# Alpha Vantage API Key
-# Sign up for a free key at https://www.alphavantage.co/support/#api-key
-ALPHA_VANTAGE_API_KEY="YOUR_API_KEY_HERE"
+# The Massive API is the primary market data provider for this system.
+# Ensure your key is set in your local .env file.
+MASSIVE_API_KEY="YOUR_API_KEY_HERE"
 
 
 --- FILE: projects/trust/.gitignore ---
@@ -235,7 +233,7 @@ coverage/
     "@types/react": "^18.2.15",
     "@types/react-dom": "^18.2.7",
     "@vitejs/plugin-react": "^4.0.3",
-    "vite": "^4.4.5"
+    "vite": "^7.3.1"
   }
 }
 
@@ -250,7 +248,7 @@ httpx
 pandas
 tenacity
 python-dateutil
-massive-client
+
 
 --- FILE: projects/trust/vite.config.js ---
 
@@ -347,16 +345,17 @@ The backend will expose RESTful endpoints for the frontend, such as:
 
 #### 5.2 External API (Massive API)
 
-*   **Provider:** Massive API
+*   **Provider:** Massive API (the selected primary provider).
 *   **Authentication:** API Key (`MASSIVE_API_KEY`) must be used for all requests.
 *   **Module:** `src/market_data/massive_provider.py`
 
 **Required API Functions:**
-1.  `get_eod_single`: For fetching the latest end-of-day price for a single symbol. This is used for all market data refreshes.
+1.  `get_quotes_sync`: For fetching the latest price for a list of symbols.
+2.  `get_eod_single`: For fetching the latest end-of-day price for a single symbol. This is used for all market data refreshes.
 
 **Implementation Details:**
 *   The provider will implement a `get_quotes(symbols: list)` method.
-*   To respect the rate limit of 5 calls per minute, the `polling_service` will enforce a 12-second delay between individual API calls.
+*   To respect the free-tier rate limit of 5 calls per minute, the `polling_service` will enforce a 12-second delay between individual API calls.
 *   The polling algorithm from PRS Section 6.3 will be implemented in the `polling_service` and orchestrated by the `market_scheduler`.
 *   All API responses will be cached in the `price_history` table to minimize redundant calls and provide an audit trail.
 
@@ -393,8 +392,6 @@ Development will follow the user-feature centric plan outlined in the PRS (Secti
 
 *   **Phase 6: Forecasting**
     *   Goal: Provide future-looking financial projections.
-
-
 
 --- FILE: projects/trust/library/Trust Financial System.txt ---
 
@@ -581,8 +578,7 @@ Provider Interface (example)
 	•	get_eod_prices(symbols[], date) -> ...
 	•	get_metadata(symbol) -> {name, currency, type}
 
-Reality check on rate limits: many “free” tiers are too limited for frequent polling; design must include caching and batching. Alpha Vantage explicitly documents free-tier usage constraints and offers premium scaling.  
-If you consider alternatives, Marketstack also publishes very low free quotas (e.g., limited monthly requests), which reinforces the need for batching and tiering.  
+The primary provider is the Massive API, which has a free tier with a rate limit of 5 calls per minute. The polling service design must accommodate this constraint through careful scheduling (e.g., 12 seconds between calls), batching where possible, and robust caching to ensure the service remains responsive and within vendor limits.
 
 6.3 Polling Algorithm
 	•	Rank holdings by current market value daily.
@@ -699,7 +695,6 @@ Phase 7: Forecasting
 	•	increases the selected asset’s basis ledger
 	•	Top 25 holdings refresh hourly during market hours; others refresh after market; UI clearly indicates quote staleness.
 	•	Portfolio screen displays before fees / after fees / after taxes and the Sankey that explains the difference.
-
 
 --- FILE: projects/trust/library/acceptance_test.md.txt ---
 
@@ -875,6 +870,10 @@ else
     echo "Warning: No virtual environment found (.venv or venv). Using system Python."
 fi
 
+# --- NEW: Ensure all dependencies are installed ---
+echo "Synchronizing Python dependencies from requirements.txt..."
+pip install -r requirements.txt
+
 # Launch the uvicorn server with hot-reloading
 echo "Launching uvicorn with --reload on http://127.0.0.1:$PORT..."
 uvicorn src.main:app --reload --host 127.0.0.1 --port $PORT
@@ -915,6 +914,67 @@ echo "Launching 'npm run dev' on http://localhost:$PORT..."
 npm run dev -- --port $PORT
 
 echo "--- Vite dev server process terminated. ---"
+
+--- FILE: projects/trust/scripts/test_massive_api.py ---
+
+import os
+import sys
+from dotenv import load_dotenv
+
+# Add the project root to the Python path to allow imports from `src`
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, project_root)
+
+from src.market_data import massive_provider
+
+def run_test():
+    """
+    Tests LIVE connectivity to the Massive API provider.
+    """
+    print("--- Massive API LIVE Connectivity Test Utility ---")
+
+    # Load environment variables from projects/trust/.env
+    dotenv_path = os.path.join(project_root, '.env')
+    load_dotenv(dotenv_path=dotenv_path)
+
+    api_key = os.getenv("MASSIVE_API_KEY")
+
+    if not api_key or "YOUR_API_KEY_HERE" in api_key or len(api_key) < 10:
+        print(f"CRITICAL ERROR: MASSIVE_API_KEY not found or is a placeholder in {dotenv_path}")
+        print("Please set the key to run the connectivity test.")
+        sys.exit(1)
+
+    print(f"SUCCESS: Found MASSIVE_API_KEY in {dotenv_path}")
+    
+    # Use a common, real-world symbol for a true test
+    test_symbol = "AAPL"
+    print(f"Attempting to fetch LIVE data for symbol '{test_symbol}'...")
+
+    try:
+        result = massive_provider.get_quotes_sync([test_symbol])
+        quote = result.get(test_symbol, {})
+
+        if "error" in quote:
+            raise RuntimeError(quote["error"])
+
+        price = quote.get("price")
+        if price is not None and price > 0:
+            print(f"SUCCESS: Provider returned a plausible live price: {price}")
+            print("--- LIVE Connectivity Test Passed ---")
+        else:
+            print(f"ERROR: Provider did not return a valid price. A price must be a number greater than 0.")
+            print(f"Provider response: {result}")
+            sys.exit(1)
+
+    except Exception as e:
+        print(f"\nCRITICAL ERROR: The test failed during the live API call.")
+        print(f"This could be a network issue, an invalid API key, or a change in the API's endpoint/response.")
+        print(f"Error details: {e}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    run_test()
+
 
 --- FILE: projects/trust/src/App.css ---
 
@@ -2132,9 +2192,10 @@ class HoldingUpdate(BaseModel):
 async def startup_event():
     print("API is starting up...")
     initialize_database()
-    api_key = os.getenv("ALPHA_VANTAGE_API_KEY")
-    if not api_key or api_key == "YOUR_API_KEY_HERE":
-        print("WARNING: ALPHA_VANTAGE_API_KEY is not set. Market data features will fail.")
+    # Reverted to check for the correct, primary API key as per MDS.
+    api_key = os.getenv("MASSIVE_API_KEY")
+    if not api_key or "YOUR_API_KEY_HERE" in api_key or len(api_key) < 10:
+        print("WARNING: MASSIVE_API_KEY is not set correctly in .env. Market data features will fail.")
 
 @app.get("/")
 async def root():
@@ -5950,65 +6011,100 @@ async def background_market_poller():
 
 --- FILE: projects/trust/src/market_data/massive_provider.py ---
 
-"""
-Implementation of the market data provider interface for the Massive API.
-"""
 import os
+import httpx
+from dotenv import load_dotenv
 from typing import List, Dict, Any
-from datetime import date
-from tenacity import retry, stop_after_attempt, wait_exponential
-from massive_client import MassiveClient
+from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
+from datetime import date, timedelta
 
-# Initialize the client once. It will be shared.
+# This module implements the live Massive API client.
+# It handles network requests, authentication, and error handling.
+API_BASE_URL = "https://api.massive.com" # Base URL, path will be constructed per-function.
+
+# Load the API key from the .env file
+load_dotenv()
 API_KEY = os.getenv("MASSIVE_API_KEY")
-if not API_KEY or API_KEY == "pNap64SHddxxxxxxx":
-    print("WARNING: MASSIVE_API_KEY is not set correctly in .env")
-    CLIENT = None
-else:
-    CLIENT = MassiveClient(api_key=API_KEY)
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=6))
-def get_quotes_sync(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
+# Define retry strategy for API calls: 3 attempts, 5 seconds apart.
+RETRY_DECORATOR = retry(
+    stop=stop_after_attempt(3),
+    wait=wait_fixed(5),
+    retry=retry_if_exception_type((httpx.RequestError, httpx.HTTPStatusError)),
+    reraise=True
+)
+
+@RETRY_DECORATOR
+def get_eod_single(symbol: str) -> Dict[str, Any]:
     """
-    Synchronous wrapper to fetch the latest EOD quote for a list of symbols using the Massive API client.
-    NOTE: The client library is not async, so we run it synchronously.
-
-    Args:
-        symbols: A list of standard stock/ETF symbols.
-
-    Returns:
-        A dictionary formatted similarly to other providers.
+    Fetches the previous day's closing price for a single symbol from the LIVE API.
+    This now uses the documented v1 endpoint.
+    (MDS Section 5.2)
     """
-    if not CLIENT:
-        return {symbol: {"error": "Massive API client not initialized."} for symbol in symbols}
+    if not API_KEY or len(API_KEY) < 10 or "YOUR_API_KEY_HERE" in API_KEY:
+        print(f"[Massive Provider] CRITICAL: API key is not configured for symbol {symbol}.")
+        return {"error": "MASSIVE_API_KEY is not set correctly."}
 
-    results = {}
-    today = date.today().isoformat()
+    # The API requires a date. For latest EOD, we use yesterday's date.
+    # This also handles weekends by looking back to the last weekday.
+    yesterday = date.today() - timedelta(days=1)
+    if yesterday.weekday() == 6: # Sunday
+        yesterday -= timedelta(days=2)
+    elif yesterday.weekday() == 5: # Saturday
+        yesterday -= timedelta(days=1)
+    date_str = yesterday.strftime('%Y-%m-%d')
 
-    for symbol in symbols:
-        # Massive API expects a suffix for US stocks, e.g., 'AAPL.US'
-        # We will assume '.US' for now as it's the most common case.
-        massive_symbol = f"{symbol.upper()}.US"
-        try:
-            # The get_eod_single function is perfect for getting the latest closing price.
-            data = CLIENT.get_eod_single(massive_symbol, today)
-            
-            if data and data.get('close') is not None:
-                results[symbol] = {
-                    "price": str(data['close']),
-                    "timestamp": data.get('date', today),
-                    "source": "massive"
+    # CORRECTED: Using the documented endpoint structure from their client library.
+    # e.g., /v1/open-close/AAPL/2024-07-29
+    endpoint = f"{API_BASE_URL}/v1/open-close/{symbol.upper()}/{date_str}"
+    params = {"apiKey": API_KEY}
+
+    try:
+        with httpx.Client() as client:
+            print(f"[Massive Provider] Connecting to LIVE endpoint: {endpoint}")
+            response = client.get(endpoint, params=params, timeout=10.0)
+            response.raise_for_status()
+            data = response.json()
+
+            # Validate the response structure from the v1 endpoint
+            if data.get('status') == 'OK' and 'close' in data:
+                return {
+                    "symbol": data.get('symbol', symbol),
+                    "price": float(data['close']),
+                    "source": "Massive API (Live EOD)"
                 }
             else:
-                error_msg = data.get('message', f"No data returned for {symbol}")
-                print(f"Massive API Warning for {symbol}: {error_msg}")
-                results[symbol] = {"error": error_msg}
+                error_message = data.get('error', 'Invalid or unexpected JSON response.')
+                print(f"[Massive Provider] API Error for {symbol}: {error_message}")
+                return {"error": error_message, "data": data}
 
-        except Exception as e:
-            print(f"Error fetching data from Massive API for {symbol}: {e}")
-            results[symbol] = {"error": f"Massive API client failed: {e}"}
-            
+    except httpx.HTTPStatusError as e:
+        error_text = e.response.text
+        print(f"[Massive Provider] HTTP Error for {symbol}: {e.response.status_code} - {error_text}")
+        # Try to parse error from JSON response if possible
+        try:
+            error_json = e.response.json()
+            return {"error": error_json.get('error', f"API returned status {e.response.status_code}")}
+        except Exception:
+            return {"error": f"API returned status {e.response.status_code}"}
+    except httpx.RequestError as e:
+        print(f"[Massive Provider] Network Error for {symbol}: {e}")
+        return {"error": "A network error occurred."}
+    except Exception as e:
+        print(f"[Massive Provider] An unexpected error occurred for {symbol}: {e}")
+        return {"error": "An unexpected error occurred."}
+
+
+def get_quotes_sync(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
+    """
+    Fetches the latest price for a list of symbols by calling the EOD function.
+    """
+    results = {}
+    for symbol in symbols:
+        quote = get_eod_single(symbol)
+        results[symbol] = quote
     return results
+
 
 --- FILE: projects/trust/src/market_data/polling_service.py ---
 

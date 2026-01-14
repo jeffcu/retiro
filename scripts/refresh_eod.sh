@@ -22,4 +22,4 @@ else
     exit 1
 fi
 
-echo "--- Command sent. ---_"
+echo "--- Command sent. ---"

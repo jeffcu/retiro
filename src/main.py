@@ -17,7 +17,7 @@ from src.data_model import CashflowType, Transaction
 from src import database as db
 from src import analysis
 from src import rules_engine
-from src.market_data import polling_service
+from src.market_data import polling_service, market_scheduler
 
 load_dotenv()
 
@@ -72,9 +72,14 @@ class HoldingUpdate(BaseModel):
 async def startup_event():
     print("API is starting up...")
     initialize_database()
-    api_key = os.getenv("ALPHA_VANTAGE_API_KEY")
-    if not api_key or api_key == "YOUR_API_KEY_HERE":
-        print("WARNING: ALPHA_VANTAGE_API_KEY is not set. Market data features will fail.")
+    # Reverted to check for the correct, primary API key as per MDS.
+    api_key = os.getenv("MASSIVE_API_KEY")
+    if not api_key or "YOUR_API_KEY_HERE" in api_key or len(api_key) < 10:
+        print("WARNING: MASSIVE_API_KEY is not set correctly in .env. Market data features will fail.")
+    
+    # --- NEW: Launch the automated market data poller --- #
+    print("Launching background market data polling scheduler...")
+    asyncio.create_task(market_scheduler.background_market_poller())
 
 @app.get("/")
 async def root():
