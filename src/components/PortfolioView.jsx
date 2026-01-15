@@ -5,6 +5,31 @@ import BarChart from './BarChart';
 import TimeFilter from './TimeFilter';
 import HoldingEditorModal from './HoldingEditorModal';
 
+const AllocationTable = ({ tableData, formatCurrency }) => {
+    return (
+        <div className="allocation-summary-table">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Asset Type</th>
+                        <th>Market Value</th>
+                        <th>% of Portfolio</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {tableData.map(row => (
+                        <tr key={row.categoryName}>
+                            <td>{row.categoryName}</td>
+                            <td>{formatCurrency(row.value)}</td>
+                            <td>{row.percentage}</td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
+};
+
 const PortfolioSummary = ({ holdings, formatCurrency }) => {
     const totalMarketValue = holdings.reduce((sum, h) => sum + (h.market_value || 0), 0);
     const totalCostBasis = holdings.reduce((sum, h) => sum + (h.cost_basis || 0), 0);
@@ -42,6 +67,8 @@ const PortfolioView = () => {
     const [activeFilters, setActiveFilters] = useState({ period: 'all' });
     const [sortConfig, setSortConfig] = useState(null);
     const [editingHolding, setEditingHolding] = useState(null);
+    const [portfolioAllocation, setPortfolioAllocation] = useState({ tableData: [] });
+    const [allocationLoading, setAllocationLoading] = useState(true);
 
     const fetchData = async (filters = activeFilters) => {
         try {
@@ -71,7 +98,23 @@ const PortfolioView = () => {
     };
 
     useEffect(() => {
+        const fetchAllocationData = async () => {
+            try {
+                setAllocationLoading(true);
+                const response = await fetch('/api/analysis/portfolio-allocation');
+                if (!response.ok) throw new Error('Failed to fetch portfolio allocation');
+                const data = await response.json();
+                setPortfolioAllocation(data);
+            } catch (err) {
+                setError(prevError => prevError ? `${prevError}\n${err.message}` : err.message);
+                console.error(err);
+            } finally {
+                setAllocationLoading(false);
+            }
+        };
+        
         fetchData();
+        fetchAllocationData();
     }, []);
 
     const sortedHoldings = useMemo(() => {
@@ -146,6 +189,20 @@ const PortfolioView = () => {
 
     return (
         <>
+            <div className="card">
+                <h2>Asset Allocation Summary</h2>
+                {allocationLoading ? (
+                    <p>Loading allocation data...</p>
+                ) : portfolioAllocation.tableData && portfolioAllocation.tableData.length > 0 ? (
+                    <AllocationTable 
+                        tableData={portfolioAllocation.tableData} 
+                        formatCurrency={formatCurrency} 
+                    />
+                ) : (
+                    <p>No holdings data with asset types found. Import a holdings CSV with an 'asset_type' column.</p>
+                )}
+            </div>
+
             <FilterPanel 
                 config={filterConfig} 
                 onFilterSubmit={handlePanelFilterSubmit} 

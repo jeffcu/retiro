@@ -223,14 +223,43 @@ def save_holdings_snapshot(holdings: List[Holding], account_id: str):
     if not cleaned_account_id:
         print("ERROR: Cannot save holdings snapshot without an account_id.")
         return 0, 0
+    
     conn = get_db_connection()
     cursor = conn.cursor()
+    
+    # 1. Fetch existing metadata for this account
+    cursor.execute("SELECT symbol, tags, asset_type FROM holdings WHERE trim(lower(account_id)) = trim(lower(?))", (cleaned_account_id,))
+    existing_metadata = {}
+    for row in cursor.fetchall():
+        existing_metadata[row['symbol']] = {
+            'tags': [t.strip() for t in row['tags'].split(',')] if row['tags'] else [],
+            'asset_type': row['asset_type']
+        }
+    
+    print(f"Found existing metadata for {len(existing_metadata)} symbols in account '{cleaned_account_id}'.")
+
+    # 2. Merge existing metadata into the new holdings list
+    for h in holdings:
+        if h.symbol in existing_metadata:
+            meta = existing_metadata[h.symbol]
+            # If the new holding from the CSV has no tags, but the old one did, preserve them.
+            if not h.tags and meta['tags']:
+                h.tags = meta['tags']
+                print(f"Preserving tags for {h.symbol}: {h.tags}")
+            # If the new holding from the CSV has no asset_type, but the old one did, preserve it.
+            if not h.asset_type and meta['asset_type']:
+                h.asset_type = meta['asset_type']
+                print(f"Preserving asset_type for {h.symbol}: {h.asset_type}")
+
     deleted_count = 0
     inserted_count = 0
     try:
+        # 3. Delete old records for the account
         cursor.execute("DELETE FROM holdings WHERE trim(lower(account_id)) = trim(lower(?))", (cleaned_account_id,))
         deleted_count = cursor.rowcount
         print(f"Deleted {deleted_count} stale holdings for account '{cleaned_account_id}'.")
+        
+        # 4. Insert the merged holdings
         if holdings:
             sql = """INSERT INTO holdings (
                         holding_id, account_id, symbol, quantity, cost_basis, market_value, tags, asset_type
@@ -246,6 +275,7 @@ def save_holdings_snapshot(holdings: List[Holding], account_id: str):
             cursor.executemany(sql, data_to_insert)
             inserted_count = cursor.rowcount
             print(f"Inserted {inserted_count} new holdings for account '{cleaned_account_id}'.")
+        
         conn.commit()
     except sqlite3.Error as e:
         print(f"Database error during holdings snapshot save: {e}")

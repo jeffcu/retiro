@@ -49,44 +49,14 @@
     margin: 0;
 }
 
-/* --- NEW: Styles for Allocation Chart + Table --- */
+/* --- Styles for Allocation Chart --- */
 .allocation-container {
     display: flex;
-    flex-direction: row;
-    gap: 2rem;
-    align-items: flex-start;
+    justify-content: center;
+    width: 100%;
 }
 
 .pie-chart-wrapper {
-    flex: 2;
-    min-width: 0;
-}
-
-.allocation-table-wrapper {
-    flex: 1;
-    margin-top: 40px; /* Aligns table top with chart area */
-}
-
-.allocation-table-wrapper table {
+    max-width: 800px;
     width: 100%;
-    border-collapse: collapse;
-    font-size: 0.9em;
-}
-
-.allocation-table-wrapper th,
-.allocation-table-wrapper td {
-    padding: 8px 12px;
-    border-bottom: 1px solid var(--border-color);
-    text-align: left;
-}
-
-.allocation-table-wrapper td:nth-child(2),
-.allocation-table-wrapper td:nth-child(3) {
-    text-align: right;
-    font-family: monospace;
-}
-
-.allocation-table-wrapper thead th {
-    color: #ccc;
-    font-weight: 500;
 }

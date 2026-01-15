@@ -45,31 +45,6 @@ const NetWorthHero = () => {
     );
 };
 
-const AllocationTable = ({ tableData, formatCurrency }) => {
-    return (
-        <div className="allocation-table-wrapper">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Category</th>
-                        <th>Value</th>
-                        <th>% of Portfolio</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {tableData.map(row => (
-                        <tr key={row.categoryName}>
-                            <td>{row.categoryName}</td>
-                            <td>{formatCurrency(row.value)}</td>
-                            <td>{row.percentage}</td>
-                        </tr>
-                    ))}
-                </tbody>
-            </table>
-        </div>
-    );
-};
-
 const HomeView = ({ navigateTo }) => {
     const [incomeSankeyData, setIncomeSankeyData] = useState({ nodes: [], links: [] });
     const [sankeyLoading, setSankeyLoading] = useState(true);
@@ -134,13 +109,6 @@ const HomeView = ({ navigateTo }) => {
         navigateTo('Cashflow', filters);
     };
 
-    const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
-        style: 'currency',
-        currency: 'USD',
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 0,
-    }).format(value || 0);
-
     const isSankeyVisible = !sankeyLoading && incomeSankeyData && incomeSankeyData.links.length > 0;
     const isAllocationVisible = !allocationLoading && portfolioAllocation.chartData && portfolioAllocation.chartData.length > 0;
 
@@ -171,10 +139,6 @@ const HomeView = ({ navigateTo }) => {
                         <div className="pie-chart-wrapper">
                             <PieChart data={portfolioAllocation.chartData} />
                         </div>
-                        <AllocationTable 
-                            tableData={portfolioAllocation.tableData} 
-                            formatCurrency={formatCurrency} 
-                        />
                     </div>
                 ) : (
                     <p>No holdings data with asset types found. Please import a holdings CSV with an 'asset_type' column.</p>

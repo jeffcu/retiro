@@ -14,6 +14,9 @@ ALPHA_VANTAGE_API_KEY="L66BEOWR7431XVIB"
 # Ensure your key is set in your local .env file.
 MASSIVE_API_KEY="YOUR_API_KEY_HERE"
 
+# The Alphavantage API is the secondary provider for mutual funds.
+ALPHA_VANTAGE_API_KEY="YOUR_API_KEY_HERE"
+
 
 --- FILE: projects/trust/.gitignore ---
 
@@ -884,8 +887,8 @@ project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
 
 # --- CONFIGURATION ---
-SYMBOLS_TO_TEST = ["ACGZX", "APGYX", "APGZX", "ARKVX", "FAGCX", "FIDZX", "FIKMX"]
-API_CALL_INTERVAL_SECONDS = 5 # As per Captain's new orders
+SYMBOLS_TO_TEST = ["VTSAX", "VTIAX", "VBTLX", "VFIAX"] # Common Mutual Funds
+API_CALL_INTERVAL_SECONDS = 12 # Alphavantage free tier is 5 calls/min
 BASE_URL = "https://www.alphavantage.co/query"
 
 def run_test():
@@ -3537,46 +3540,16 @@ export default HoldingEditorModal;
     margin: 0;
 }
 
-/* --- NEW: Styles for Allocation Chart + Table --- */
+/* --- Styles for Allocation Chart --- */
 .allocation-container {
     display: flex;
-    flex-direction: row;
-    gap: 2rem;
-    align-items: flex-start;
+    justify-content: center;
+    width: 100%;
 }
 
 .pie-chart-wrapper {
-    flex: 2;
-    min-width: 0;
-}
-
-.allocation-table-wrapper {
-    flex: 1;
-    margin-top: 40px; /* Aligns table top with chart area */
-}
-
-.allocation-table-wrapper table {
+    max-width: 800px;
     width: 100%;
-    border-collapse: collapse;
-    font-size: 0.9em;
-}
-
-.allocation-table-wrapper th,
-.allocation-table-wrapper td {
-    padding: 8px 12px;
-    border-bottom: 1px solid var(--border-color);
-    text-align: left;
-}
-
-.allocation-table-wrapper td:nth-child(2),
-.allocation-table-wrapper td:nth-child(3) {
-    text-align: right;
-    font-family: monospace;
-}
-
-.allocation-table-wrapper thead th {
-    color: #ccc;
-    font-weight: 500;
 }
 
 
@@ -3625,31 +3598,6 @@ const NetWorthHero = () => {
                 {loading ? 'Calculating...' : formatCurrency(netWorth)}
             </p>
             <p className="timestamp">As of latest holdings import</p>
-        </div>
-    );
-};
-
-const AllocationTable = ({ tableData, formatCurrency }) => {
-    return (
-        <div className="allocation-table-wrapper">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Category</th>
-                        <th>Value</th>
-                        <th>% of Portfolio</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {tableData.map(row => (
-                        <tr key={row.categoryName}>
-                            <td>{row.categoryName}</td>
-                            <td>{formatCurrency(row.value)}</td>
-                            <td>{row.percentage}</td>
-                        </tr>
-                    ))}
-                </tbody>
-            </table>
         </div>
     );
 };
@@ -3718,13 +3666,6 @@ const HomeView = ({ navigateTo }) => {
         navigateTo('Cashflow', filters);
     };
 
-    const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
-        style: 'currency',
-        currency: 'USD',
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 0,
-    }).format(value || 0);
-
     const isSankeyVisible = !sankeyLoading && incomeSankeyData && incomeSankeyData.links.length > 0;
     const isAllocationVisible = !allocationLoading && portfolioAllocation.chartData && portfolioAllocation.chartData.length > 0;
 
@@ -3755,10 +3696,6 @@ const HomeView = ({ navigateTo }) => {
                         <div className="pie-chart-wrapper">
                             <PieChart data={portfolioAllocation.chartData} />
                         </div>
-                        <AllocationTable 
-                            tableData={portfolioAllocation.tableData} 
-                            formatCurrency={formatCurrency} 
-                        />
                     </div>
                 ) : (
                     <p>No holdings data with asset types found. Please import a holdings CSV with an 'asset_type' column.</p>
@@ -4244,6 +4181,31 @@ export default PlaceholderView;
     font-size: 1.1em;
 }
 
+/* --- Styles for Allocation Summary Table --- */
+.allocation-summary-table table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9em;
+}
+
+.allocation-summary-table th,
+.allocation-summary-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color);
+    text-align: left;
+}
+
+.allocation-summary-table td:nth-child(2),
+.allocation-summary-table td:nth-child(3) {
+    text-align: right;
+    font-family: monospace;
+}
+
+.allocation-summary-table thead th {
+    color: #ccc;
+    font-weight: 500;
+}
+
 
 --- FILE: projects/trust/src/components/PortfolioView.jsx ---
 
@@ -4253,6 +4215,31 @@ import FilterPanel from './FilterPanel';
 import BarChart from './BarChart';
 import TimeFilter from './TimeFilter';
 import HoldingEditorModal from './HoldingEditorModal';
+
+const AllocationTable = ({ tableData, formatCurrency }) => {
+    return (
+        <div className="allocation-summary-table">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Asset Type</th>
+                        <th>Market Value</th>
+                        <th>% of Portfolio</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {tableData.map(row => (
+                        <tr key={row.categoryName}>
+                            <td>{row.categoryName}</td>
+                            <td>{formatCurrency(row.value)}</td>
+                            <td>{row.percentage}</td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
+};
 
 const PortfolioSummary = ({ holdings, formatCurrency }) => {
     const totalMarketValue = holdings.reduce((sum, h) => sum + (h.market_value || 0), 0);
@@ -4291,6 +4278,8 @@ const PortfolioView = () => {
     const [activeFilters, setActiveFilters] = useState({ period: 'all' });
     const [sortConfig, setSortConfig] = useState(null);
     const [editingHolding, setEditingHolding] = useState(null);
+    const [portfolioAllocation, setPortfolioAllocation] = useState({ tableData: [] });
+    const [allocationLoading, setAllocationLoading] = useState(true);
 
     const fetchData = async (filters = activeFilters) => {
         try {
@@ -4320,7 +4309,23 @@ const PortfolioView = () => {
     };
 
     useEffect(() => {
+        const fetchAllocationData = async () => {
+            try {
+                setAllocationLoading(true);
+                const response = await fetch('/api/analysis/portfolio-allocation');
+                if (!response.ok) throw new Error('Failed to fetch portfolio allocation');
+                const data = await response.json();
+                setPortfolioAllocation(data);
+            } catch (err) {
+                setError(prevError => prevError ? `${prevError}\n${err.message}` : err.message);
+                console.error(err);
+            } finally {
+                setAllocationLoading(false);
+            }
+        };
+        
         fetchData();
+        fetchAllocationData();
     }, []);
 
     const sortedHoldings = useMemo(() => {
@@ -4400,6 +4405,20 @@ const PortfolioView = () => {
                 onFilterSubmit={handlePanelFilterSubmit} 
                 initialValues={activeFilters} 
             />
+
+            <div className="card">
+                <h2>Asset Allocation Summary</h2>
+                {allocationLoading ? (
+                    <p>Loading allocation data...</p>
+                ) : portfolioAllocation.tableData && portfolioAllocation.tableData.length > 0 ? (
+                    <AllocationTable 
+                        tableData={portfolioAllocation.tableData} 
+                        formatCurrency={formatCurrency} 
+                    />
+                ) : (
+                    <p>No holdings data with asset types found. Import a holdings CSV with an 'asset_type' column.</p>
+                )}
+            </div>
 
             {!loading && holdings.length > 0 && (
                 <PortfolioSummary 
@@ -6336,6 +6355,83 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Hold
 
 # This package handles fetching external market data.
 # (PRS Section 6, MDS Section 5.2)
+
+
+--- FILE: projects/trust/src/market_data/alphavantage_provider.py ---
+
+import os
+import httpx
+from dotenv import load_dotenv
+from typing import Dict, Any
+from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
+
+# This module implements the client for the Alphavantage API.
+# (MDS Section 5.2)
+API_BASE_URL = "https://www.alphavantage.co/query"
+
+load_dotenv()
+API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
+
+RETRY_DECORATOR = retry(
+    stop=stop_after_attempt(3),
+    wait=wait_fixed(5),
+    retry=retry_if_exception_type((httpx.RequestError, httpx.HTTPStatusError)),
+    reraise=True
+)
+
+@RETRY_DECORATOR
+def get_eod_single(symbol: str) -> Dict[str, Any]:
+    """
+    Fetches the latest quote for a single symbol from the Alphavantage API.
+    This is designed for mutual funds and other assets not covered by the primary provider.
+    """
+    if not API_KEY or len(API_KEY) < 10 or "YOUR_API_KEY_HERE" in API_KEY:
+        print(f"[Alphavantage Provider] CRITICAL: API key is not configured for symbol {symbol}.")
+        return {"error": "ALPHA_VANTAGE_API_KEY is not set correctly."}
+
+    params = {
+        "function": "GLOBAL_QUOTE",
+        "symbol": symbol.upper(),
+        "apikey": API_KEY
+    }
+
+    try:
+        with httpx.Client() as client:
+            print(f"[Alphavantage Provider] Connecting to endpoint for {symbol}...")
+            response = client.get(API_BASE_URL, params=params, timeout=15.0)
+            response.raise_for_status()
+            data = response.json()
+
+        # Alphavantage has several response formats for errors/rate limits.
+        if "Global Quote" in data and data["Global Quote"] and "05. price" in data["Global Quote"]:
+            return {
+                "symbol": data["Global Quote"].get('01. symbol', symbol),
+                "price": float(data["Global Quote"]['05. price']),
+                "source": "Alphavantage API"
+            }
+        elif "Note" in data:
+             # This is their rate limit message
+             print(f"[Alphavantage Provider] API Error for {symbol}: {data['Note']}")
+             return {"error": data['Note']}
+        elif "Information" in data:
+             # This is often an invalid key or call format message
+             print(f"[Alphavantage Provider] API Error for {symbol}: {data['Information']}")
+             return {"error": data['Information']}
+        else:
+            error_message = "Invalid or empty response from API."
+            print(f"[Alphavantage Provider] API Error for {symbol}: {error_message}")
+            return {"error": error_message, "data": data}
+
+    except httpx.HTTPStatusError as e:
+        error_text = e.response.text
+        print(f"[Alphavantage Provider] HTTP Error for {symbol}: {e.response.status_code} - {error_text}")
+        return {"error": f"API returned status {e.response.status_code}"}
+    except httpx.RequestError as e:
+        print(f"[Alphavantage Provider] Network Error for {symbol}: {e}")
+        return {"error": "A network error occurred."}
+    except Exception as e:
+        print(f"[Alphavantage Provider] An unexpected error occurred for {symbol}: {e}")
+        return {"error": "An unexpected error occurred."}
 
 
 --- FILE: projects/trust/src/market_data/market_scheduler.py ---

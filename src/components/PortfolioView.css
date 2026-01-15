@@ -104,3 +104,28 @@
     font-family: monospace;
     font-size: 1.1em;
 }
+
+/* --- Styles for Allocation Summary Table --- */
+.allocation-summary-table table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9em;
+}
+
+.allocation-summary-table th,
+.allocation-summary-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color);
+    text-align: left;
+}
+
+.allocation-summary-table td:nth-child(2),
+.allocation-summary-table td:nth-child(3) {
+    text-align: right;
+    font-family: monospace;
+}
+
+.allocation-summary-table thead th {
+    color: #ccc;
+    font-weight: 500;
+}
