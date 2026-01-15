@@ -316,8 +316,19 @@ def _build_where_clause(filters: Dict, allowed_fields: List[str]) -> Tuple[List[
     for key, value in filters.items():
         if key not in allowed_fields or not value:
             continue
-        clauses.append(f"{key} LIKE ?" if key in ['description', 'tags'] else f"{key} = ?")
-        params.append(f"%{value}%" if key in ['description', 'tags'] else value)
+
+        # --- NEW: Special handling for 'Uncategorized' filter ---
+        # This aligns filtering with the display logic where NULLs are shown as "Uncategorized".
+        if key == 'category' and value == 'Uncategorized':
+            clauses.append("(category IS NULL OR category = '' OR category = ?)")
+            params.append('Uncategorized')
+        elif key in ['description', 'tags']:
+            clauses.append(f"{key} LIKE ?")
+            params.append(f"%{value}%")
+        else:
+            clauses.append(f"{key} = ?")
+            params.append(value)
+            
     return clauses, params
 
 def get_transaction(transaction_id: str) -> Dict[str, Any] | None:
@@ -438,8 +449,16 @@ def get_all_import_runs() -> List[Dict[str, Any]]:
 def get_filter_options() -> Dict[str, List[str]]:
     conn, options = get_db_connection(), {}
     cursor = conn.cursor()
+    # Get all distinct categories, excluding 'Uncategorized' from the initial list to handle it as a special case.
     cursor.execute("SELECT DISTINCT category FROM transactions WHERE category IS NOT NULL AND category != '' AND category != 'Uncategorized' ORDER BY category")
     options['categories'] = [row['category'] for row in cursor.fetchall()]
+
+    # --- NEW: Conditionally add 'Uncategorized' if relevant transactions exist ---
+    cursor.execute("SELECT 1 FROM transactions WHERE category IS NULL OR category = '' OR category = 'Uncategorized' LIMIT 1")
+    if cursor.fetchone():
+        options['categories'].append('Uncategorized')
+        # Re-sort to maintain alphabetical order
+        options['categories'].sort()
 
     cursor.execute("""
         SELECT account_id FROM transactions WHERE account_id IS NOT NULL
@@ -482,15 +501,37 @@ def get_latest_transaction_year() -> int | None:
     conn.close()
     return int(result['latest_year']) if result and result['latest_year'] else None
 
-def get_cashflow_aggregation_by_month(year: int, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+def get_cashflow_aggregation_by_month(filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Aggregates income and expense by month based on a flexible filter dictionary.
+    This function is driven by the 'period' in the filters, not a separate year.
+    """
     conn = get_db_connection()
     cursor = conn.cursor()
+
+    # Use a copy to avoid mutating the original filters dict
+    local_filters = filters.copy()
+    period = local_filters.pop('period', None)
+
     allowed_fields = ['category', 'account_id', 'institution', 'description', 'tags', 'cashflow_type']
-    clauses, params = _build_where_clause(filters, allowed_fields)
-    clauses.insert(0, "strftime('%Y', transaction_date) = ?")
-    params.insert(0, str(year))
+    clauses, params = _build_where_clause(local_filters, allowed_fields)
+
+    # The helper function correctly handles various period formats (e.g., 'all', '2024', '6m')
+    _apply_period_filter_to_query(clauses, params, period, date_column='transaction_date')
+
     where_str = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    query = f"""SELECT CAST(strftime('%m', transaction_date) AS INTEGER) as month, SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as income, SUM(CASE WHEN amount < 0 AND cashflow_type = 'Expense' THEN amount ELSE 0 END) as expense FROM transactions {where_str} GROUP BY month ORDER BY month ASC"""
+
+    query = f"""
+        SELECT 
+            strftime('%Y-%m', transaction_date) as month, 
+            SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as income, 
+            SUM(CASE WHEN amount < 0 AND cashflow_type = 'Expense' THEN amount ELSE 0 END) as expense 
+        FROM transactions 
+        {where_str} 
+        GROUP BY month 
+        ORDER BY month ASC
+    """
+
     cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
@@ -722,5 +763,3 @@ def mark_holdings_as_failed(symbols: List[str]):
         raise e
     finally:
         conn.close()
-
-

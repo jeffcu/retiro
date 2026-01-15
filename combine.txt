@@ -396,10 +396,13 @@ Development will follow the user-feature centric plan outlined in the PRS (Secti
 *   **Phase 4: The Portfolio View (Completed)**
     *   Goal: Establish initial portfolio tracking.
 
-*   **Phase 5: Automated Market Data & Layered Returns (In Progress)**
+*   **Phase 5: Automated Market Data & Layered Returns (Completed)**
     *   Goal: Automate portfolio pricing using a multi-provider strategy and introduce advanced return metrics.
 
-*   **Phase 6: Forecasting**
+*   **Phase 6: Advanced Rules Engine & Portfolio Separation (Completed)**
+    *   Goal: Implement the v2 rules engine to separate portfolio activity from cash flow.
+
+*   **Phase 7: Forecasting (Next)**
     *   Goal: Provide future-looking financial projections.
 
 
@@ -681,17 +684,21 @@ Phase 4: The Portfolio View (Completed)
 	•	Goal: Establish the initial portfolio tracking capability.
 	•	Features: Import a holdings CSV. A new Portfolio screen displays a list of holdings and their current market value (via on-demand price fetches).
 
-Phase 5: Automated Market Data & Layered Returns
+Phase 5: Automated Market Data & Layered Returns (Completed)
 	•	Goal: Automate portfolio pricing and introduce advanced return metrics.
 	•	Features: Implement the scheduled “drip” pricing service. The Portfolio screen displays Gross, After-Fee, and After-Tax returns, visualized in the Returns Sankey.
 
-Phase 6: Advanced Rules Engine & Portfolio Separation
+Phase 6: Advanced Rules Engine & Portfolio Separation (Completed)
 	•	Goal: Implement the v2 rules engine to separate portfolio activity from cash flow.
 	•	Features: Update database and backend logic for conditional rules. Modify analysis engine to exclude 'Investment' type transactions from cash flow Sankey. Begin UI design for new rules editor.
 
 Phase 7: Forecasting
-	•	Goal: Provide future-looking financial projections.
-	•	Features: A new Forecast screen allows users to create simple scenarios and see their projected net worth over time.
+	•	Goal: Provide future-looking financial projections based on user-defined scenarios.
+	•	Features: 
+    •   A new Forecast screen (PRS Section 4.6).
+    •   Users can define scenarios with assumptions for future income, expenses (consumption), and expected investment returns.
+    •   The system must allow for modeling one-time planned events, such as a large Capital Expenditure.
+    •   The output will be a projection of the Trust's portfolio value and total net worth over a specified time horizon.
 
 ⸻
 
@@ -701,10 +708,11 @@ Phase 7: Forecasting
 	•	Importing the same CSV twice produces no duplicates.
 	•	A transaction can be tagged with multiple tags and contributes to both tag totals.
 	•	Marking a transaction as CapEx:
-	•	removes it from “spending”
-	•	increases the selected asset’s basis ledger
+	•	- removes it from “spending”
+	•	- increases the selected asset’s basis ledger
 	•	Top 25 holdings refresh hourly during market hours; others refresh after market; UI clearly indicates quote staleness.
 	•	Portfolio screen displays before fees / after fees / after taxes and the Sankey that explains the difference.
+
 
 --- FILE: projects/trust/library/acceptance_test.md.txt ---
 
@@ -1385,19 +1393,15 @@ def generate_income_sankey(period: str, exclude_invisible: bool = False) -> Dict
 def prepare_cashflow_chart_data(filters: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
     Prepares monthly cashflow summary data for the frontend bar chart.
+    This version is driven by the filters provided, including the time period.
     """
-    # Dynamically determine the year to display.
-    year_to_use = get_latest_transaction_year()
-    if not year_to_use:
-        year_to_use = datetime.now().year
+    data = get_cashflow_aggregation_by_month(filters=filters)
 
-    data = get_cashflow_aggregation_by_month(year=year_to_use, filters=filters)
-
-    # The data comes in as a list of {'month', 'income', 'expense'}.
-    # We'll format it for Nivo.
+    # The data comes in as a list of {'month': 'YYYY-MM', 'income', 'expense'}.
+    # We format it for Nivo.
     return [
         {
-            "month": f"{year_to_use}-{row['month']:02d}",
+            "month": row['month'],
             "Income": row['income'],
             "Expense": abs(row['expense']) # Make expense positive for bar chart
         }
@@ -1460,6 +1464,7 @@ def prepare_portfolio_allocation_chart_data() -> Dict[str, Any]:
         "tableData": table_data,
         "chartData": chart_data # The data is already sorted by value DESC from the DB query
     }
+
 
 
 
@@ -1764,14 +1769,43 @@ def save_holdings_snapshot(holdings: List[Holding], account_id: str):
     if not cleaned_account_id:
         print("ERROR: Cannot save holdings snapshot without an account_id.")
         return 0, 0
+    
     conn = get_db_connection()
     cursor = conn.cursor()
+    
+    # 1. Fetch existing metadata for this account
+    cursor.execute("SELECT symbol, tags, asset_type FROM holdings WHERE trim(lower(account_id)) = trim(lower(?))", (cleaned_account_id,))
+    existing_metadata = {}
+    for row in cursor.fetchall():
+        existing_metadata[row['symbol']] = {
+            'tags': [t.strip() for t in row['tags'].split(',')] if row['tags'] else [],
+            'asset_type': row['asset_type']
+        }
+    
+    print(f"Found existing metadata for {len(existing_metadata)} symbols in account '{cleaned_account_id}'.")
+
+    # 2. Merge existing metadata into the new holdings list
+    for h in holdings:
+        if h.symbol in existing_metadata:
+            meta = existing_metadata[h.symbol]
+            # If the new holding from the CSV has no tags, but the old one did, preserve them.
+            if not h.tags and meta['tags']:
+                h.tags = meta['tags']
+                print(f"Preserving tags for {h.symbol}: {h.tags}")
+            # If the new holding from the CSV has no asset_type, but the old one did, preserve it.
+            if not h.asset_type and meta['asset_type']:
+                h.asset_type = meta['asset_type']
+                print(f"Preserving asset_type for {h.symbol}: {h.asset_type}")
+
     deleted_count = 0
     inserted_count = 0
     try:
+        # 3. Delete old records for the account
         cursor.execute("DELETE FROM holdings WHERE trim(lower(account_id)) = trim(lower(?))", (cleaned_account_id,))
         deleted_count = cursor.rowcount
         print(f"Deleted {deleted_count} stale holdings for account '{cleaned_account_id}'.")
+        
+        # 4. Insert the merged holdings
         if holdings:
             sql = """INSERT INTO holdings (
                         holding_id, account_id, symbol, quantity, cost_basis, market_value, tags, asset_type
@@ -1787,6 +1821,7 @@ def save_holdings_snapshot(holdings: List[Holding], account_id: str):
             cursor.executemany(sql, data_to_insert)
             inserted_count = cursor.rowcount
             print(f"Inserted {inserted_count} new holdings for account '{cleaned_account_id}'.")
+        
         conn.commit()
     except sqlite3.Error as e:
         print(f"Database error during holdings snapshot save: {e}")
@@ -1827,8 +1862,19 @@ def _build_where_clause(filters: Dict, allowed_fields: List[str]) -> Tuple[List[
     for key, value in filters.items():
         if key not in allowed_fields or not value:
             continue
-        clauses.append(f"{key} LIKE ?" if key in ['description', 'tags'] else f"{key} = ?")
-        params.append(f"%{value}%" if key in ['description', 'tags'] else value)
+
+        # --- NEW: Special handling for 'Uncategorized' filter ---
+        # This aligns filtering with the display logic where NULLs are shown as "Uncategorized".
+        if key == 'category' and value == 'Uncategorized':
+            clauses.append("(category IS NULL OR category = '' OR category = ?)")
+            params.append('Uncategorized')
+        elif key in ['description', 'tags']:
+            clauses.append(f"{key} LIKE ?")
+            params.append(f"%{value}%")
+        else:
+            clauses.append(f"{key} = ?")
+            params.append(value)
+            
     return clauses, params
 
 def get_transaction(transaction_id: str) -> Dict[str, Any] | None:
@@ -1949,8 +1995,16 @@ def get_all_import_runs() -> List[Dict[str, Any]]:
 def get_filter_options() -> Dict[str, List[str]]:
     conn, options = get_db_connection(), {}
     cursor = conn.cursor()
+    # Get all distinct categories, excluding 'Uncategorized' from the initial list to handle it as a special case.
     cursor.execute("SELECT DISTINCT category FROM transactions WHERE category IS NOT NULL AND category != '' AND category != 'Uncategorized' ORDER BY category")
     options['categories'] = [row['category'] for row in cursor.fetchall()]
+
+    # --- NEW: Conditionally add 'Uncategorized' if relevant transactions exist ---
+    cursor.execute("SELECT 1 FROM transactions WHERE category IS NULL OR category = '' OR category = 'Uncategorized' LIMIT 1")
+    if cursor.fetchone():
+        options['categories'].append('Uncategorized')
+        # Re-sort to maintain alphabetical order
+        options['categories'].sort()
 
     cursor.execute("""
         SELECT account_id FROM transactions WHERE account_id IS NOT NULL
@@ -1993,15 +2047,37 @@ def get_latest_transaction_year() -> int | None:
     conn.close()
     return int(result['latest_year']) if result and result['latest_year'] else None
 
-def get_cashflow_aggregation_by_month(year: int, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+def get_cashflow_aggregation_by_month(filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Aggregates income and expense by month based on a flexible filter dictionary.
+    This function is driven by the 'period' in the filters, not a separate year.
+    """
     conn = get_db_connection()
     cursor = conn.cursor()
+
+    # Use a copy to avoid mutating the original filters dict
+    local_filters = filters.copy()
+    period = local_filters.pop('period', None)
+
     allowed_fields = ['category', 'account_id', 'institution', 'description', 'tags', 'cashflow_type']
-    clauses, params = _build_where_clause(filters, allowed_fields)
-    clauses.insert(0, "strftime('%Y', transaction_date) = ?")
-    params.insert(0, str(year))
+    clauses, params = _build_where_clause(local_filters, allowed_fields)
+
+    # The helper function correctly handles various period formats (e.g., 'all', '2024', '6m')
+    _apply_period_filter_to_query(clauses, params, period, date_column='transaction_date')
+
     where_str = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    query = f"""SELECT CAST(strftime('%m', transaction_date) AS INTEGER) as month, SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as income, SUM(CASE WHEN amount < 0 AND cashflow_type = 'Expense' THEN amount ELSE 0 END) as expense FROM transactions {where_str} GROUP BY month ORDER BY month ASC"""
+
+    query = f"""
+        SELECT 
+            strftime('%Y-%m', transaction_date) as month, 
+            SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as income, 
+            SUM(CASE WHEN amount < 0 AND cashflow_type = 'Expense' THEN amount ELSE 0 END) as expense 
+        FROM transactions 
+        {where_str} 
+        GROUP BY month 
+        ORDER BY month ASC
+    """
+
     cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
@@ -2233,8 +2309,6 @@ def mark_holdings_as_failed(symbols: List[str]):
         raise e
     finally:
         conn.close()
-
-
 
 
 --- FILE: projects/trust/src/index.css ---
@@ -4400,12 +4474,6 @@ const PortfolioView = () => {
 
     return (
         <>
-            <FilterPanel 
-                config={filterConfig} 
-                onFilterSubmit={handlePanelFilterSubmit} 
-                initialValues={activeFilters} 
-            />
-
             <div className="card">
                 <h2>Asset Allocation Summary</h2>
                 {allocationLoading ? (
@@ -4419,6 +4487,12 @@ const PortfolioView = () => {
                     <p>No holdings data with asset types found. Import a holdings CSV with an 'asset_type' column.</p>
                 )}
             </div>
+
+            <FilterPanel 
+                config={filterConfig} 
+                onFilterSubmit={handlePanelFilterSubmit} 
+                initialValues={activeFilters} 
+            />
 
             {!loading && holdings.length > 0 && (
                 <PortfolioSummary 

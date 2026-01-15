@@ -274,17 +274,21 @@ Phase 4: The Portfolio View (Completed)
 	•	Goal: Establish the initial portfolio tracking capability.
 	•	Features: Import a holdings CSV. A new Portfolio screen displays a list of holdings and their current market value (via on-demand price fetches).
 
-Phase 5: Automated Market Data & Layered Returns
+Phase 5: Automated Market Data & Layered Returns (Completed)
 	•	Goal: Automate portfolio pricing and introduce advanced return metrics.
 	•	Features: Implement the scheduled “drip” pricing service. The Portfolio screen displays Gross, After-Fee, and After-Tax returns, visualized in the Returns Sankey.
 
-Phase 6: Advanced Rules Engine & Portfolio Separation
+Phase 6: Advanced Rules Engine & Portfolio Separation (Completed)
 	•	Goal: Implement the v2 rules engine to separate portfolio activity from cash flow.
 	•	Features: Update database and backend logic for conditional rules. Modify analysis engine to exclude 'Investment' type transactions from cash flow Sankey. Begin UI design for new rules editor.
 
 Phase 7: Forecasting
-	•	Goal: Provide future-looking financial projections.
-	•	Features: A new Forecast screen allows users to create simple scenarios and see their projected net worth over time.
+	•	Goal: Provide future-looking financial projections based on user-defined scenarios.
+	•	Features: 
+    •   A new Forecast screen (PRS Section 4.6).
+    •   Users can define scenarios with assumptions for future income, expenses (consumption), and expected investment returns.
+    •   The system must allow for modeling one-time planned events, such as a large Capital Expenditure.
+    •   The output will be a projection of the Trust's portfolio value and total net worth over a specified time horizon.
 
 ⸻
 
@@ -294,7 +298,7 @@ Phase 7: Forecasting
 	•	Importing the same CSV twice produces no duplicates.
 	•	A transaction can be tagged with multiple tags and contributes to both tag totals.
 	•	Marking a transaction as CapEx:
-	•	removes it from “spending”
-	•	increases the selected asset’s basis ledger
+	•	- removes it from “spending”
+	•	- increases the selected asset’s basis ledger
 	•	Top 25 holdings refresh hourly during market hours; others refresh after market; UI clearly indicates quote staleness.
 	•	Portfolio screen displays before fees / after fees / after taxes and the Sankey that explains the difference.

@@ -138,19 +138,15 @@ def generate_income_sankey(period: str, exclude_invisible: bool = False) -> Dict
 def prepare_cashflow_chart_data(filters: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
     Prepares monthly cashflow summary data for the frontend bar chart.
+    This version is driven by the filters provided, including the time period.
     """
-    # Dynamically determine the year to display.
-    year_to_use = get_latest_transaction_year()
-    if not year_to_use:
-        year_to_use = datetime.now().year
+    data = get_cashflow_aggregation_by_month(filters=filters)
 
-    data = get_cashflow_aggregation_by_month(year=year_to_use, filters=filters)
-
-    # The data comes in as a list of {'month', 'income', 'expense'}.
-    # We'll format it for Nivo.
+    # The data comes in as a list of {'month': 'YYYY-MM', 'income', 'expense'}.
+    # We format it for Nivo.
     return [
         {
-            "month": f"{year_to_use}-{row['month']:02d}",
+            "month": row['month'],
             "Income": row['income'],
             "Expense": abs(row['expense']) # Make expense positive for bar chart
         }
@@ -213,4 +209,5 @@ def prepare_portfolio_allocation_chart_data() -> Dict[str, Any]:
         "tableData": table_data,
         "chartData": chart_data # The data is already sorted by value DESC from the DB query
     }
+
 

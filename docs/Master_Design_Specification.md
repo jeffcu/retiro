@@ -117,8 +117,11 @@ Development will follow the user-feature centric plan outlined in the PRS (Secti
 *   **Phase 4: The Portfolio View (Completed)**
     *   Goal: Establish initial portfolio tracking.
 
-*   **Phase 5: Automated Market Data & Layered Returns (In Progress)**
+*   **Phase 5: Automated Market Data & Layered Returns (Completed)**
     *   Goal: Automate portfolio pricing using a multi-provider strategy and introduce advanced return metrics.
 
-*   **Phase 6: Forecasting**
+*   **Phase 6: Advanced Rules Engine & Portfolio Separation (Completed)**
+    *   Goal: Implement the v2 rules engine to separate portfolio activity from cash flow.
+
+*   **Phase 7: Forecasting (Next)**
     *   Goal: Provide future-looking financial projections.
