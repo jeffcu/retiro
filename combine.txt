@@ -5,6 +5,7 @@
 # The Massive API is the primary market data provider for this system.
 # Ensure your key is set in your local .env file.
 MASSIVE_API_KEY="pNap64SHddP80cTAFP9SKdMyhiIYTSd7"
+ALPHA_VANTAGE_API_KEY="L66BEOWR7431XVIB"
 
 
 --- FILE: projects/trust/.env.example ---
@@ -225,6 +226,7 @@ coverage/
   "dependencies": {
     "@nivo/bar": "^0.87.0",
     "@nivo/core": "^0.87.0",
+    "@nivo/pie": "^0.87.0",
     "@nivo/sankey": "^0.87.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
@@ -273,7 +275,7 @@ export default defineConfig({
 --- FILE: projects/trust/docs/Master_Design_Specification.md ---
 
 # Curie Trust Financial Control Center
-## Master Design Specification (MDS) v1.0
+## Master Design Specification (MDS) v1.1
 
 ---
 
@@ -301,7 +303,7 @@ graph TD
     B <--> C{Backend API (Python/FastAPI)};
     C --> D[Business Logic];
     D <--> E[SQLite Database];
-    D <--> F(External API: Massive);
+    D --> F(External APIs: Massive, Alphavantage);
     G[CSV/Spreadsheet Files] --> C;
 ```
 
@@ -309,11 +311,11 @@ graph TD
 
 The system is decomposed into the following distinct modules within the `src` directory:
 
-*   `src/data_model.py`: Defines the core Python data structures (`Transaction`, `Account`, `Holding`, etc.) using dataclasses and Enums.
+*   `src/data_model.py`: Defines the core Python data structures (`Transaction`, `Holding`, etc.) using dataclasses and Enums.
 *   `src/database.py`: Manages all interaction with the SQLite database, including schema creation, CRUD operations, and transaction management.
 *   `src/importers/`: A package for data ingestion. Contains parsers for different CSV formats and the logic for mapping, normalization, and deduplication.
 *   `src/rules_engine.py`: Handles the logic for automatically categorizing transactions based on user-defined rules (e.g., merchant regex matching).
-*   `src/market_data/`: A package for fetching external market data. Contains the provider interface and a specific implementation for the Massive API.
+*   `src/market_data/`: A package for fetching external market data. Contains the provider interface and specific implementations for the Massive API and Alphavantage.
 *   `src/analysis.py`: Contains functions for financial calculations, generating Sankey diagram data, calculating portfolio returns, and running forecasts.
 *   `src/main.py` or `src/api.py`: The main application entry point. Runs the web server (e.g., FastAPI) and exposes the API endpoints for the frontend.
 
@@ -327,7 +329,7 @@ The system is decomposed into the following distinct modules within the `src` di
 *   `transactions`: Stores all financial events (income, expense, transfer, capex).
 *   `accounts`: Represents financial accounts (e.g., checking, credit card).
 *   `assets`: Represents major assets, primarily for tracking basis (e.g., 'Main Residence').
-*   `holdings`: Stores portfolio positions (e.g., 100 shares of AAPL in Account X).
+*   `holdings`: Stores portfolio positions (e.g., 100 shares of AAPL in Account X). Includes a `last_price_update_failed` flag for UI error reporting.
 *   `price_history`: Caches historical and intraday price quotes for securities.
 *   `rules`: Stores user-defined rules for transaction categorization.
 *   `import_profiles`: Saves column mappings and settings for specific CSV formats.
@@ -343,55 +345,60 @@ The backend will expose RESTful endpoints for the frontend, such as:
 *   `GET /api/transactions?category=Travel`: Retrieves transactions based on filters.
 *   `PUT /api/transaction/{id}`: Updates a single transaction (e.g., manual re-categorization).
 
-#### 5.2 External API (Massive API)
+#### 5.2 External APIs
 
-*   **Provider:** Massive API (the selected primary provider).
-*   **Authentication:** API Key (`MASSIVE_API_KEY`) must be used for all requests.
+The system employs a multi-provider strategy for market data, orchestrated by the `polling_service`.
+
+**Provider 1: Massive API**
+*   **Usage:** Primary provider for assets of type `Common Stock`.
+*   **Authentication:** API Key (`MASSIVE_API_KEY`).
 *   **Module:** `src/market_data/massive_provider.py`
 
-**Required API Functions:**
-1.  `get_quotes_sync`: For fetching the latest price for a list of symbols.
-2.  `get_eod_single`: For fetching the latest end-of-day price for a single symbol. This is used for all market data refreshes.
+**Provider 2: Alphavantage**
+*   **Usage:** Primary provider for assets of type `Mutual Fund Open` and `Mutual Fund Closed`.
+*   **Authentication:** API Key (`ALPHA_VANTAGE_API_KEY`).
+*   **Module:** `src/market_data/alphavantage_provider.py`
 
 **Implementation Details:**
-*   The provider will implement a `get_quotes(symbols: list)` method.
-*   To respect the free-tier rate limit of 5 calls per minute, the `polling_service` will enforce a 12-second delay between individual API calls.
-*   The polling algorithm from PRS Section 6.3 will be implemented in the `polling_service` and orchestrated by the `market_scheduler`.
-*   All API responses will be cached in the `price_history` table to minimize redundant calls and provide an audit trail.
+*   The `polling_service` determines which provider to use based on the `asset_type` of a holding.
+*   To respect all provider rate limits, the service will enforce a 12-second delay between individual API calls, regardless of the provider used.
+*   The polling algorithm from PRS Section 6.3 is implemented in the `polling_service` and orchestrated by the `market_scheduler`.
+*   All API responses are cached in the `price_history` table. The `holdings` table is updated with the latest price and a status flag indicating success or failure of the last attempt.
 
 ### 6. Security
 
 As a local-first application, the primary security concerns are key management and data integrity.
 
-*   **API Key Storage:** The `MASSIVE_API_KEY` must not be hardcoded. It will be stored in a configuration file (e.g., `.env`) that is explicitly excluded from version control via `.gitignore`. The application will load the key into its environment at runtime.
-*   **Data Storage:** The `trust.db` SQLite file contains sensitive financial data. While encryption-at-rest is optional for v1.0, the design should accommodate a future implementation using a library like `sqlcipher`.
-*   **Input Validation:** All data from imported files will be strictly validated and sanitized before being inserted into the database to prevent corruption or injection attacks.
+*   **API Key Storage:** API keys (`MASSIVE_API_KEY`, `ALPHA_VANTAGE_API_KEY`) must not be hardcoded. They will be stored in a configuration file (`.env`) that is explicitly excluded from version control via `.gitignore`.
+*   **Data Storage:** The `trust.db` SQLite file contains sensitive financial data. While encryption-at-rest is optional for v1.0, the design should accommodate a future implementation.
+*   **Input Validation:** All data from imported files will be strictly validated and sanitized before being inserted into the database.
 *   **No Inbound Network Access:** The application server will bind to `localhost` by default, ensuring it is not exposed to the local network.
 
 ### 7. Phased Implementation Plan
 
-Development will follow the user-feature centric plan outlined in the PRS (Section 10) to ensure iterative delivery of value.
+Development will follow the user-feature centric plan outlined in the PRS (Section 10).
 
 *   **Phase 0: The Walking Skeleton (Completed)**
     *   Goal: Prove the end-to-end data pipeline is viable.
 
-*   **Phase 1: The Dynamic Sankey**
+*   **Phase 1: The Dynamic Sankey (Completed)**
     *   Goal: Visualize real, user-imported data in the primary Sankey chart.
 
-*   **Phase 2: Interactive Drill-Downs & Rules Management**
+*   **Phase 2: Interactive Drill-Downs & Rules Management (Completed)**
     *   Goal: Allow users to inspect their data and manage categorization.
 
-*   **Phase 3: Introducing Capital Expenditures (CapEx)**
+*   **Phase 3: Introducing Capital Expenditures (CapEx) (Completed)**
     *   Goal: Differentiate consumption expenses from asset-building expenses.
 
-*   **Phase 4: The Portfolio View**
+*   **Phase 4: The Portfolio View (Completed)**
     *   Goal: Establish initial portfolio tracking.
 
-*   **Phase 5: Automated Market Data & Layered Returns**
-    *   Goal: Automate portfolio pricing and introduce advanced return metrics.
+*   **Phase 5: Automated Market Data & Layered Returns (In Progress)**
+    *   Goal: Automate portfolio pricing using a multi-provider strategy and introduce advanced return metrics.
 
 *   **Phase 6: Forecasting**
     *   Goal: Provide future-looking financial projections.
+
 
 --- FILE: projects/trust/library/Trust Financial System.txt ---
 
@@ -698,7 +705,7 @@ Phase 7: Forecasting
 
 --- FILE: projects/trust/library/acceptance_test.md.txt ---
 
-# Curie Trust - Acceptance Test Plan v1.1
+# Curie Trust - Acceptance Test Plan v1.2
 
 ## 1. Introduction
 
@@ -706,98 +713,46 @@ This document outlines the acceptance criteria and testing strategy for each pha
 
 ---
 
-## 2. Phase 0: The Walking Skeleton
+## 2. Phase 0-4: Core Functionality (Completed)
 
-**Objective**: Establish the foundational data ingestion pipeline and prove the UI-to-Database connection is viable.
-
-**Result**: COMPLETED
-
-**Acceptance Criteria Met**:
-- [x] The application starts without errors (`start_backend.sh` and `start_frontend.sh`).
-- [x] On first run, a `data/trust.db` file is created with the `transactions` and `rules` tables.
-- [x] Sending a POST request to `/api/import/csv` with a sample CSV file returns a `200 OK` status.
-- [x] The frontend application loads and attempts to fetch data from `/api/sankey/income`.
+All acceptance criteria for phases 0 through 4 and 6.1 (Core Feature Verification) have been met and are considered stable.
 
 ---
 
-## 3. Phase 1: The Dynamic Sankey
+## 3. Phase 5: Automated Market Data & Layered Returns
 
-**Objective**: Visualize real, user-imported data in the primary Income→Uses Sankey chart. This confirms the entire data flow from CSV to UI is working.
+**Objective**: Automate portfolio pricing using a multi-provider strategy and introduce advanced return metrics.
 
-**Result**: COMPLETED
+**Result**: IN PROGRESS
 
-**Acceptance Criteria Met**:
-- [x] **Data Flow Test**: Started with a fresh, empty `data/trust.db` file.
-- [x] **Import**: Used `projects/trust/data/phase1_test_data.csv` via the backend API.
-- [x] **Verification**: API returned a success message indicating transactions were processed.
-- [x] **Database Check**: `transactions` table in `trust.db` was correctly populated.
-- [x] **UI Visualization**: Refreshing the web UI displayed a Sankey chart with the correct nodes and values.
-- [x] **Categorization**: All expenses were correctly grouped under "Uncategorized" as no rules exist yet.
-- [x] **Diagnostic Tooltip**: Hovering over links correctly displays the formatted currency value, confirming data integrity.
+### 5.1 Multi-Provider Pricing Service
 
----
+**Objective**: Verify that the backend polling service correctly uses different API providers based on the asset type of a holding.
 
-## 4. Phase 2: Interactive Drill-Downs & Rules Management
+**Acceptance Criteria**:
+- [ ] **Setup**: 
+    1. Ensure `.env` file contains valid keys for `MASSIVE_API_KEY` and `ALPHA_VANTAGE_API_KEY`.
+    2. Purge existing `holdings` data.
+    3. Import a new holdings CSV containing at least one `Common Stock` (e.g., AAPL) and one `Mutual Fund Open` (e.g., VTSAX). Ensure the `asset_type` column is correctly populated.
+- [ ] **Execution**: Manually trigger the market data refresh for all holdings by running the script `./scripts/refresh_eod.sh` or calling the `/api/market-data/refresh-eod` endpoint.
+- [ ] **Verification (Logs)**: 
+    1. Check the backend server logs.
+    2. Confirm a log entry shows the polling service processing `AAPL` via `massive_provider`.
+    3. Confirm a log entry shows the polling service processing `VTSAX` via `alphavantage_provider`.
+- [ ] **Verification (Database)**: 
+    1. Query the `holdings` table in `trust.db`.
+    2. Both the AAPL and VTSAX rows should have a non-null `market_value` and a recent `last_price_timestamp`.
+    3. The `last_price_update_failed` flag for both should be `0` (or `False`).
+- [ ] **Verification (UI)**: 
+    1. Navigate to the Portfolio screen.
+    2. The "Last Updated" column for both AAPL and VTSAX should display the recent timestamp without any error styling.
 
-**Objective**: Allow users to inspect their data and manage categorization, moving beyond the default "Uncategorized" expense bucket.
-
-**Result**: COMPLETED
-
-**Acceptance Criteria Met**:
-- [x] The UI correctly displays existing rules and allows for the creation of new rules.
-- [x] Creating a new rule (e.g., "Safeway" → Groceries) and triggering a re-categorization correctly updates the Sankey chart to show a new "Groceries" node.
-- [x] Creating a rule to classify a transaction as a `Transfer` correctly removes its value from the "Expenses" total, increasing the "Net Surplus".
-
----
-
-## 5. Phase 3: Introducing Capital Expenditures (CapEx)
-
-**Objective**: Differentiate consumption expenses from asset-building expenses and visualize the impact.
-
-**Result**: COMPLETED
-
-**Acceptance Criteria Met**:
-- [x] A rule can be created with the type "Capital Expenditure".
-- [x] After re-categorization, the primary Sankey chart updates to show a new "Capital Expenditure" flow originating from "Uses of Money".
-- [x] The value of the "Expenses" flow is correctly reduced by the CapEx amount.
+### 5.2 Layered Returns (Future)
+- [ ] **Verification**: The Portfolio screen displays Gross, After-Fee, and After-Tax returns, visualized in the Returns Sankey.
 
 ---
 
-## 6. Phase 4: The Portfolio View
-
-**Objective**: Establish the initial portfolio tracking capability by importing and displaying a list of holdings.
-
-**Result**: COMPLETED
-
-**Acceptance Criteria Met**:
-- [x] **Data Model**: A new `holdings` table exists in `data/trust.db` after restarting the backend.
-- [x] **API Endpoint**: A `POST /api/import/holdings` endpoint is available to accept a holdings CSV file.
-- [x] **Import Test**: Create a `sample_holdings.csv` file. Use a tool like `curl` to POST this file to the import endpoint. The API should return a success message.
-- [x] **Database Verification**: The `holdings` table should be populated with the data from the CSV.
-- [x] **UI Implementation**: A new "Portfolio Holdings" section appears on the main screen.
-- [x] **UI Verification**: The portfolio section fetches data from `GET /api/holdings` and displays the imported holdings correctly in a table.
-
----
-
-## 6.1 Core Feature Verification: Account Visibility Exclusion
-
-**Objective**: Verify that excluding an Account via the settings accurately removes its transactions from the Income -> Uses Sankey, satisfying PRS 2.1.A and PRS 11 (Core feature accuracy).
-
-**Result**: COMPLETED (Verified by user test)
-
-**Acceptance Criteria Met**:
-- [x] **Setup**: Import transactions across two distinct `account_id`s (e.g., 'Checking A' and 'Checking B'). Verify both accounts contribute to the initial Sankey chart (Income/Expenses).
-- [x] **Action**: Navigate to 'Data & Settings' > 'Account Visibility Manager'. Uncheck the visibility toggle for 'Checking B' and click 'Save Settings'.
-- [x] **Verification (Sankey)**: Navigate back to the 'Home' screen. The Sankey chart must immediately recalculate and exclude all transactions from 'Checking B'. Total Income and Total Expenses must be reduced accordingly.
-- [x] **Verification (Transactions)**: Navigate to the 'Cashflow' screen. Apply a filter for 'Checking B'. Transactions from 'Checking B' are still visible here, confirming they were only excluded from the Sankey visualization (Flow analysis), not purged from the system.
-- [x] **Cleanup**: Re-check the visibility toggle for 'Checking B'. The Sankey chart must return to its original state.
-
----
-
-## 7. Future Phases (High-Level Plan)
-
-### Phase 5: Automated Market Data & Layered Returns
-- **Verification**: Manually trigger the market data fetch process. Verify prices are updated in the database. Verify the Portfolio screen now shows correct market values.
+## 4. Future Phases (High-Level Plan)
 
 ### Phase 6: Advanced Rules Engine & Portfolio Separation
 - **Verification**: Create a rule that assigns `CashflowType: Investment`. Verify these transactions are correctly excluded from the primary Income Sankey (PRS 3.1).
@@ -832,7 +787,7 @@ else
     exit 1
 fi
 
-echo "--- Command sent. ---_"
+echo "--- Command sent. ---"
 
 
 --- FILE: projects/trust/scripts/start_backend.sh ---
@@ -914,6 +869,100 @@ echo "Launching 'npm run dev' on http://localhost:$PORT..."
 npm run dev -- --port $PORT
 
 echo "--- Vite dev server process terminated. ---"
+
+--- FILE: projects/trust/scripts/test_alphavantage_api.py ---
+
+import os
+import sys
+import time
+from dotenv import load_dotenv
+import httpx
+
+# Add the project root to the Python path
+# This allows the script to be run from the root of the project `python scripts/test_...`
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, project_root)
+
+# --- CONFIGURATION ---
+SYMBOLS_TO_TEST = ["ACGZX", "APGYX", "APGZX", "ARKVX", "FAGCX", "FIDZX", "FIKMX"]
+API_CALL_INTERVAL_SECONDS = 5 # As per Captain's new orders
+BASE_URL = "https://www.alphavantage.co/query"
+
+def run_test():
+    """
+    Tests connectivity to the Alphavantage API for a list of mutual funds.
+    """
+    print("--- Alphavantage API Connectivity Test (Mutual Funds) ---")
+    print(f"Polling Rate: 1 call every {API_CALL_INTERVAL_SECONDS} seconds.\n")
+
+    # Load environment variables from projects/trust/.env
+    dotenv_path = os.path.join(project_root, '.env')
+    if not os.path.exists(dotenv_path):
+        print(f"CRITICAL ERROR: .env file not found at {dotenv_path}")
+        print("Please ensure the .env file exists in the 'projects/trust' directory.")
+        sys.exit(1)
+    
+    load_dotenv(dotenv_path=dotenv_path)
+
+    api_key = os.getenv("ALPHA_VANTAGE_API_KEY")
+
+    if not api_key or "YOUR_API_KEY_HERE" in api_key or len(api_key) < 10:
+        print(f"CRITICAL ERROR: ALPHA_VANTAGE_API_KEY not found or is a placeholder in {dotenv_path}")
+        print("Please set the key to run the connectivity test.")
+        sys.exit(1)
+
+    print(f"SUCCESS: Found ALPHA_VANTAGE_API_KEY in {dotenv_path}")
+    print("-" * 50)
+
+    for i, symbol in enumerate(SYMBOLS_TO_TEST):
+        print(f"Testing Symbol: {symbol}...")
+        
+        params = {
+            "function": "GLOBAL_QUOTE",
+            "symbol": symbol,
+            "apikey": api_key
+        }
+
+        try:
+            with httpx.Client() as client:
+                response = client.get(BASE_URL, params=params, timeout=15.0)
+                response.raise_for_status()
+                data = response.json()
+
+            # Check for a valid quote
+            if "Global Quote" in data and data["Global Quote"] and "05. price" in data["Global Quote"]:
+                price = data["Global Quote"]["05. price"]
+                print(f"  └── SUCCESS: Found price for {symbol}: {price}")
+            # Check for API error messages
+            elif "Note" in data:
+                print(f"  └── FAILURE: API rate limit likely hit. Response: {data['Note']}")
+            elif "Information" in data:
+                 print(f"  └── FAILURE: Invalid API Key or other issue. Response: {data['Information']}")
+            else:
+                print(f"  └── FAILURE: Could not find a valid quote for {symbol}.")
+                print(f"      API Response: {data}")
+
+        except httpx.HTTPStatusError as e:
+            print(f"  └── FAILURE: HTTP Error! Status: {e.response.status_code}")
+            print(f"      Response: {e.response.text}")
+        except httpx.RequestError as e:
+            print(f"  └── FAILURE: Network error. Could not connect to the API.")
+            print(f"      Error: {e}")
+        except Exception as e:
+            print(f"  └── FAILURE: An unexpected error occurred.")
+            print(f"      Error: {e}")
+        
+        # Respect the rate limit before the next call
+        if i < len(SYMBOLS_TO_TEST) - 1:
+            time.sleep(API_CALL_INTERVAL_SECONDS)
+    
+    print("-" * 50)
+    print("--- Test complete. ---")
+
+
+if __name__ == "__main__":
+    run_test()
+
 
 --- FILE: projects/trust/scripts/test_massive_api.py ---
 
@@ -1201,7 +1250,14 @@ for visualizations like Sankey diagrams, and running forecasts.
 from typing import Dict, Any, List
 from collections import defaultdict
 from datetime import datetime
-from .database import get_sankey_aggregates, get_holdings_aggregation_by_symbol, get_cashflow_aggregation_by_month, get_latest_transaction_year
+from .database import (
+    get_sankey_aggregates, 
+    get_holdings_aggregation_by_symbol, 
+    get_cashflow_aggregation_by_month, 
+    get_latest_transaction_year, 
+    get_holdings_aggregation_by_asset_type,
+    get_total_portfolio_market_value
+)
 
 def generate_income_sankey(period: str, exclude_invisible: bool = False) -> Dict[str, Any]:
     """
@@ -1362,6 +1418,46 @@ def prepare_portfolio_chart_data(filters: Dict[str, Any]) -> List[Dict[str, Any]
     ]
 
 
+def prepare_portfolio_allocation_chart_data() -> Dict[str, Any]:
+    """
+    Creates a data structure for the portfolio allocation pie chart and
+    accompanying table by aggregating all holdings that have an asset type.
+    """
+    grand_total_market_value = get_total_portfolio_market_value()
+    # This query already groups by asset_type and sums the market_value.
+    aggregated_by_type = get_holdings_aggregation_by_asset_type()
+
+    if not aggregated_by_type or grand_total_market_value == 0:
+        return {"tableData": [], "chartData": []}
+
+    table_data = []
+    chart_data = []
+
+    for row in aggregated_by_type:
+        category_name = row['asset_type']
+        value = row['total_market_value']
+        percentage = (value / grand_total_market_value) * 100
+
+        # Data for the summary table
+        table_data.append({
+            "categoryName": category_name,
+            "value": int(round(value)),
+            "percentage": f"{percentage:.1f}%"
+        })
+
+        # Data for the pie chart component
+        chart_data.append({
+            "id": category_name,
+            "label": category_name,
+            "value": round(value, 2),
+            "percentage": round(percentage, 1)
+        })
+
+    return {
+        "tableData": table_data,
+        "chartData": chart_data # The data is already sorted by value DESC from the DB query
+    }
+
 
 
 --- FILE: projects/trust/src/data_model.py ---
@@ -1424,6 +1520,7 @@ class Holding:
     market_value: Decimal | None = None
     last_price: Decimal | None = None
     last_price_timestamp: datetime | None = None
+    last_price_update_failed: bool = False # NEW: Flag for UI
     tags: list[str] = field(default_factory=list)
 
 
@@ -1547,6 +1644,9 @@ def _ensure_schema(conn: sqlite3.Connection):
     if 'asset_type' not in holdings_cols:
         print("--- MIGRATING SCHEMA: Adding 'asset_type' to 'holdings'. ---")
         cursor.execute("ALTER TABLE holdings ADD COLUMN asset_type TEXT;")
+    if 'last_price_update_failed' not in holdings_cols:
+        print("--- MIGRATING SCHEMA: Adding 'last_price_update_failed' to 'holdings'. ---")
+        cursor.execute("ALTER TABLE holdings ADD COLUMN last_price_update_failed INTEGER DEFAULT 0;")
 
     cursor.execute("PRAGMA table_info(transactions)")
     trans_cols = {row[1] for row in cursor.fetchall()}
@@ -1745,7 +1845,7 @@ def _apply_period_filter_to_query(where_clauses: List[str], params: List[Any], p
         params.append(period)
     elif period.endswith('m'):
         months = period[:-1]
-        where_clauses.append(f"{column_ref} >= date('now', '-{months} months')")
+        where_clauses.append(f"{column_ref} >= date('now', '-%s months')" % months)
 
 def get_transactions(filters: Dict[str, Any] = None, exclude_invisible: bool = False) -> List[Dict[str, Any]]:
     conn = get_db_connection()
@@ -1918,6 +2018,38 @@ def get_holdings_aggregation_by_symbol(filters: Dict[str, Any]) -> List[Dict[str
     conn.close()
     return [dict(row) for row in rows]
 
+def get_holdings_aggregation_by_asset_type() -> List[Dict[str, Any]]:
+    """
+    Groups holdings by their asset_type and sums their market_value.
+    Filters out holdings with no market value or asset type.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    query = """
+        SELECT 
+            asset_type, 
+            SUM(market_value) as total_market_value
+        FROM holdings
+        WHERE 
+            market_value IS NOT NULL AND market_value > 0 AND
+            asset_type IS NOT NULL AND asset_type != ''
+        GROUP BY asset_type
+        ORDER BY total_market_value DESC;
+    """
+    cursor.execute(query)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def get_total_portfolio_market_value() -> float:
+    """Calculates the sum of market_value for all holdings."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT SUM(market_value) as total FROM holdings WHERE market_value IS NOT NULL AND market_value > 0")
+    result = cursor.fetchone()
+    conn.close()
+    return result['total'] if result and result['total'] else 0.0
+
 def _transform_rule_record(rule_row: sqlite3.Row) -> Dict[str, Any]:
     if not rule_row: return None
     rule_dict = dict(rule_row)
@@ -2065,7 +2197,8 @@ def update_holdings_with_new_prices(quotes: Dict[str, Dict[str, Any]]):
                 SET 
                     last_price = ?,
                     last_price_timestamp = ?,
-                    market_value = quantity * ?
+                    market_value = quantity * ?,
+                    last_price_update_failed = 0
                 WHERE symbol = ?;
             """, (price, timestamp, price, symbol))
             updated_count += cursor.rowcount
@@ -2077,6 +2210,27 @@ def update_holdings_with_new_prices(quotes: Dict[str, Dict[str, Any]]):
         raise e
     finally:
         conn.close()
+
+def mark_holdings_as_failed(symbols: List[str]):
+    """Sets the failure flag for a list of holding symbols."""
+    if not symbols:
+        return
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    # Use parameter substitution to safely handle the list of symbols
+    placeholders = ', '.join('?' for _ in symbols)
+    sql = f"UPDATE holdings SET last_price_update_failed = 1 WHERE symbol IN ({placeholders})"
+    try:
+        cursor.execute(sql, symbols)
+        conn.commit()
+        print(f"Marked {cursor.rowcount} holdings as failed for symbols: {symbols}")
+    except sqlite3.Error as e:
+        print(f"Database error marking holdings as failed: {e}")
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
 
 
 
@@ -2137,7 +2291,7 @@ from src.data_model import CashflowType, Transaction
 from src import database as db
 from src import analysis
 from src import rules_engine
-from src.market_data import polling_service
+from src.market_data import polling_service, market_scheduler
 
 load_dotenv()
 
@@ -2187,6 +2341,21 @@ class HoldingUpdate(BaseModel):
     tags: List[str] = []
     asset_type: Optional[str] = None
 
+class AllocationDataItem(BaseModel):
+    id: str
+    label: str
+    value: float
+    percentage: float
+
+class AllocationTableItem(BaseModel):
+    categoryName: str
+    value: int
+    percentage: str
+
+class PortfolioAllocationResponse(BaseModel):
+    chartData: List[AllocationDataItem]
+    tableData: List[AllocationTableItem]
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -2196,6 +2365,10 @@ async def startup_event():
     api_key = os.getenv("MASSIVE_API_KEY")
     if not api_key or "YOUR_API_KEY_HERE" in api_key or len(api_key) < 10:
         print("WARNING: MASSIVE_API_KEY is not set correctly in .env. Market data features will fail.")
+    
+    # --- NEW: Launch the automated market data poller --- #
+    print("Launching background market data polling scheduler...")
+    asyncio.create_task(market_scheduler.background_market_poller())
 
 @app.get("/")
 async def root():
@@ -2343,6 +2516,14 @@ async def get_filter_options():
 @app.get("/api/analysis/cashflow-chart", tags=["Analysis"])
 async def get_cashflow_chart(filters: Dict[str, Any] = Depends(get_transaction_filters)):
     return analysis.prepare_cashflow_chart_data(filters)
+
+@app.get("/api/analysis/portfolio-allocation", tags=["Analysis"], response_model=PortfolioAllocationResponse)
+async def get_portfolio_allocation_data() -> PortfolioAllocationResponse:
+    """
+    Returns portfolio allocation data grouped by high-level asset class,
+    formatted for a pie chart and table.
+    """
+    return analysis.prepare_portfolio_allocation_chart_data()
 
 @app.get("/api/analysis/portfolio-chart", tags=["Analysis"])
 async def get_portfolio_chart(filters: Dict[str, Any] = Depends(get_holding_filters)):
@@ -3356,6 +3537,48 @@ export default HoldingEditorModal;
     margin: 0;
 }
 
+/* --- NEW: Styles for Allocation Chart + Table --- */
+.allocation-container {
+    display: flex;
+    flex-direction: row;
+    gap: 2rem;
+    align-items: flex-start;
+}
+
+.pie-chart-wrapper {
+    flex: 2;
+    min-width: 0;
+}
+
+.allocation-table-wrapper {
+    flex: 1;
+    margin-top: 40px; /* Aligns table top with chart area */
+}
+
+.allocation-table-wrapper table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9em;
+}
+
+.allocation-table-wrapper th,
+.allocation-table-wrapper td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color);
+    text-align: left;
+}
+
+.allocation-table-wrapper td:nth-child(2),
+.allocation-table-wrapper td:nth-child(3) {
+    text-align: right;
+    font-family: monospace;
+}
+
+.allocation-table-wrapper thead th {
+    color: #ccc;
+    font-weight: 500;
+}
+
 
 --- FILE: projects/trust/src/components/HomeView.jsx ---
 
@@ -3363,6 +3586,7 @@ import { useState, useEffect } from 'react';
 import SankeyChart from '../SankeyChart';
 import MockSankey from './MockSankey';
 import TimeFilter from './TimeFilter';
+import PieChart from './PieChart';
 import './HomeView.css';
 
 const NetWorthHero = () => {
@@ -3405,10 +3629,37 @@ const NetWorthHero = () => {
     );
 };
 
+const AllocationTable = ({ tableData, formatCurrency }) => {
+    return (
+        <div className="allocation-table-wrapper">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Category</th>
+                        <th>Value</th>
+                        <th>% of Portfolio</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {tableData.map(row => (
+                        <tr key={row.categoryName}>
+                            <td>{row.categoryName}</td>
+                            <td>{formatCurrency(row.value)}</td>
+                            <td>{row.percentage}</td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
+};
+
 const HomeView = ({ navigateTo }) => {
     const [incomeSankeyData, setIncomeSankeyData] = useState({ nodes: [], links: [] });
     const [sankeyLoading, setSankeyLoading] = useState(true);
     const [selectedPeriod, setSelectedPeriod] = useState('all');
+    const [portfolioAllocation, setPortfolioAllocation] = useState({ chartData: [], tableData: [] });
+    const [allocationLoading, setAllocationLoading] = useState(true);
 
     useEffect(() => {
         const fetchSankeyData = async () => {
@@ -3427,24 +3678,39 @@ const HomeView = ({ navigateTo }) => {
         fetchSankeyData();
     }, [selectedPeriod]);
 
+    useEffect(() => {
+        const fetchAllocationData = async () => {
+            try {
+                setAllocationLoading(true);
+                const response = await fetch('/api/analysis/portfolio-allocation');
+                if (!response.ok) throw new Error('Failed to fetch portfolio allocation');
+                const data = await response.json();
+                setPortfolioAllocation(data);
+            } catch (error) {
+                console.error(error);
+            } finally {
+                setAllocationLoading(false);
+            }
+        };
+
+        fetchAllocationData();
+    }, []);
+
     const handleSankeyNodeClick = (node) => {
         const { id } = node;
         let filters = { period: selectedPeriod };
 
-        // These are structural nodes and should not be used for drill-down.
         const nonFilterableNodes = ["Income", "Available Funds", "Net Surplus", "Net Deficit"];
         if (nonFilterableNodes.includes(id)) {
             console.log(`Drill-down on structural node '${id}' is disabled.`);
             return;
         }
 
-        // Logic to determine the correct filter based on the node ID from the Sankey data.
         if (id === 'Capital Expenditure') {
             filters.cashflow_type = 'Capital Expenditure';
         } else if (id.endsWith('(Expense)')) {
             filters.category = id.replace(' (Expense)', '');
         } else {
-            // Default behavior is to treat the node ID as a category filter.
             filters.category = id;
         }
 
@@ -3452,7 +3718,15 @@ const HomeView = ({ navigateTo }) => {
         navigateTo('Cashflow', filters);
     };
 
-    const isChartVisible = !sankeyLoading && incomeSankeyData && incomeSankeyData.links.length > 0;
+    const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
+    }).format(value || 0);
+
+    const isSankeyVisible = !sankeyLoading && incomeSankeyData && incomeSankeyData.links.length > 0;
+    const isAllocationVisible = !allocationLoading && portfolioAllocation.chartData && portfolioAllocation.chartData.length > 0;
 
     return (
         <>
@@ -3465,10 +3739,29 @@ const HomeView = ({ navigateTo }) => {
                 </div>
                 {sankeyLoading ? (
                     <p>Loading chart data...</p>
-                ) : isChartVisible ? (
+                ) : isSankeyVisible ? (
                     <SankeyChart data={incomeSankeyData} onNodeClick={handleSankeyNodeClick} />
                 ) : (
                     <p>No transaction data available for the selected period. Please import a transactions CSV file.</p>
+                )}
+            </div>
+
+            <div className="card">
+                <h2>Portfolio Allocation</h2>
+                {allocationLoading ? (
+                    <p>Loading allocation data...</p>
+                ) : isAllocationVisible ? (
+                    <div className="allocation-container">
+                        <div className="pie-chart-wrapper">
+                            <PieChart data={portfolioAllocation.chartData} />
+                        </div>
+                        <AllocationTable 
+                            tableData={portfolioAllocation.tableData} 
+                            formatCurrency={formatCurrency} 
+                        />
+                    </div>
+                ) : (
+                    <p>No holdings data with asset types found. Please import a holdings CSV with an 'asset_type' column.</p>
                 )}
             </div>
             
@@ -3705,6 +3998,109 @@ const MockSankey = ({ type }) => {
 };
 
 export default MockSankey;
+
+
+--- FILE: projects/trust/src/components/PieChart.jsx ---
+
+import { ResponsivePie } from '@nivo/pie';
+
+const PieChart = ({ data }) => {
+    // Helper to format currency for tooltips
+    const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
+    }).format(value);
+
+    // Helper to format percentage for labels
+    const formatPercentage = (value) => `${value.toFixed(1)}%`;
+
+    return (
+        <div style={{ height: '350px' }}>
+            <ResponsivePie
+                data={data}
+                margin={{ top: 40, right: 80, bottom: 80, left: 80 }}
+                innerRadius={0.5}
+                padAngle={0.7}
+                cornerRadius={3}
+                activeOuterRadiusOffset={8}
+                borderWidth={1}
+                borderColor={{ from: 'color', modifiers: [['darker', 0.2]] }}
+                arcLinkLabelsSkipAngle={10}
+                arcLinkLabelsTextColor="#ccc"
+                arcLinkLabelsThickness={2}
+                arcLinkLabelsColor={{ from: 'color' }}
+                arcLabelsSkipAngle={10}
+                arcLabelsTextColor={{ from: 'color', modifiers: [['darker', 2]] }}
+                // Use the percentage from the backend for the label
+                arcLabel={d => formatPercentage(d.data.percentage)}
+                defs={[
+                    // ... (can add patterns/gradients if desired, skipping for now)
+                ]}
+                legends={[
+                    {
+                        anchor: 'bottom',
+                        direction: 'row',
+                        justify: false,
+                        translateX: 0,
+                        translateY: 56,
+                        itemsSpacing: 0,
+                        itemWidth: 100,
+                        itemHeight: 18,
+                        itemTextColor: '#999',
+                        itemDirection: 'left-to-right',
+                        itemOpacity: 1,
+                        symbolSize: 18,
+                        symbolShape: 'circle',
+                        effects: [
+                            {
+                                on: 'hover',
+                                style: {
+                                    itemTextColor: '#fff'
+                                }
+                            }
+                        ]
+                    }
+                ]}
+                tooltip={({ datum: { id, value, color } }) => (
+                    <div
+                        style={{
+                            padding: '12px',
+                            background: 'var(--dark-bg)',
+                            color: 'var(--text-color)',
+                            border: `1px solid var(--border-color)`,
+                        }}
+                    >
+                        <strong style={{ color }}>{id}</strong>
+                        <br />
+                        Value: {formatCurrency(value)}
+                    </div>
+                )}
+                theme={{
+                    tooltip: {
+                        container: {
+                            background: 'var(--dark-bg)',
+                        },
+                    },
+                    labels: {
+                        text: {
+                            fill: '#fff',
+                            fontSize: 14,
+                        },
+                    },
+                    legends: {
+                        text: {
+                            fill: '#bbb'
+                        }
+                    }
+                }}
+            />
+        </div>
+    );
+};
+
+export default PieChart;
 
 
 --- FILE: projects/trust/src/components/PlaceholderView.css ---
@@ -4059,7 +4455,7 @@ const PortfolioView = () => {
                                                 Tags <span className="sort-indicator">{getSortIndicator('tags')}</span>
                                             </th>
                                             <th className="sortable" onClick={() => requestSort('last_price_timestamp')}>
-                                                Last Updated <span className="sort-indicator">{getSortIndicator('last_price_timestamp')}</span>
+                                                Price Status / Time <span className="sort-indicator">{getSortIndicator('last_price_timestamp')}</span>
                                             </th>
                                             <th className="sortable" onClick={() => requestSort('quantity')}>
                                                 Quantity <span className="sort-indicator">{getSortIndicator('quantity')}</span>
@@ -4084,7 +4480,13 @@ const PortfolioView = () => {
                                                 <td>{h.account_id}</td>
                                                 <td>{h.asset_type}</td>
                                                 <td>{h.tags ? h.tags.join(', ') : ''}</td>
-                                                <td className="timestamp-cell">{formatTimestamp(h.last_price_timestamp)}</td>
+                                                <td 
+                                                    className="timestamp-cell"
+                                                    style={h.last_price_update_failed ? { color: '#ff6b6b' } : {}}
+                                                    title={h.last_price_update_failed ? "Price update failed on last attempt." : "Price updated successfully."}
+                                                >
+                                                    {formatTimestamp(h.last_price_timestamp)}
+                                                </td>
                                                 <td>{h.quantity.toFixed(4)}</td>
                                                 <td>{formatCurrency(h.cost_basis)}</td>
                                                 <td>{formatCurrency(h.market_value)}</td>
@@ -6009,6 +6411,7 @@ async def background_market_poller():
         except Exception as e:
             print(f"ERROR: Scheduled market polling failed: {e}")
 
+
 --- FILE: projects/trust/src/market_data/massive_provider.py ---
 
 import os
@@ -6045,14 +6448,17 @@ def get_eod_single(symbol: str) -> Dict[str, Any]:
         print(f"[Massive Provider] CRITICAL: API key is not configured for symbol {symbol}.")
         return {"error": "MASSIVE_API_KEY is not set correctly."}
 
-    # The API requires a date. For latest EOD, we use yesterday's date.
-    # This also handles weekends by looking back to the last weekday.
-    yesterday = date.today() - timedelta(days=1)
-    if yesterday.weekday() == 6: # Sunday
-        yesterday -= timedelta(days=2)
-    elif yesterday.weekday() == 5: # Saturday
-        yesterday -= timedelta(days=1)
-    date_str = yesterday.strftime('%Y-%m-%d')
+    # The API requires a date for the previous day's close.
+    # This logic robustly finds the last market day (e.g., Friday for a Monday request).
+    request_date = date.today()
+    offset = 1  # Default to yesterday
+    if request_date.weekday() == 0:  # Monday
+        offset = 3
+    elif request_date.weekday() == 6:  # Sunday
+        offset = 2
+    # Saturday's offset remains 1, correctly pointing to Friday.
+    last_market_day = request_date - timedelta(days=offset)
+    date_str = last_market_day.strftime('%Y-%m-%d')
 
     # CORRECTED: Using the documented endpoint structure from their client library.
     # e.g., /v1/open-close/AAPL/2024-07-29
@@ -6114,10 +6520,15 @@ from typing import Dict, Any, List
 import re
 
 from src import database as db
-from src.market_data import massive_provider
+from src.market_data import massive_provider, alphavantage_provider
 
 # Per user requirement: 5 calls per minute.
 SECONDS_BETWEEN_CALLS = 12 # (60 seconds / 5 calls = 12s/call)
+
+# --- NEW: Mutual exclusion lock ---
+# This lock prevents multiple refresh tasks from running concurrently and violating API rate limits.
+_refresh_lock = asyncio.Lock()
+
 
 def _is_supported_symbol(symbol: str) -> bool:
     """Validates if a symbol is likely supported by the API."""
@@ -6129,82 +6540,110 @@ def _is_supported_symbol(symbol: str) -> bool:
 
 async def refresh_market_data(top_n: int = 0) -> Dict[str, Any]:
     """
-    Refreshes market data for holdings using the Massive API, respecting rate limits.
-
-    Args:
-        top_n: Number of top holdings to refresh. If 0, refreshes all holdings.
+    Refreshes market data for holdings using an intelligent, multi-provider routing strategy.
+    This function is now protected by a lock to prevent concurrent runs.
     """
-    mode = f"top {top_n}" if top_n > 0 else "ALL"
-    print(f"--- Starting market data refresh for {mode} holdings via Massive API... ---")
-    
-    all_holdings = db.get_holdings()
-    if not all_holdings:
-        return {"message": "No holdings found. Nothing to refresh.", "refreshed_symbols": [], "failed_symbols": []}
+    if _refresh_lock.locked():
+        print("--- Market data refresh is already in progress. Skipping this run. ---")
+        return {"message": "Refresh already in progress.", "refreshed_symbols": [], "failed_symbols": []}
 
-    all_holdings.sort(key=lambda h: h.get('market_value', 0) or 0, reverse=True)
-    
-    seen = set()
-    unique_symbols_ranked = [h['symbol'] for h in all_holdings if not (h['symbol'] in seen or seen.add(h['symbol']))]
-    
-    symbols_to_process = unique_symbols_ranked[:top_n] if top_n > 0 else unique_symbols_ranked
-    symbols_to_refresh = [s for s in symbols_to_process if _is_supported_symbol(s)]
-    
-    if not symbols_to_refresh:
-        return {"message": "No supported symbols found to refresh.", "refreshed_symbols": [], "failed_symbols": []}
+    async with _refresh_lock:
+        mode = f"top {top_n}" if top_n > 0 else "ALL"
+        print(f"--- Starting market data refresh for {mode} holdings via multi-provider... ---")
         
-    print(f"Identified {len(symbols_to_refresh)} unique, supported symbols for refresh.")
+        all_holdings = db.get_holdings()
+        if not all_holdings:
+            return {"message": "No holdings found. Nothing to refresh.", "refreshed_symbols": [], "failed_symbols": []}
 
-    successful_quotes: Dict[str, Dict[str, Any]] = {}
-    failed_symbols: List[str] = [s for s in symbols_to_process if not _is_supported_symbol(s)]
+        all_holdings.sort(key=lambda h: h.get('market_value', 0) or 0, reverse=True)
+        
+        # Create a mapping of each unique symbol to its asset type for routing
+        symbol_to_asset_type = {}
+        seen_symbols = set()
+        ranked_symbols = []
+        for h in all_holdings:
+            symbol = h['symbol']
+            if symbol not in seen_symbols:
+                seen_symbols.add(symbol)
+                ranked_symbols.append(symbol)
+                # Store the asset type for routing logic
+                symbol_to_asset_type[symbol] = h.get('asset_type')
 
-    loop = asyncio.get_running_loop()
+        symbols_to_process = ranked_symbols[:top_n] if top_n > 0 else ranked_symbols
+        
+        if not symbols_to_process:
+            return {"message": "No symbols found to refresh.", "refreshed_symbols": [], "failed_symbols": []}
+            
+        print(f"Identified {len(symbols_to_process)} unique symbols for potential refresh.")
 
-    for i, symbol in enumerate(symbols_to_refresh):
-        print(f"Processing {symbol} ({i+1}/{len(symbols_to_refresh)})... ")
-        try:
-            # The Massive client is not async, so we run it in a default executor.
-            quotes = await loop.run_in_executor(
-                None, massive_provider.get_quotes_sync, [symbol]
-            )
-            quote_data = quotes.get(symbol, {})
+        successful_quotes: Dict[str, Dict[str, Any]] = {}
+        failed_symbols: List[str] = []
 
-            if "error" in quote_data or not quote_data.get("price"):
-                print(f"Provider failed for {symbol}: {quote_data.get('error')}")
-                failed_symbols.append(symbol)
+        loop = asyncio.get_running_loop()
+
+        for i, symbol in enumerate(symbols_to_process):
+            if not _is_supported_symbol(symbol):
+                continue
+
+            asset_type = symbol_to_asset_type.get(symbol)
+            provider_module = None
+
+            # --- Provider Routing Logic ---
+            if asset_type == "Common Stock":
+                provider_module = massive_provider
+            elif asset_type in ["Mutual Fund Open", "Mutual Fund Closed"]:
+                provider_module = alphavantage_provider
             else:
-                successful_quotes[symbol] = {
-                    "price": quote_data['price'],
-                    "timestamp": datetime.now(timezone.utc).isoformat(), # Use current time for live refresh
-                    "source": quote_data['source']
-                }
-        except Exception as e:
-            print(f"An unexpected error occurred while processing {symbol}: {e}")
-            failed_symbols.append(symbol)
+                print(f"Skipping {symbol}: unsupported asset type '{asset_type}'.")
+                continue
 
-        # Wait before the next call to respect rate limits.
-        if (i + 1) < len(symbols_to_refresh):
-            await asyncio.sleep(SECONDS_BETWEEN_CALLS)
+            print(f"Processing {symbol} ({i+1}/{len(symbols_to_process)}) via {provider_module.__name__}... ")
+            try:
+                quote_data = await loop.run_in_executor(
+                    None, provider_module.get_eod_single, symbol
+                )
 
-    # --- Persist results to the database ---
-    if successful_quotes:
-        print(f"Updating database with {len(successful_quotes)} new price points.")
-        db.update_holdings_with_new_prices(successful_quotes)
-        db.save_price_quotes(successful_quotes)
-    else:
-        print("No new price points to update in the database.")
+                if "error" in quote_data or not quote_data.get("price"):
+                    print(f"  └── Provider failed for {symbol}: {quote_data.get('error')}")
+                    failed_symbols.append(symbol)
+                else:
+                    print(f"  └── Success: {quote_data['price']}")
+                    successful_quotes[symbol] = {
+                        "price": quote_data['price'],
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "source": quote_data['source']
+                    }
+            except Exception as e:
+                print(f"An unexpected error occurred while processing {symbol}: {e}")
+                failed_symbols.append(symbol)
 
-    print("--- Market data refresh complete. ---")
-    
-    return {
-        "message": "Market data refresh process finished.",
-        "refreshed_symbols": list(successful_quotes.keys()),
-        "failed_symbols": failed_symbols,
-        "total_symbols_processed": len(symbols_to_process)
-    }
+            # Wait before the next call to respect rate limits across all providers.
+            if (i + 1) < len(symbols_to_process):
+                await asyncio.sleep(SECONDS_BETWEEN_CALLS)
+
+        # --- Persist results to the database --- 
+        if successful_quotes:
+            print(f"Updating database with {len(successful_quotes)} successful price points.")
+            db.update_holdings_with_new_prices(successful_quotes)
+            db.save_price_quotes(successful_quotes)
+        
+        if failed_symbols:
+            print(f"Marking {len(failed_symbols)} symbols as failed in the database.")
+            db.mark_holdings_as_failed(failed_symbols)
+
+        print("--- Market data refresh complete. ---")
+        
+        return {
+            "message": "Market data refresh process finished.",
+            "refreshed_symbols": list(successful_quotes.keys()),
+            "failed_symbols": failed_symbols,
+            "total_symbols_processed": len(symbols_to_process)
+        }
 
 # The EOD refresh is now just a call to the main function with no limit.
 async def refresh_eod_data() -> Dict[str, Any]:
     return await refresh_market_data(top_n=0)
+
 
 --- AGENT MANIFEST FOR PROJECT: trust ---
 --- FILE: projects/trust/agent_manifests.json ---

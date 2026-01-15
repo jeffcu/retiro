@@ -1,5 +1,5 @@
 # Curie Trust Financial Control Center
-## Master Design Specification (MDS) v1.0
+## Master Design Specification (MDS) v1.1
 
 ---
 
@@ -27,7 +27,7 @@ graph TD
     B <--> C{Backend API (Python/FastAPI)};
     C --> D[Business Logic];
     D <--> E[SQLite Database];
-    D <--> F(External API: Massive);
+    D --> F(External APIs: Massive, Alphavantage);
     G[CSV/Spreadsheet Files] --> C;
 ```
 
@@ -35,11 +35,11 @@ graph TD
 
 The system is decomposed into the following distinct modules within the `src` directory:
 
-*   `src/data_model.py`: Defines the core Python data structures (`Transaction`, `Account`, `Holding`, etc.) using dataclasses and Enums.
+*   `src/data_model.py`: Defines the core Python data structures (`Transaction`, `Holding`, etc.) using dataclasses and Enums.
 *   `src/database.py`: Manages all interaction with the SQLite database, including schema creation, CRUD operations, and transaction management.
 *   `src/importers/`: A package for data ingestion. Contains parsers for different CSV formats and the logic for mapping, normalization, and deduplication.
 *   `src/rules_engine.py`: Handles the logic for automatically categorizing transactions based on user-defined rules (e.g., merchant regex matching).
-*   `src/market_data/`: A package for fetching external market data. Contains the provider interface and a specific implementation for the Massive API.
+*   `src/market_data/`: A package for fetching external market data. Contains the provider interface and specific implementations for the Massive API and Alphavantage.
 *   `src/analysis.py`: Contains functions for financial calculations, generating Sankey diagram data, calculating portfolio returns, and running forecasts.
 *   `src/main.py` or `src/api.py`: The main application entry point. Runs the web server (e.g., FastAPI) and exposes the API endpoints for the frontend.
 
@@ -53,7 +53,7 @@ The system is decomposed into the following distinct modules within the `src` di
 *   `transactions`: Stores all financial events (income, expense, transfer, capex).
 *   `accounts`: Represents financial accounts (e.g., checking, credit card).
 *   `assets`: Represents major assets, primarily for tracking basis (e.g., 'Main Residence').
-*   `holdings`: Stores portfolio positions (e.g., 100 shares of AAPL in Account X).
+*   `holdings`: Stores portfolio positions (e.g., 100 shares of AAPL in Account X). Includes a `last_price_update_failed` flag for UI error reporting.
 *   `price_history`: Caches historical and intraday price quotes for securities.
 *   `rules`: Stores user-defined rules for transaction categorization.
 *   `import_profiles`: Saves column mappings and settings for specific CSV formats.
@@ -69,52 +69,56 @@ The backend will expose RESTful endpoints for the frontend, such as:
 *   `GET /api/transactions?category=Travel`: Retrieves transactions based on filters.
 *   `PUT /api/transaction/{id}`: Updates a single transaction (e.g., manual re-categorization).
 
-#### 5.2 External API (Massive API)
+#### 5.2 External APIs
 
-*   **Provider:** Massive API (the selected primary provider).
-*   **Authentication:** API Key (`MASSIVE_API_KEY`) must be used for all requests.
+The system employs a multi-provider strategy for market data, orchestrated by the `polling_service`.
+
+**Provider 1: Massive API**
+*   **Usage:** Primary provider for assets of type `Common Stock`.
+*   **Authentication:** API Key (`MASSIVE_API_KEY`).
 *   **Module:** `src/market_data/massive_provider.py`
 
-**Required API Functions:**
-1.  `get_quotes_sync`: For fetching the latest price for a list of symbols.
-2.  `get_eod_single`: For fetching the latest end-of-day price for a single symbol. This is used for all market data refreshes.
+**Provider 2: Alphavantage**
+*   **Usage:** Primary provider for assets of type `Mutual Fund Open` and `Mutual Fund Closed`.
+*   **Authentication:** API Key (`ALPHA_VANTAGE_API_KEY`).
+*   **Module:** `src/market_data/alphavantage_provider.py`
 
 **Implementation Details:**
-*   The provider will implement a `get_quotes(symbols: list)` method.
-*   To respect the free-tier rate limit of 5 calls per minute, the `polling_service` will enforce a 12-second delay between individual API calls.
-*   The polling algorithm from PRS Section 6.3 will be implemented in the `polling_service` and orchestrated by the `market_scheduler`.
-*   All API responses will be cached in the `price_history` table to minimize redundant calls and provide an audit trail.
+*   The `polling_service` determines which provider to use based on the `asset_type` of a holding.
+*   To respect all provider rate limits, the service will enforce a 12-second delay between individual API calls, regardless of the provider used.
+*   The polling algorithm from PRS Section 6.3 is implemented in the `polling_service` and orchestrated by the `market_scheduler`.
+*   All API responses are cached in the `price_history` table. The `holdings` table is updated with the latest price and a status flag indicating success or failure of the last attempt.
 
 ### 6. Security
 
 As a local-first application, the primary security concerns are key management and data integrity.
 
-*   **API Key Storage:** The `MASSIVE_API_KEY` must not be hardcoded. It will be stored in a configuration file (e.g., `.env`) that is explicitly excluded from version control via `.gitignore`. The application will load the key into its environment at runtime.
-*   **Data Storage:** The `trust.db` SQLite file contains sensitive financial data. While encryption-at-rest is optional for v1.0, the design should accommodate a future implementation using a library like `sqlcipher`.
-*   **Input Validation:** All data from imported files will be strictly validated and sanitized before being inserted into the database to prevent corruption or injection attacks.
+*   **API Key Storage:** API keys (`MASSIVE_API_KEY`, `ALPHA_VANTAGE_API_KEY`) must not be hardcoded. They will be stored in a configuration file (`.env`) that is explicitly excluded from version control via `.gitignore`.
+*   **Data Storage:** The `trust.db` SQLite file contains sensitive financial data. While encryption-at-rest is optional for v1.0, the design should accommodate a future implementation.
+*   **Input Validation:** All data from imported files will be strictly validated and sanitized before being inserted into the database.
 *   **No Inbound Network Access:** The application server will bind to `localhost` by default, ensuring it is not exposed to the local network.
 
 ### 7. Phased Implementation Plan
 
-Development will follow the user-feature centric plan outlined in the PRS (Section 10) to ensure iterative delivery of value.
+Development will follow the user-feature centric plan outlined in the PRS (Section 10).
 
 *   **Phase 0: The Walking Skeleton (Completed)**
     *   Goal: Prove the end-to-end data pipeline is viable.
 
-*   **Phase 1: The Dynamic Sankey**
+*   **Phase 1: The Dynamic Sankey (Completed)**
     *   Goal: Visualize real, user-imported data in the primary Sankey chart.
 
-*   **Phase 2: Interactive Drill-Downs & Rules Management**
+*   **Phase 2: Interactive Drill-Downs & Rules Management (Completed)**
     *   Goal: Allow users to inspect their data and manage categorization.
 
-*   **Phase 3: Introducing Capital Expenditures (CapEx)**
+*   **Phase 3: Introducing Capital Expenditures (CapEx) (Completed)**
     *   Goal: Differentiate consumption expenses from asset-building expenses.
 
-*   **Phase 4: The Portfolio View**
+*   **Phase 4: The Portfolio View (Completed)**
     *   Goal: Establish initial portfolio tracking.
 
-*   **Phase 5: Automated Market Data & Layered Returns**
-    *   Goal: Automate portfolio pricing and introduce advanced return metrics.
+*   **Phase 5: Automated Market Data & Layered Returns (In Progress)**
+    *   Goal: Automate portfolio pricing using a multi-provider strategy and introduce advanced return metrics.
 
 *   **Phase 6: Forecasting**
     *   Goal: Provide future-looking financial projections.

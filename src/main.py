@@ -67,6 +67,21 @@ class HoldingUpdate(BaseModel):
     tags: List[str] = []
     asset_type: Optional[str] = None
 
+class AllocationDataItem(BaseModel):
+    id: str
+    label: str
+    value: float
+    percentage: float
+
+class AllocationTableItem(BaseModel):
+    categoryName: str
+    value: int
+    percentage: str
+
+class PortfolioAllocationResponse(BaseModel):
+    chartData: List[AllocationDataItem]
+    tableData: List[AllocationTableItem]
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -227,6 +242,14 @@ async def get_filter_options():
 @app.get("/api/analysis/cashflow-chart", tags=["Analysis"])
 async def get_cashflow_chart(filters: Dict[str, Any] = Depends(get_transaction_filters)):
     return analysis.prepare_cashflow_chart_data(filters)
+
+@app.get("/api/analysis/portfolio-allocation", tags=["Analysis"], response_model=PortfolioAllocationResponse)
+async def get_portfolio_allocation_data() -> PortfolioAllocationResponse:
+    """
+    Returns portfolio allocation data grouped by high-level asset class,
+    formatted for a pie chart and table.
+    """
+    return analysis.prepare_portfolio_allocation_chart_data()
 
 @app.get("/api/analysis/portfolio-chart", tags=["Analysis"])
 async def get_portfolio_chart(filters: Dict[str, Any] = Depends(get_holding_filters)):

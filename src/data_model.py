@@ -56,6 +56,7 @@ class Holding:
     market_value: Decimal | None = None
     last_price: Decimal | None = None
     last_price_timestamp: datetime | None = None
+    last_price_update_failed: bool = False # NEW: Flag for UI
     tags: list[str] = field(default_factory=list)
 
 

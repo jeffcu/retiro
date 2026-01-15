@@ -206,7 +206,7 @@ const PortfolioView = () => {
                                                 Tags <span className="sort-indicator">{getSortIndicator('tags')}</span>
                                             </th>
                                             <th className="sortable" onClick={() => requestSort('last_price_timestamp')}>
-                                                Last Updated <span className="sort-indicator">{getSortIndicator('last_price_timestamp')}</span>
+                                                Price Status / Time <span className="sort-indicator">{getSortIndicator('last_price_timestamp')}</span>
                                             </th>
                                             <th className="sortable" onClick={() => requestSort('quantity')}>
                                                 Quantity <span className="sort-indicator">{getSortIndicator('quantity')}</span>
@@ -231,7 +231,13 @@ const PortfolioView = () => {
                                                 <td>{h.account_id}</td>
                                                 <td>{h.asset_type}</td>
                                                 <td>{h.tags ? h.tags.join(', ') : ''}</td>
-                                                <td className="timestamp-cell">{formatTimestamp(h.last_price_timestamp)}</td>
+                                                <td 
+                                                    className="timestamp-cell"
+                                                    style={h.last_price_update_failed ? { color: '#ff6b6b' } : {}}
+                                                    title={h.last_price_update_failed ? "Price update failed on last attempt." : "Price updated successfully."}
+                                                >
+                                                    {formatTimestamp(h.last_price_timestamp)}
+                                                </td>
                                                 <td>{h.quantity.toFixed(4)}</td>
                                                 <td>{formatCurrency(h.cost_basis)}</td>
                                                 <td>{formatCurrency(h.market_value)}</td>

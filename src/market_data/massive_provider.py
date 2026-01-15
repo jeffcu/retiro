@@ -32,14 +32,17 @@ def get_eod_single(symbol: str) -> Dict[str, Any]:
         print(f"[Massive Provider] CRITICAL: API key is not configured for symbol {symbol}.")
         return {"error": "MASSIVE_API_KEY is not set correctly."}
 
-    # The API requires a date. For latest EOD, we use yesterday's date.
-    # This also handles weekends by looking back to the last weekday.
-    yesterday = date.today() - timedelta(days=1)
-    if yesterday.weekday() == 6: # Sunday
-        yesterday -= timedelta(days=2)
-    elif yesterday.weekday() == 5: # Saturday
-        yesterday -= timedelta(days=1)
-    date_str = yesterday.strftime('%Y-%m-%d')
+    # The API requires a date for the previous day's close.
+    # This logic robustly finds the last market day (e.g., Friday for a Monday request).
+    request_date = date.today()
+    offset = 1  # Default to yesterday
+    if request_date.weekday() == 0:  # Monday
+        offset = 3
+    elif request_date.weekday() == 6:  # Sunday
+        offset = 2
+    # Saturday's offset remains 1, correctly pointing to Friday.
+    last_market_day = request_date - timedelta(days=offset)
+    date_str = last_market_day.strftime('%Y-%m-%d')
 
     # CORRECTED: Using the documented endpoint structure from their client library.
     # e.g., /v1/open-close/AAPL/2024-07-29

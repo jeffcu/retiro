@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import SankeyChart from '../SankeyChart';
 import MockSankey from './MockSankey';
 import TimeFilter from './TimeFilter';
+import PieChart from './PieChart';
 import './HomeView.css';
 
 const NetWorthHero = () => {
@@ -44,10 +45,37 @@ const NetWorthHero = () => {
     );
 };
 
+const AllocationTable = ({ tableData, formatCurrency }) => {
+    return (
+        <div className="allocation-table-wrapper">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Category</th>
+                        <th>Value</th>
+                        <th>% of Portfolio</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {tableData.map(row => (
+                        <tr key={row.categoryName}>
+                            <td>{row.categoryName}</td>
+                            <td>{formatCurrency(row.value)}</td>
+                            <td>{row.percentage}</td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
+};
+
 const HomeView = ({ navigateTo }) => {
     const [incomeSankeyData, setIncomeSankeyData] = useState({ nodes: [], links: [] });
     const [sankeyLoading, setSankeyLoading] = useState(true);
     const [selectedPeriod, setSelectedPeriod] = useState('all');
+    const [portfolioAllocation, setPortfolioAllocation] = useState({ chartData: [], tableData: [] });
+    const [allocationLoading, setAllocationLoading] = useState(true);
 
     useEffect(() => {
         const fetchSankeyData = async () => {
@@ -66,24 +94,39 @@ const HomeView = ({ navigateTo }) => {
         fetchSankeyData();
     }, [selectedPeriod]);
 
+    useEffect(() => {
+        const fetchAllocationData = async () => {
+            try {
+                setAllocationLoading(true);
+                const response = await fetch('/api/analysis/portfolio-allocation');
+                if (!response.ok) throw new Error('Failed to fetch portfolio allocation');
+                const data = await response.json();
+                setPortfolioAllocation(data);
+            } catch (error) {
+                console.error(error);
+            } finally {
+                setAllocationLoading(false);
+            }
+        };
+
+        fetchAllocationData();
+    }, []);
+
     const handleSankeyNodeClick = (node) => {
         const { id } = node;
         let filters = { period: selectedPeriod };
 
-        // These are structural nodes and should not be used for drill-down.
         const nonFilterableNodes = ["Income", "Available Funds", "Net Surplus", "Net Deficit"];
         if (nonFilterableNodes.includes(id)) {
             console.log(`Drill-down on structural node '${id}' is disabled.`);
             return;
         }
 
-        // Logic to determine the correct filter based on the node ID from the Sankey data.
         if (id === 'Capital Expenditure') {
             filters.cashflow_type = 'Capital Expenditure';
         } else if (id.endsWith('(Expense)')) {
             filters.category = id.replace(' (Expense)', '');
         } else {
-            // Default behavior is to treat the node ID as a category filter.
             filters.category = id;
         }
 
@@ -91,7 +134,15 @@ const HomeView = ({ navigateTo }) => {
         navigateTo('Cashflow', filters);
     };
 
-    const isChartVisible = !sankeyLoading && incomeSankeyData && incomeSankeyData.links.length > 0;
+    const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
+    }).format(value || 0);
+
+    const isSankeyVisible = !sankeyLoading && incomeSankeyData && incomeSankeyData.links.length > 0;
+    const isAllocationVisible = !allocationLoading && portfolioAllocation.chartData && portfolioAllocation.chartData.length > 0;
 
     return (
         <>
@@ -104,10 +155,29 @@ const HomeView = ({ navigateTo }) => {
                 </div>
                 {sankeyLoading ? (
                     <p>Loading chart data...</p>
-                ) : isChartVisible ? (
+                ) : isSankeyVisible ? (
                     <SankeyChart data={incomeSankeyData} onNodeClick={handleSankeyNodeClick} />
                 ) : (
                     <p>No transaction data available for the selected period. Please import a transactions CSV file.</p>
+                )}
+            </div>
+
+            <div className="card">
+                <h2>Portfolio Allocation</h2>
+                {allocationLoading ? (
+                    <p>Loading allocation data...</p>
+                ) : isAllocationVisible ? (
+                    <div className="allocation-container">
+                        <div className="pie-chart-wrapper">
+                            <PieChart data={portfolioAllocation.chartData} />
+                        </div>
+                        <AllocationTable 
+                            tableData={portfolioAllocation.tableData} 
+                            formatCurrency={formatCurrency} 
+                        />
+                    </div>
+                ) : (
+                    <p>No holdings data with asset types found. Please import a holdings CSV with an 'asset_type' column.</p>
                 )}
             </div>
             

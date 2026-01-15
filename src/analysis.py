@@ -6,7 +6,14 @@ for visualizations like Sankey diagrams, and running forecasts.
 from typing import Dict, Any, List
 from collections import defaultdict
 from datetime import datetime
-from .database import get_sankey_aggregates, get_holdings_aggregation_by_symbol, get_cashflow_aggregation_by_month, get_latest_transaction_year
+from .database import (
+    get_sankey_aggregates, 
+    get_holdings_aggregation_by_symbol, 
+    get_cashflow_aggregation_by_month, 
+    get_latest_transaction_year, 
+    get_holdings_aggregation_by_asset_type,
+    get_total_portfolio_market_value
+)
 
 def generate_income_sankey(period: str, exclude_invisible: bool = False) -> Dict[str, Any]:
     """
@@ -166,4 +173,44 @@ def prepare_portfolio_chart_data(filters: Dict[str, Any]) -> List[Dict[str, Any]
         for row in data
     ]
 
+
+def prepare_portfolio_allocation_chart_data() -> Dict[str, Any]:
+    """
+    Creates a data structure for the portfolio allocation pie chart and
+    accompanying table by aggregating all holdings that have an asset type.
+    """
+    grand_total_market_value = get_total_portfolio_market_value()
+    # This query already groups by asset_type and sums the market_value.
+    aggregated_by_type = get_holdings_aggregation_by_asset_type()
+
+    if not aggregated_by_type or grand_total_market_value == 0:
+        return {"tableData": [], "chartData": []}
+
+    table_data = []
+    chart_data = []
+
+    for row in aggregated_by_type:
+        category_name = row['asset_type']
+        value = row['total_market_value']
+        percentage = (value / grand_total_market_value) * 100
+
+        # Data for the summary table
+        table_data.append({
+            "categoryName": category_name,
+            "value": int(round(value)),
+            "percentage": f"{percentage:.1f}%"
+        })
+
+        # Data for the pie chart component
+        chart_data.append({
+            "id": category_name,
+            "label": category_name,
+            "value": round(value, 2),
+            "percentage": round(percentage, 1)
+        })
+
+    return {
+        "tableData": table_data,
+        "chartData": chart_data # The data is already sorted by value DESC from the DB query
+    }
 

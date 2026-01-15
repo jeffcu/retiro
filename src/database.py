@@ -106,6 +106,9 @@ def _ensure_schema(conn: sqlite3.Connection):
     if 'asset_type' not in holdings_cols:
         print("--- MIGRATING SCHEMA: Adding 'asset_type' to 'holdings'. ---")
         cursor.execute("ALTER TABLE holdings ADD COLUMN asset_type TEXT;")
+    if 'last_price_update_failed' not in holdings_cols:
+        print("--- MIGRATING SCHEMA: Adding 'last_price_update_failed' to 'holdings'. ---")
+        cursor.execute("ALTER TABLE holdings ADD COLUMN last_price_update_failed INTEGER DEFAULT 0;")
 
     cursor.execute("PRAGMA table_info(transactions)")
     trans_cols = {row[1] for row in cursor.fetchall()}
@@ -304,7 +307,7 @@ def _apply_period_filter_to_query(where_clauses: List[str], params: List[Any], p
         params.append(period)
     elif period.endswith('m'):
         months = period[:-1]
-        where_clauses.append(f"{column_ref} >= date('now', '-{months} months')")
+        where_clauses.append(f"{column_ref} >= date('now', '-%s months')" % months)
 
 def get_transactions(filters: Dict[str, Any] = None, exclude_invisible: bool = False) -> List[Dict[str, Any]]:
     conn = get_db_connection()
@@ -477,6 +480,38 @@ def get_holdings_aggregation_by_symbol(filters: Dict[str, Any]) -> List[Dict[str
     conn.close()
     return [dict(row) for row in rows]
 
+def get_holdings_aggregation_by_asset_type() -> List[Dict[str, Any]]:
+    """
+    Groups holdings by their asset_type and sums their market_value.
+    Filters out holdings with no market value or asset type.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    query = """
+        SELECT 
+            asset_type, 
+            SUM(market_value) as total_market_value
+        FROM holdings
+        WHERE 
+            market_value IS NOT NULL AND market_value > 0 AND
+            asset_type IS NOT NULL AND asset_type != ''
+        GROUP BY asset_type
+        ORDER BY total_market_value DESC;
+    """
+    cursor.execute(query)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def get_total_portfolio_market_value() -> float:
+    """Calculates the sum of market_value for all holdings."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT SUM(market_value) as total FROM holdings WHERE market_value IS NOT NULL AND market_value > 0")
+    result = cursor.fetchone()
+    conn.close()
+    return result['total'] if result and result['total'] else 0.0
+
 def _transform_rule_record(rule_row: sqlite3.Row) -> Dict[str, Any]:
     if not rule_row: return None
     rule_dict = dict(rule_row)
@@ -624,7 +659,8 @@ def update_holdings_with_new_prices(quotes: Dict[str, Dict[str, Any]]):
                 SET 
                     last_price = ?,
                     last_price_timestamp = ?,
-                    market_value = quantity * ?
+                    market_value = quantity * ?,
+                    last_price_update_failed = 0
                 WHERE symbol = ?;
             """, (price, timestamp, price, symbol))
             updated_count += cursor.rowcount
@@ -636,4 +672,25 @@ def update_holdings_with_new_prices(quotes: Dict[str, Dict[str, Any]]):
         raise e
     finally:
         conn.close()
+
+def mark_holdings_as_failed(symbols: List[str]):
+    """Sets the failure flag for a list of holding symbols."""
+    if not symbols:
+        return
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    # Use parameter substitution to safely handle the list of symbols
+    placeholders = ', '.join('?' for _ in symbols)
+    sql = f"UPDATE holdings SET last_price_update_failed = 1 WHERE symbol IN ({placeholders})"
+    try:
+        cursor.execute(sql, symbols)
+        conn.commit()
+        print(f"Marked {cursor.rowcount} holdings as failed for symbols: {symbols}")
+    except sqlite3.Error as e:
+        print(f"Database error marking holdings as failed: {e}")
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
 

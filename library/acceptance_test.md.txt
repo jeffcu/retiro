@@ -1,4 +1,4 @@
-# Curie Trust - Acceptance Test Plan v1.1
+# Curie Trust - Acceptance Test Plan v1.2
 
 ## 1. Introduction
 
@@ -6,98 +6,46 @@ This document outlines the acceptance criteria and testing strategy for each pha
 
 ---
 
-## 2. Phase 0: The Walking Skeleton
+## 2. Phase 0-4: Core Functionality (Completed)
 
-**Objective**: Establish the foundational data ingestion pipeline and prove the UI-to-Database connection is viable.
-
-**Result**: COMPLETED
-
-**Acceptance Criteria Met**:
-- [x] The application starts without errors (`start_backend.sh` and `start_frontend.sh`).
-- [x] On first run, a `data/trust.db` file is created with the `transactions` and `rules` tables.
-- [x] Sending a POST request to `/api/import/csv` with a sample CSV file returns a `200 OK` status.
-- [x] The frontend application loads and attempts to fetch data from `/api/sankey/income`.
+All acceptance criteria for phases 0 through 4 and 6.1 (Core Feature Verification) have been met and are considered stable.
 
 ---
 
-## 3. Phase 1: The Dynamic Sankey
+## 3. Phase 5: Automated Market Data & Layered Returns
 
-**Objective**: Visualize real, user-imported data in the primary Income→Uses Sankey chart. This confirms the entire data flow from CSV to UI is working.
+**Objective**: Automate portfolio pricing using a multi-provider strategy and introduce advanced return metrics.
 
-**Result**: COMPLETED
+**Result**: IN PROGRESS
 
-**Acceptance Criteria Met**:
-- [x] **Data Flow Test**: Started with a fresh, empty `data/trust.db` file.
-- [x] **Import**: Used `projects/trust/data/phase1_test_data.csv` via the backend API.
-- [x] **Verification**: API returned a success message indicating transactions were processed.
-- [x] **Database Check**: `transactions` table in `trust.db` was correctly populated.
-- [x] **UI Visualization**: Refreshing the web UI displayed a Sankey chart with the correct nodes and values.
-- [x] **Categorization**: All expenses were correctly grouped under "Uncategorized" as no rules exist yet.
-- [x] **Diagnostic Tooltip**: Hovering over links correctly displays the formatted currency value, confirming data integrity.
+### 5.1 Multi-Provider Pricing Service
 
----
+**Objective**: Verify that the backend polling service correctly uses different API providers based on the asset type of a holding.
 
-## 4. Phase 2: Interactive Drill-Downs & Rules Management
+**Acceptance Criteria**:
+- [ ] **Setup**: 
+    1. Ensure `.env` file contains valid keys for `MASSIVE_API_KEY` and `ALPHA_VANTAGE_API_KEY`.
+    2. Purge existing `holdings` data.
+    3. Import a new holdings CSV containing at least one `Common Stock` (e.g., AAPL) and one `Mutual Fund Open` (e.g., VTSAX). Ensure the `asset_type` column is correctly populated.
+- [ ] **Execution**: Manually trigger the market data refresh for all holdings by running the script `./scripts/refresh_eod.sh` or calling the `/api/market-data/refresh-eod` endpoint.
+- [ ] **Verification (Logs)**: 
+    1. Check the backend server logs.
+    2. Confirm a log entry shows the polling service processing `AAPL` via `massive_provider`.
+    3. Confirm a log entry shows the polling service processing `VTSAX` via `alphavantage_provider`.
+- [ ] **Verification (Database)**: 
+    1. Query the `holdings` table in `trust.db`.
+    2. Both the AAPL and VTSAX rows should have a non-null `market_value` and a recent `last_price_timestamp`.
+    3. The `last_price_update_failed` flag for both should be `0` (or `False`).
+- [ ] **Verification (UI)**: 
+    1. Navigate to the Portfolio screen.
+    2. The "Last Updated" column for both AAPL and VTSAX should display the recent timestamp without any error styling.
 
-**Objective**: Allow users to inspect their data and manage categorization, moving beyond the default "Uncategorized" expense bucket.
-
-**Result**: COMPLETED
-
-**Acceptance Criteria Met**:
-- [x] The UI correctly displays existing rules and allows for the creation of new rules.
-- [x] Creating a new rule (e.g., "Safeway" → Groceries) and triggering a re-categorization correctly updates the Sankey chart to show a new "Groceries" node.
-- [x] Creating a rule to classify a transaction as a `Transfer` correctly removes its value from the "Expenses" total, increasing the "Net Surplus".
-
----
-
-## 5. Phase 3: Introducing Capital Expenditures (CapEx)
-
-**Objective**: Differentiate consumption expenses from asset-building expenses and visualize the impact.
-
-**Result**: COMPLETED
-
-**Acceptance Criteria Met**:
-- [x] A rule can be created with the type "Capital Expenditure".
-- [x] After re-categorization, the primary Sankey chart updates to show a new "Capital Expenditure" flow originating from "Uses of Money".
-- [x] The value of the "Expenses" flow is correctly reduced by the CapEx amount.
+### 5.2 Layered Returns (Future)
+- [ ] **Verification**: The Portfolio screen displays Gross, After-Fee, and After-Tax returns, visualized in the Returns Sankey.
 
 ---
 
-## 6. Phase 4: The Portfolio View
-
-**Objective**: Establish the initial portfolio tracking capability by importing and displaying a list of holdings.
-
-**Result**: COMPLETED
-
-**Acceptance Criteria Met**:
-- [x] **Data Model**: A new `holdings` table exists in `data/trust.db` after restarting the backend.
-- [x] **API Endpoint**: A `POST /api/import/holdings` endpoint is available to accept a holdings CSV file.
-- [x] **Import Test**: Create a `sample_holdings.csv` file. Use a tool like `curl` to POST this file to the import endpoint. The API should return a success message.
-- [x] **Database Verification**: The `holdings` table should be populated with the data from the CSV.
-- [x] **UI Implementation**: A new "Portfolio Holdings" section appears on the main screen.
-- [x] **UI Verification**: The portfolio section fetches data from `GET /api/holdings` and displays the imported holdings correctly in a table.
-
----
-
-## 6.1 Core Feature Verification: Account Visibility Exclusion
-
-**Objective**: Verify that excluding an Account via the settings accurately removes its transactions from the Income -> Uses Sankey, satisfying PRS 2.1.A and PRS 11 (Core feature accuracy).
-
-**Result**: COMPLETED (Verified by user test)
-
-**Acceptance Criteria Met**:
-- [x] **Setup**: Import transactions across two distinct `account_id`s (e.g., 'Checking A' and 'Checking B'). Verify both accounts contribute to the initial Sankey chart (Income/Expenses).
-- [x] **Action**: Navigate to 'Data & Settings' > 'Account Visibility Manager'. Uncheck the visibility toggle for 'Checking B' and click 'Save Settings'.
-- [x] **Verification (Sankey)**: Navigate back to the 'Home' screen. The Sankey chart must immediately recalculate and exclude all transactions from 'Checking B'. Total Income and Total Expenses must be reduced accordingly.
-- [x] **Verification (Transactions)**: Navigate to the 'Cashflow' screen. Apply a filter for 'Checking B'. Transactions from 'Checking B' are still visible here, confirming they were only excluded from the Sankey visualization (Flow analysis), not purged from the system.
-- [x] **Cleanup**: Re-check the visibility toggle for 'Checking B'. The Sankey chart must return to its original state.
-
----
-
-## 7. Future Phases (High-Level Plan)
-
-### Phase 5: Automated Market Data & Layered Returns
-- **Verification**: Manually trigger the market data fetch process. Verify prices are updated in the database. Verify the Portfolio screen now shows correct market values.
+## 4. Future Phases (High-Level Plan)
 
 ### Phase 6: Advanced Rules Engine & Portfolio Separation
 - **Verification**: Create a rule that assigns `CashflowType: Investment`. Verify these transactions are correctly excluded from the primary Income Sankey (PRS 3.1).
