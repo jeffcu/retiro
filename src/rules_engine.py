@@ -40,14 +40,13 @@ def apply_rules_to_transaction(transaction: Transaction, rules: List[Rule]) -> T
     sorted_rules = sorted(rules, key=lambda r: r.priority)
 
     # Preserve the transaction's state *before* rules run, for condition checking.
-    # The `original_category` from the file is the most truthful source for conditions.
-    # Fall back to the current category if that's all we have.
-    category_for_condition_check = transaction.original_category or transaction.category
+    # CORRECTED: The user creates rules based on the CURRENT category, so we must check against that.
+    category_for_condition_check = transaction.category
     cashflow_type_for_condition_check = transaction.cashflow_type
 
-    # Reset fields that are always determined by rules. Tags are replaced by a matching rule.
-    transaction.tags = []
+    # Reset fields that are always determined by rules.
     transaction.is_transfer = False
+    # CORRECTED: Do NOT reset tags. Tags are only overwritten if a rule with a tag action matches.
 
     # --- Rule Matching Loop ---
     for rule in sorted_rules:

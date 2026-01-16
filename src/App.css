@@ -30,11 +30,11 @@
 }
 
 .sankey-container-card {
-  background-color: #383838; /* A lighter grey, but still dark theme friendly */
+  background-color: #545454; /* Per Captain's order: dark background (7/10 scale) */
 }
 
 .sankey-container-card h2 {
-  color: #E2B254; /* Gold accent for title in this special card */
+  color: var(--text-color); /* High contrast light text for the dark background */
 }
 
 

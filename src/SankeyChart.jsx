@@ -16,45 +16,41 @@ const SankeyChart = ({ data, onNodeClick = () => {} }) => {
     };
 
     return (
-        // --- VISUAL REFINEMENT (User Request) --- //
-        // Added a light grey background to the chart container for better contrast.
-        <div style={{ height: '600px', width: '100%', backgroundColor: '#f5f5f5', borderRadius: '4px', padding: '1rem' }}>
+        // --- FIX: Removed inconsistent light-background wrapper div that was causing a rendering crash. --- //
+        <div style={{ height: '600px', width: '100%' }}>
             <ResponsiveSankey
                 data={data} 
-                // --- LAYOUT OPTIMIZATION (User Request) ---
-                // Tighter margins, more compact layout, and thicker nodes/flows.
                 margin={{ top: 40, right: 200, bottom: 40, left: 80 }}
-                align="center" // 'center' provides a more compact layout than 'justify'
-                colors={{ scheme: 'category10' }} // A colorblind-safe, distinct palette
+                align="center"
+                colors={{ scheme: 'category10' }}
                 nodeOpacity={1}
                 nodeHoverOthersOpacity={0.35}
-                nodeThickness={24} // Increased for more visual weight
-                nodeSpacing={8}    // Decreased for tighter vertical layout
+                nodeThickness={24}
+                nodeSpacing={8}
                 nodeBorderWidth={0}
                 nodeBorderRadius={3}
                 
-                // Link/flow styling for light background
+                // Link/flow styling for DARK background
                 linkOpacity={0.6}
-                linkColor="#adadad" // Medium grey for good contrast on light bg
-                enableLinkGradient={false}
-
                 linkHoverOthersOpacity={0.1}
-                linkContract={0} // Removed contract for thicker-appearing flows
+                linkContract={0}
+                enableLinkGradient={true}
+
                 labelPosition="outside"
                 labelOrientation="horizontal"
                 labelPadding={16}
-                // Label color inverted for light background
-                labelTextColor="#333333"
-
-                onClick={handleNodeClick} // Added click handler for future drill-down
+                // --- FIX: Explicitly set a single, high-contrast color for all labels. ---
+                labelTextColor="#f0f0f0"
                 
-                // Tooltip for links (flows)
+                onClick={handleNodeClick}
+                
+                // Tooltip for links (flows) with dark theme
                 linkTooltip={({ link }) => (
                     <div style={{
                         padding: '12px',
-                        background: '#fff',
-                        color: '#000',
-                        border: '1px solid #ccc',
+                        background: '#222',
+                        color: '#eee',
+                        border: '1px solid #333',
                         borderRadius: '3px',
                     }}>
                         <strong>{link.source.id}</strong> → <strong>{link.target.id}</strong>
@@ -63,15 +59,13 @@ const SankeyChart = ({ data, onNodeClick = () => {} }) => {
                     </div>
                 )}
 
-                // --- FIX: Display node name and value on hover --- //
-                // Reverted to a simpler implementation to ensure both the node's ID (name)
-                // and its value are always displayed as requested.
+                // Tooltip for nodes with dark theme
                 nodeTooltip={node => (
                     <div style={{
                         padding: '12px',
-                        background: '#fff',
-                        color: '#000',
-                        border: '1px solid #ccc',
+                        background: '#222',
+                        color: '#eee',
+                        border: '1px solid #333',
                         borderRadius: '3px',
                     }}>
                         <strong>{node.id}</strong>
@@ -80,7 +74,23 @@ const SankeyChart = ({ data, onNodeClick = () => {} }) => {
                     </div>
                 )}
                 
-                // legends prop removed to simplify the UI as per prior request.
+                // Theme for other elements like tooltips and axes (if any).
+                // Label color is now handled by the `labelTextColor` prop for direct control.
+                theme={{
+                    labels: {
+                        text: {
+                            // `fill` is now controlled by the `labelTextColor` prop above.
+                            fontSize: 12
+                        }
+                    },
+                    tooltip: {
+                        container: {
+                            background: '#222',
+                            color: '#eee',
+                            border: '1px solid #333'
+                        }
+                    }
+                }}
             />
         </div>
     )

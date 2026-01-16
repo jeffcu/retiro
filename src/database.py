@@ -1,5 +1,6 @@
 import sqlite3
 import uuid
+import json
 from pathlib import Path
 from typing import List, Dict, Any, Tuple
 from src.data_model import Transaction, Holding, PriceQuote # Added PriceQuote
@@ -63,7 +64,6 @@ def _ensure_schema(conn: sqlite3.Connection):
     );
     """)
 
-    # --- NEW: Table for Price History ---
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS price_history (
         quote_id TEXT PRIMARY KEY,
@@ -91,6 +91,14 @@ def _ensure_schema(conn: sqlite3.Connection):
     CREATE TABLE IF NOT EXISTS account_visibility (
         account_id TEXT PRIMARY KEY,
         is_visible INTEGER NOT NULL DEFAULT 1
+    );
+    """)
+
+    # --- NEW: Generic table for application settings ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
     );
     """)
 
@@ -189,6 +197,30 @@ def initialize_database():
     conn.close()
     print("--- Database initialization complete. ---")
 
+# --- NEW: Generic settings functions ---
+def get_setting(key: str) -> Any | None:
+    """Fetches a setting value by key and decodes its JSON content."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT value FROM app_settings WHERE key = ?", (key,))
+    row = cursor.fetchone()
+    conn.close()
+    if row and row['value']:
+        try:
+            return json.loads(row['value'])
+        except json.JSONDecodeError:
+            return row['value'] # Fallback for non-JSON data
+    return None
+
+def set_setting(key: str, value: Any):
+    """Saves a setting value by key, encoding the value as a JSON string."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    json_value = json.dumps(value)
+    cursor.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", (key, json_value))
+    conn.commit()
+    conn.close()
+
 def save_transactions(transactions: List[Transaction]):
     if not transactions:
         return
@@ -227,50 +259,33 @@ def save_holdings_snapshot(holdings: List[Holding], account_id: str):
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # 1. Fetch existing metadata for this account
     cursor.execute("SELECT symbol, tags, asset_type FROM holdings WHERE trim(lower(account_id)) = trim(lower(?))", (cleaned_account_id,))
-    existing_metadata = {}
-    for row in cursor.fetchall():
-        existing_metadata[row['symbol']] = {
-            'tags': [t.strip() for t in row['tags'].split(',')] if row['tags'] else [],
-            'asset_type': row['asset_type']
-        }
-    
+    existing_metadata = {row['symbol']: {'tags': [t.strip() for t in row['tags'].split(',')] if row['tags'] else [], 'asset_type': row['asset_type']} for row in cursor.fetchall()}
     print(f"Found existing metadata for {len(existing_metadata)} symbols in account '{cleaned_account_id}'.")
 
-    # 2. Merge existing metadata into the new holdings list
     for h in holdings:
         if h.symbol in existing_metadata:
             meta = existing_metadata[h.symbol]
-            # If the new holding from the CSV has no tags, but the old one did, preserve them.
             if not h.tags and meta['tags']:
                 h.tags = meta['tags']
-                print(f"Preserving tags for {h.symbol}: {h.tags}")
-            # If the new holding from the CSV has no asset_type, but the old one did, preserve it.
             if not h.asset_type and meta['asset_type']:
                 h.asset_type = meta['asset_type']
-                print(f"Preserving asset_type for {h.symbol}: {h.asset_type}")
 
-    deleted_count = 0
-    inserted_count = 0
+    deleted_count, inserted_count = 0, 0
     try:
-        # 3. Delete old records for the account
         cursor.execute("DELETE FROM holdings WHERE trim(lower(account_id)) = trim(lower(?))", (cleaned_account_id,))
         deleted_count = cursor.rowcount
         print(f"Deleted {deleted_count} stale holdings for account '{cleaned_account_id}'.")
         
-        # 4. Insert the merged holdings
         if holdings:
             sql = """INSERT INTO holdings (
-                        holding_id, account_id, symbol, quantity, cost_basis, market_value, tags, asset_type
+                         holding_id, account_id, symbol, quantity, cost_basis, 
+                         market_value, tags, asset_type
                      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);"""
             data_to_insert = [
-                (
-                    h.holding_id, h.account_id, h.symbol, float(h.quantity), float(h.cost_basis),
-                    float(h.market_value) if h.market_value is not None else None,
-                    ','.join(h.tags) if h.tags else None,
-                    h.asset_type
-                ) for h in holdings
+                (h.holding_id, h.account_id, h.symbol, float(h.quantity), float(h.cost_basis),
+                 float(h.market_value) if h.market_value is not None else None, ','.join(h.tags) if h.tags else None, h.asset_type) 
+                for h in holdings
             ]
             cursor.executemany(sql, data_to_insert)
             inserted_count = cursor.rowcount
@@ -289,14 +304,10 @@ def save_import_run(run_data: Dict[str, Any]):
     conn = get_db_connection()
     cursor = conn.cursor()
     sql = """INSERT INTO import_runs (
-                 import_run_id, file_name, import_type, import_timestamp,
+                 import_run_id, file_name, import_type, import_timestamp, 
                  record_count, total_amount, total_market_value, total_cost_basis
              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);"""
-    data_tuple = (
-        run_data['import_run_id'], run_data['file_name'], run_data['import_type'],
-        run_data['import_timestamp'], run_data.get('record_count'), run_data.get('total_amount'),
-        run_data.get('total_market_value'), run_data.get('total_cost_basis')
-    )
+    data_tuple = (run_data['import_run_id'], run_data['file_name'], run_data['import_type'], run_data['import_timestamp'], run_data.get('record_count'), run_data.get('total_amount'), run_data.get('total_market_value'), run_data.get('total_cost_basis'))
     try:
         cursor.execute(sql, data_tuple)
         conn.commit()
@@ -308,7 +319,6 @@ def save_import_run(run_data: Dict[str, Any]):
     finally:
         conn.close()
 
-
 def _build_where_clause(filters: Dict, allowed_fields: List[str]) -> Tuple[List[str], List[Any]]:
     clauses, params = [], []
     if not filters:
@@ -317,8 +327,6 @@ def _build_where_clause(filters: Dict, allowed_fields: List[str]) -> Tuple[List[
         if key not in allowed_fields or not value:
             continue
 
-        # --- NEW: Special handling for 'Uncategorized' filter ---
-        # This aligns filtering with the display logic where NULLs are shown as "Uncategorized".
         if key == 'category' and value == 'Uncategorized':
             clauses.append("(category IS NULL OR category = '' OR category = ?)")
             params.append('Uncategorized')
@@ -405,19 +413,15 @@ def update_holding(holding_id: str, updates: Dict[str, Any]):
     cursor = conn.cursor()
     
     allowed_fields = ['tags', 'asset_type']
-    set_clauses = []
-    params = []
-
+    set_clauses, params = [], []
     for field, value in updates.items():
         if field not in allowed_fields:
             continue
-
         if field == 'tags' and isinstance(value, list):
             set_clauses.append("tags = ?")
             params.append(','.join(value) if value else None)
         elif field == 'asset_type':
             set_clauses.append("asset_type = ?")
-            # Ensure empty strings are saved as NULL
             params.append(value if value and str(value).strip() else None)
     
     if not set_clauses:
@@ -426,7 +430,6 @@ def update_holding(holding_id: str, updates: Dict[str, Any]):
 
     sql = f"UPDATE holdings SET {', '.join(set_clauses)} WHERE holding_id = ?"
     params.append(holding_id)
-
     try:
         cursor.execute(sql, tuple(params))
         conn.commit()
@@ -446,49 +449,76 @@ def get_all_import_runs() -> List[Dict[str, Any]]:
     conn.close()
     return [dict(row) for row in rows]
 
+def get_income_categories() -> List[str]:
+    """Gets a distinct list of all non-empty categories assigned to Income transactions."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT DISTINCT category FROM transactions WHERE cashflow_type = 'Income' AND category IS NOT NULL AND category != '' ORDER BY category")
+    return [row['category'] for row in cursor.fetchall()]
+
 def get_filter_options() -> Dict[str, List[str]]:
     conn, options = get_db_connection(), {}
     cursor = conn.cursor()
-    # Get all distinct categories, excluding 'Uncategorized' from the initial list to handle it as a special case.
     cursor.execute("SELECT DISTINCT category FROM transactions WHERE category IS NOT NULL AND category != '' AND category != 'Uncategorized' ORDER BY category")
     options['categories'] = [row['category'] for row in cursor.fetchall()]
-
-    # --- NEW: Conditionally add 'Uncategorized' if relevant transactions exist ---
     cursor.execute("SELECT 1 FROM transactions WHERE category IS NULL OR category = '' OR category = 'Uncategorized' LIMIT 1")
     if cursor.fetchone():
         options['categories'].append('Uncategorized')
-        # Re-sort to maintain alphabetical order
         options['categories'].sort()
-
-    cursor.execute("""
-        SELECT account_id FROM transactions WHERE account_id IS NOT NULL
-        UNION
-        SELECT account_id FROM holdings WHERE account_id IS NOT NULL
-        ORDER BY account_id ASC
-    """)
+    cursor.execute("SELECT account_id FROM transactions WHERE account_id IS NOT NULL UNION SELECT account_id FROM holdings WHERE account_id IS NOT NULL ORDER BY account_id ASC")
     options['accounts'] = [row['account_id'] for row in cursor.fetchall()]
-
     cursor.execute("SELECT DISTINCT institution FROM transactions WHERE institution IS NOT NULL ORDER BY institution")
     options['institutions'] = [row['institution'] for row in cursor.fetchall()]
-
     cursor.execute("SELECT DISTINCT asset_type FROM holdings WHERE asset_type IS NOT NULL AND asset_type != '' ORDER BY asset_type")
     options['assetTypes'] = [row['asset_type'] for row in cursor.fetchall()]
-
     options['cashflowTypes'] = ["Income", "Expense", "Transfer", "Capital Expenditure", "Investment"]
     conn.close()
     return options
 
-def get_sankey_aggregates(period: str, exclude_invisible: bool = False) -> List[Dict[str, Any]]:
+def get_capital_flow_aggregates(period: str, exclude_invisible: bool = False) -> List[Dict[str, Any]]:
+    """ 
+    Fetches all data needed for the Capital Flow Sankey in a single query.
+    (PRS Section 2.1.A)
+    """
     conn = get_db_connection()
     cursor = conn.cursor()
-    where_clauses = ["t.cashflow_type IN ('Income', 'Expense', 'Capital Expenditure')"]
-    params = []
+    where_clauses, params = [], []
+
     if exclude_invisible:
         where_clauses.append("t.account_id NOT IN (SELECT account_id FROM account_visibility WHERE is_visible = 0)")
+    
     _apply_period_filter_to_query(where_clauses, params, period, date_column='transaction_date', table_prefix='t.')
-    where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
-    query = f"""SELECT cashflow_type, category, SUM(amount) as total FROM transactions t {where_sql} GROUP BY cashflow_type, category"""
-    cursor.execute(query, params)
+    
+    where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+
+    # UPDATED QUERY: Income is now grouped by category to support breakdowns.
+    query = f""" 
+    -- Income by Category
+    SELECT 'Income' as source_type, category, SUM(amount) as total
+    FROM transactions t
+    WHERE {where_sql} AND t.cashflow_type = 'Income'
+    GROUP BY category
+
+    UNION ALL
+
+    -- Portfolio Yield
+    SELECT 'Portfolio Yield' as source_type, 'N/A' as category, SUM(amount) as total
+    FROM transactions t
+    WHERE {where_sql} AND t.cashflow_type = 'Investment' AND t.category IN ('Dividends', 'Interest Income')
+
+    UNION ALL
+
+    -- Consumption Expenses
+    SELECT 'Expense' as source_type, category, SUM(amount) as total
+    FROM transactions t
+    WHERE {where_sql} AND t.cashflow_type = 'Expense'
+    GROUP BY category
+    """
+    
+    # Each part of the UNION query uses the same set of WHERE clause parameters.
+    # We must provide the parameter list repeated for each part.
+    final_params = params * 3 
+    cursor.execute(query, final_params)
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
@@ -502,36 +532,23 @@ def get_latest_transaction_year() -> int | None:
     return int(result['latest_year']) if result and result['latest_year'] else None
 
 def get_cashflow_aggregation_by_month(filters: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """
-    Aggregates income and expense by month based on a flexible filter dictionary.
-    This function is driven by the 'period' in the filters, not a separate year.
-    """
+    """Aggregates income and expense by month based on a flexible filter dictionary."""
     conn = get_db_connection()
     cursor = conn.cursor()
-
-    # Use a copy to avoid mutating the original filters dict
     local_filters = filters.copy()
     period = local_filters.pop('period', None)
-
     allowed_fields = ['category', 'account_id', 'institution', 'description', 'tags', 'cashflow_type']
     clauses, params = _build_where_clause(local_filters, allowed_fields)
-
-    # The helper function correctly handles various period formats (e.g., 'all', '2024', '6m')
     _apply_period_filter_to_query(clauses, params, period, date_column='transaction_date')
-
     where_str = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-
-    query = f"""
-        SELECT 
-            strftime('%Y-%m', transaction_date) as month, 
-            SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as income, 
-            SUM(CASE WHEN amount < 0 AND cashflow_type = 'Expense' THEN amount ELSE 0 END) as expense 
-        FROM transactions 
-        {where_str} 
-        GROUP BY month 
-        ORDER BY month ASC
-    """
-
+    query = f"""SELECT 
+                    strftime('%Y-%m', transaction_date) as month, 
+                    SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as income, 
+                    SUM(CASE WHEN amount < 0 AND cashflow_type = 'Expense' THEN amount ELSE 0 END) as expense 
+                FROM transactions 
+                {where_str} 
+                GROUP BY month 
+                ORDER BY month ASC"""
     cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
@@ -545,30 +562,34 @@ def get_holdings_aggregation_by_symbol(filters: Dict[str, Any]) -> List[Dict[str
     clauses, params = _build_where_clause(filters, allowed_fields)
     _apply_period_filter_to_query(clauses, params, period, date_column='last_price_timestamp')
     where_str = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    query = f"""SELECT symbol, SUM(market_value) as total_market_value FROM holdings {where_str} GROUP BY symbol HAVING total_market_value > 0 ORDER BY total_market_value DESC LIMIT 20"""
+    query = f"""SELECT 
+                    symbol, 
+                    SUM(market_value) as total_market_value 
+                FROM holdings 
+                {where_str} 
+                GROUP BY symbol 
+                HAVING total_market_value > 0 
+                ORDER BY total_market_value DESC 
+                LIMIT 20"""
     cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
 
 def get_holdings_aggregation_by_asset_type() -> List[Dict[str, Any]]:
-    """
-    Groups holdings by their asset_type and sums their market_value.
-    Filters out holdings with no market value or asset type.
-    """
+    """Groups holdings by asset_type and sums their market_value."""
     conn = get_db_connection()
     cursor = conn.cursor()
-    query = """
-        SELECT 
-            asset_type, 
-            SUM(market_value) as total_market_value
-        FROM holdings
-        WHERE 
-            market_value IS NOT NULL AND market_value > 0 AND
-            asset_type IS NOT NULL AND asset_type != ''
-        GROUP BY asset_type
-        ORDER BY total_market_value DESC;
-    """
+    query = """SELECT 
+                    asset_type, 
+                    SUM(market_value) as total_market_value 
+                FROM holdings 
+                WHERE market_value IS NOT NULL 
+                  AND market_value > 0 
+                  AND asset_type IS NOT NULL 
+                  AND asset_type != '' 
+                GROUP BY asset_type 
+                ORDER BY total_market_value DESC;"""
     cursor.execute(query)
     rows = cursor.fetchall()
     conn.close()
@@ -594,7 +615,12 @@ def _transform_rule_record(rule_row: sqlite3.Row) -> Dict[str, Any]:
 def create_rule(rule_data: Dict[str, Any]) -> Dict[str, Any]:
     conn = get_db_connection()
     cursor, rule_id = conn.cursor(), str(uuid.uuid4())
-    sql = """INSERT INTO rules (rule_id, pattern, category, cashflow_type, tags, priority, case_sensitive, account_filter_mode, account_filter_list, condition_category, condition_institution, condition_cashflow_type, condition_tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"""
+    sql = """INSERT INTO rules (
+                 rule_id, pattern, category, cashflow_type, tags, priority, 
+                 case_sensitive, account_filter_mode, account_filter_list, 
+                 condition_category, condition_institution, condition_cashflow_type, 
+                 condition_tags
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"""
     tags_str, account_list_str = ','.join(rule_data.get('tags', [])), ','.join(rule_data.get('account_filter_list', []))
     cursor.execute(sql, (rule_id, rule_data.get('pattern'), rule_data['category'], rule_data['cashflow_type'], tags_str, rule_data.get('priority', 100), 1 if rule_data.get('case_sensitive') else 0, rule_data.get('account_filter_mode', 'include'), account_list_str, rule_data.get('condition_category'), rule_data.get('condition_institution'), rule_data.get('condition_cashflow_type'), rule_data.get('condition_tags')))
     conn.commit()
@@ -683,25 +709,14 @@ def purge_table_data(target_table: str) -> dict:
     finally:
         conn.close()
 
-# --- NEW: Functions for Market Data ---
-
 def save_price_quotes(quotes: Dict[str, Dict[str, Any]]):
-    """Saves a batch of price quotes to the price_history table."""
-    if not quotes:
-        return
+    if not quotes: return
     conn = get_db_connection()
     cursor = conn.cursor()
-    sql = """INSERT INTO price_history (quote_id, symbol, price, quote_timestamp, source) 
-             VALUES (?, ?, ?, ?, ?);"""
-    data_to_insert = [
-        (
-            str(uuid.uuid4()),
-            symbol,
-            float(data['price']),
-            data['timestamp'],
-            data['source']
-        ) for symbol, data in quotes.items()
-    ]
+    sql = """INSERT INTO price_history (
+                 quote_id, symbol, price, quote_timestamp, source
+             ) VALUES (?, ?, ?, ?, ?);"""
+    data_to_insert = [(str(uuid.uuid4()), symbol, float(data['price']), data['timestamp'], data['source']) for symbol, data in quotes.items()]
     try:
         cursor.executemany(sql, data_to_insert)
         conn.commit()
@@ -714,26 +729,14 @@ def save_price_quotes(quotes: Dict[str, Dict[str, Any]]):
         conn.close()
 
 def update_holdings_with_new_prices(quotes: Dict[str, Dict[str, Any]]):
-    """Updates the holdings table with the latest prices and recalculates market value."""
-    if not quotes:
-        return
+    if not quotes: return
     conn = get_db_connection()
     cursor = conn.cursor()
     updated_count = 0
     try:
         for symbol, data in quotes.items():
-            price = float(data['price'])
-            timestamp = data['timestamp']
-            # This single query updates all holdings for a given symbol across all accounts
-            cursor.execute("""
-                UPDATE holdings 
-                SET 
-                    last_price = ?,
-                    last_price_timestamp = ?,
-                    market_value = quantity * ?,
-                    last_price_update_failed = 0
-                WHERE symbol = ?;
-            """, (price, timestamp, price, symbol))
+            price, timestamp = float(data['price']), data['timestamp']
+            cursor.execute("UPDATE holdings SET last_price = ?, last_price_timestamp = ?, market_value = quantity * ?, last_price_update_failed = 0 WHERE symbol = ?;", (price, timestamp, price, symbol))
             updated_count += cursor.rowcount
         conn.commit()
         print(f"Updated {updated_count} holding records with new prices.")
@@ -745,12 +748,9 @@ def update_holdings_with_new_prices(quotes: Dict[str, Dict[str, Any]]):
         conn.close()
 
 def mark_holdings_as_failed(symbols: List[str]):
-    """Sets the failure flag for a list of holding symbols."""
-    if not symbols:
-        return
+    if not symbols: return
     conn = get_db_connection()
     cursor = conn.cursor()
-    # Use parameter substitution to safely handle the list of symbols
     placeholders = ', '.join('?' for _ in symbols)
     sql = f"UPDATE holdings SET last_price_update_failed = 1 WHERE symbol IN ({placeholders})"
     try:

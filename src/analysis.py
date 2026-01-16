@@ -5,209 +5,162 @@ for visualizations like Sankey diagrams, and running forecasts.
 """
 from typing import Dict, Any, List
 from collections import defaultdict
-from datetime import datetime
-from .database import (
-    get_sankey_aggregates, 
-    get_holdings_aggregation_by_symbol, 
-    get_cashflow_aggregation_by_month, 
-    get_latest_transaction_year, 
-    get_holdings_aggregation_by_asset_type,
-    get_total_portfolio_market_value
-)
+from . import database as db
 
-def generate_income_sankey(period: str, exclude_invisible: bool = False) -> Dict[str, Any]:
+MAX_PRIMARY_EXPENSE_CATEGORIES = 7
+
+def _calculate_capital_flow_details(period: str, exclude_invisible: bool = False) -> Dict[str, Any]:
+    """Core logic to calculate all components of the capital flow.
+    Returns a structured dictionary suitable for both tables and Sankey diagrams.
     """
-    Analyzes transaction aggregates to generate data for the income Sankey diagram.
-    This version ensures the diagram is always balanced by using an intermediate
-    node and explicitly showing deficits.
-    (PRS Section 2.1.A, 3.1)
-
-    Args:
-        period: The time period to analyze (e.g., 'all', '2024', '6m').
-        exclude_invisible: If True, filters out transactions from accounts
-                           marked as not visible.
-
-    Returns:
-        A dictionary formatted for the Nivo Sankey component.
-    """
-    aggregates = get_sankey_aggregates(period=period, exclude_invisible=exclude_invisible)
+    aggregates = db.get_capital_flow_aggregates(period=period, exclude_invisible=exclude_invisible)
     
-    total_income = 0.0
+    # Get user settings for which income categories to show
+    selected_income_categories = db.get_setting('sankey_income_categories') or []
+
+    income_by_category = defaultdict(float)
+    portfolio_yield = 0.0
     expense_by_category = defaultdict(float)
-    total_capex = 0.0
-    
+
     for row in aggregates:
-        cashflow_type = row.get('cashflow_type')
-        total = row.get('total', 0.0)
+        source_type, category, total = row['source_type'], row['category'], row['total']
+        if total is None: continue
 
-        if cashflow_type == 'Income' and total > 0:
-            total_income += total
-        elif cashflow_type == 'Expense' and total < 0:
-            category = row.get('category') or 'Uncategorized'
-            expense_by_category[category] += abs(total)
-        elif cashflow_type == 'Capital Expenditure' and total < 0:
-            total_capex += abs(total)
-
-    total_expenses = sum(expense_by_category.values())
-    net_surplus = total_income - total_expenses - total_capex
-
-    nodes = []
-    links = []
-
-    # --- NEW: Balanced and Sorted Sankey Architecture --- #
-
-    # 0. Define reserved names to prevent topological loops.
-    RESERVED_NODE_NAMES = {
-        "Income", "Available Funds", "Net Surplus", 
-        "Net Deficit", "Capital Expenditure", "Other Expenses"
-    }
-
-    # 1. Define core source and intermediate distribution nodes.
-    if total_income > 0:
-        nodes.append({"id": "Income"})
+        if source_type == 'Income':
+            # Only include income if it's in the user-selected list
+            if category in selected_income_categories:
+                income_by_category[category] += total
+        elif source_type == 'Portfolio Yield':
+            portfolio_yield += total
+        elif source_type == 'Expense':
+            expense_by_category[category or 'Uncategorized'] += abs(total)
     
-    nodes.append({"id": "Available Funds"})
+    total_op_income = sum(income_by_category.values())
+    total_inflows = total_op_income + portfolio_yield
+    total_consumption = sum(expense_by_category.values())
+    net_savings = total_inflows - total_consumption
 
-    # 2. Handle deficit vs. surplus to establish balanced inflows.
-    if net_surplus >= 0:
-        if total_income > 0:
-            links.append({"source": "Income", "target": "Available Funds", "value": round(total_income, 2)})
-    else:
-        net_deficit = abs(net_surplus)
-        nodes.append({"id": "Net Deficit"})
-        if total_income > 0:
-            links.append({"source": "Income", "target": "Available Funds", "value": round(total_income, 2)})
-        links.append({"source": "Net Deficit", "target": "Available Funds", "value": round(net_deficit, 2)})
-
-    # 3. Sanitize expense category names to prevent collisions.
-    sanitized_expenses = defaultdict(float)
-    for category, amount in expense_by_category.items():
-        safe_name = f"{category} (Expense)" if category in RESERVED_NODE_NAMES else category
-        sanitized_expenses[safe_name] += amount
-
-    # 4. Assemble and sort all outflows from "Available Funds".
-    outflows = []
-    if net_surplus > 0:
-        outflows.append(("Net Surplus", net_surplus))
-    if total_capex > 0:
-        outflows.append(("Capital Expenditure", total_capex))
-
-    # Use top N expense categories and group the rest into "Other Expenses".
-    MAX_EXPENSE_CATEGORIES = 6 
-    sorted_expenses = sorted(sanitized_expenses.items(), key=lambda item: item[1], reverse=True)
-    
-    top_expenses_list = sorted_expenses[:MAX_EXPENSE_CATEGORIES]
-    other_expenses_list = sorted_expenses[MAX_EXPENSE_CATEGORIES:]
+    # Expense breakdown logic
+    sorted_expenses = sorted(expense_by_category.items(), key=lambda item: item[1], reverse=True)
+    top_expenses = dict(sorted_expenses[:MAX_PRIMARY_EXPENSE_CATEGORIES])
+    other_expenses_list = sorted_expenses[MAX_PRIMARY_EXPENSE_CATEGORIES:]
     other_expenses_total = sum(amount for _, amount in other_expenses_list)
-
-    outflows.extend(top_expenses_list)
-
-    if other_expenses_total > 0:
-        outflows.append(("Other Expenses", other_expenses_total))
-
-    # Sort the master list of outflows by value, descending.
-    outflows.sort(key=lambda item: item[1], reverse=True)
-
-    # 5. Create nodes and links from the sorted outflows.
-    for target_node, amount in outflows:
-        if amount > 0:
-            nodes.append({"id": target_node})
-            links.append({"source": "Available Funds", "target": target_node, "value": round(amount, 2)})
-
-    # 6. Handle the sub-tier breakout for "Other Expenses", also sorted.
-    if other_expenses_total > 0:
-        other_expenses_list.sort(key=lambda item: item[1], reverse=True)
-        for category, amount in other_expenses_list:
-            if amount > 0:
-                nodes.append({"id": category})
-                links.append({"source": "Other Expenses", "target": category, "value": round(amount, 2)})
-
-    # 7. Finalize node list, ensuring no duplicates.
-    unique_node_ids = {node['id'] for node in nodes}
-    final_nodes = [{"id": node_id} for node_id in sorted(list(unique_node_ids))]
-
-    if not links:
-        return {"nodes": [], "links": []}
+    other_expenses_breakdown = dict(other_expenses_list) # All remaining expenses are included.
 
     return {
-        "nodes": final_nodes,
-        "links": links
+        "inflows_by_category": dict(income_by_category),
+        "portfolio_yield": portfolio_yield,
+        "total_inflows": total_inflows,
+        "total_consumption": total_consumption,
+        "net_savings": net_savings,
+        "consumption_breakdown": {
+            "top_categories": top_expenses,
+            "other_total": other_expenses_total,
+            "other_breakdown": other_expenses_breakdown
+        }
     }
 
+def generate_capital_flow_table_data(period: str, exclude_invisible: bool = False) -> Dict[str, Any]:
+    """Generates the capital flow data specifically for the new tabular view."""
+    return _calculate_capital_flow_details(period, exclude_invisible)
+
+def generate_capital_flow_sankey(period: str, exclude_invisible: bool = False) -> Dict[str, Any]:
+    """
+    Uses the detailed capital flow data to generate the Sankey diagram structure.
+    (PRS Section 2.1.A - REVISED v1.4)
+    """
+    details = _calculate_capital_flow_details(period, exclude_invisible)
+    nodes, links = [], []
+
+    if details['total_inflows'] <= 0:
+        return {"nodes": [], "links": []}
+
+    # --- FIX: Create a master set of all reserved node names up front. ---
+    # This includes all structural nodes and all data-driven income sources.
+    # Any data-driven expense node will be checked against this master set.
+    RESERVED_NODE_IDS = {
+        "Total Inflows", 
+        "Consumption", 
+        "Net Savings", 
+        "Portfolio Yield",
+        "Other Expenses" # This structural node is now explicitly reserved.
+    }
+    RESERVED_NODE_IDS.update(details['inflows_by_category'].keys())
+
+    def disambiguate_expense_node(name: str) -> str:
+        """If an expense category name conflicts with any reserved name, append '(Expense)'."""
+        return f"{name} (Expense)" if name in RESERVED_NODE_IDS else name
+
+    # Tier 1 & 2: Sources -> Total Inflows
+    nodes.append({"id": "Total Inflows"})
+    for category, amount in details['inflows_by_category'].items():
+        if amount > 0:
+            nodes.append({"id": category})
+            links.append({"source": category, "target": "Total Inflows", "value": round(amount, 2)})
+    if details['portfolio_yield'] > 0:
+        nodes.append({"id": "Portfolio Yield"})
+        links.append({"source": "Portfolio Yield", "target": "Total Inflows", "value": round(details['portfolio_yield'], 2)})
+
+    # Tier 3: Primary Allocation
+    nodes.extend([{"id": "Consumption"}, {"id": "Net Savings"}])
+    if details['total_consumption'] > 0:
+        links.append({"source": "Total Inflows", "target": "Consumption", "value": round(details['total_consumption'], 2)})
+    if details['net_savings'] > 0:
+        links.append({"source": "Total Inflows", "target": "Net Savings", "value": round(details['net_savings'], 2)})
+
+    # Tier 4: Expense Breakdown
+    consumption_breakdown = details['consumption_breakdown']
+    for category, amount in consumption_breakdown['top_categories'].items():
+        if amount > 0:
+            node_id = disambiguate_expense_node(category)
+            nodes.append({"id": node_id})
+            links.append({"source": "Consumption", "target": node_id, "value": round(amount, 2)})
+    
+    if consumption_breakdown['other_total'] > 0:
+        # The name for this structural node is fixed and pre-reserved.
+        other_expenses_node_id = "Other Expenses"
+        nodes.append({"id": other_expenses_node_id})
+        links.append({"source": "Consumption", "target": other_expenses_node_id, "value": round(consumption_breakdown['other_total'], 2)})
+
+        # Tier 5: 'Other Expenses' Sub-Breakdown
+        for category, amount in consumption_breakdown['other_breakdown'].items():
+            if amount > 0:
+                node_id = disambiguate_expense_node(category)
+                nodes.append({"id": node_id})
+                links.append({"source": other_expenses_node_id, "target": node_id, "value": round(amount, 2)})
+
+    # Finalize node list by finding all unique node IDs used.
+    unique_node_ids = {node['id'] for node in nodes}
+    final_nodes = [{ "id": node_id } for node_id in sorted(list(unique_node_ids))]
+
+    return {"nodes": final_nodes, "links": links}
 
 def prepare_cashflow_chart_data(filters: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """
-    Prepares monthly cashflow summary data for the frontend bar chart.
-    This version is driven by the filters provided, including the time period.
-    """
-    data = get_cashflow_aggregation_by_month(filters=filters)
-
-    # The data comes in as a list of {'month': 'YYYY-MM', 'income', 'expense'}.
-    # We format it for Nivo.
-    return [
-        {
-            "month": row['month'],
-            "Income": row['income'],
-            "Expense": abs(row['expense']) # Make expense positive for bar chart
-        }
-        for row in data
-    ]
+    """Prepares monthly cashflow summary data for the frontend bar chart."""
+    data = db.get_cashflow_aggregation_by_month(filters=filters)
+    return [{"month": row['month'], "Income": row['income'], "Expense": abs(row['expense'])} for row in data]
 
 def prepare_portfolio_chart_data(filters: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """
-    Prepares portfolio summary data for the frontend bar chart.
-    """
-    # Aggregate market value by symbol based on filters.
-    data = get_holdings_aggregation_by_symbol(filters=filters)
-
-    # Format for Nivo bar chart: [{id: 'symbol', value: 12345}, ...]
-    return [
-        {
-            "id": row['symbol'],
-            "value": row['total_market_value']
-        }
-        for row in data
-    ]
-
+    """Prepares portfolio summary data for the frontend bar chart."""
+    data = db.get_holdings_aggregation_by_symbol(filters=filters)
+    return [{"id": row['symbol'], "value": row['total_market_value']} for row in data]
 
 def prepare_portfolio_allocation_chart_data() -> Dict[str, Any]:
-    """
-    Creates a data structure for the portfolio allocation pie chart and
-    accompanying table by aggregating all holdings that have an asset type.
-    """
-    grand_total_market_value = get_total_portfolio_market_value()
-    # This query already groups by asset_type and sums the market_value.
-    aggregated_by_type = get_holdings_aggregation_by_asset_type()
+    """Creates a data structure for the portfolio allocation pie chart and table."""
+    grand_total_market_value = db.get_total_portfolio_market_value()
+    aggregated_by_type = db.get_holdings_aggregation_by_asset_type()
 
     if not aggregated_by_type or grand_total_market_value == 0:
         return {"tableData": [], "chartData": []}
 
-    table_data = []
-    chart_data = []
-
+    table_data, chart_data = [], []
     for row in aggregated_by_type:
-        category_name = row['asset_type']
-        value = row['total_market_value']
+        category_name, value = row['asset_type'], row['total_market_value']
         percentage = (value / grand_total_market_value) * 100
+        table_data.append({"categoryName": category_name, "value": int(round(value)), "percentage": f"{percentage:.1f}%"})
+        chart_data.append({"id": category_name, "label": category_name, "value": round(value, 2), "percentage": round(percentage, 1)})
 
-        # Data for the summary table
-        table_data.append({
-            "categoryName": category_name,
-            "value": int(round(value)),
-            "percentage": f"{percentage:.1f}%"
-        })
+    return {"tableData": table_data, "chartData": chart_data}
 
-        # Data for the pie chart component
-        chart_data.append({
-            "id": category_name,
-            "label": category_name,
-            "value": round(value, 2),
-            "percentage": round(percentage, 1)
-        })
-
-    return {
-        "tableData": table_data,
-        "chartData": chart_data # The data is already sorted by value DESC from the DB query
-    }
 
 

@@ -1,0 +1,38 @@
+.error-boundary-card {
+    background-color: #5a2a2a;
+    border: 1px solid #8c3c3c;
+    color: #f2a7a7;
+    padding: 1.5rem;
+    border-radius: 8px;
+    margin: 2rem;
+}
+
+.error-boundary-card h2 {
+    color: #fff;
+    border-bottom-color: #8c3c3c;
+    margin-top: 0;
+}
+
+.error-boundary-card p {
+    color: #f2a7a7;
+}
+
+.error-boundary-card details {
+    margin-top: 1rem;
+    background-color: rgba(0,0,0,0.2);
+    padding: 1rem;
+    border-radius: 4px;
+}
+
+.error-boundary-card summary {
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.error-boundary-card pre {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    margin-top: 0.5rem;
+    font-size: 0.8em;
+    color: #ffc2c2;
+}

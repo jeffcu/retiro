@@ -1,4 +1,4 @@
-Curie Trust Financial Control Center — Project Requirements Specification (PRS) v1.2
+Curie Trust Financial Control Center — Project Requirements Specification (PRS) v1.4
 
 1) Mission
 
@@ -17,12 +17,21 @@ Sankey diagrams are not decorative. They are the primary language for “money a
 
 2.1 Required Sankey Diagrams (Must-Haves)
 
-A) Income Sources → Uses of Money (Home Screen Primary Sankey) - REVISED
-	•	Left tier: Income sources, broken down by category (e.g., "Social Security", "Interest Income", "Tax Refunds", "Other Income"). This is driven by user-defined rules that assign a category to transactions with the 'Income' cashflow type.
-	•	Middle-left node: A single aggregation node for "Total Income" for the selected period.
-	•	Middle-right split: From "Total Income", flows to Expenses (consumption), CapEx (asset-building), and Net Savings/Surplus.
-	•	Right split for Expenses: Top 5–7 budget categories, remainder as Other.
-	•	CapEx flows to specific asset(s) (e.g., “Main Residence Basis”).
+A) Capital Flow & Expense Breakdown (Home Screen Primary Sankey) - REVISED v1.4
+	•	Purpose: To visualize the complete financial loop, from all capital sources to their ultimate allocation as either consumption or savings, with a detailed expense breakdown.
+	•	Tier 1 (Sources of Capital):
+		•	`Income Categories`: Sum of transactions with `Income` cashflow type, broken out by individual categories (e.g., "Salary", "Rebates & Returns"). The specific categories displayed are user-configurable in Data & Settings.
+		•	`Portfolio Yield`: Sum of transactions with `Investment` cashflow type categorized as yield (e.g., "Dividends", "Interest Income").
+	•	Tier 2 (Aggregation):
+		•	A single node, `Total Inflows`, representing the total cash generated. All Tier 1 nodes flow into this node.
+	•	Tier 3 (Primary Allocation):
+		•	`Total Inflows` splits into two paths:
+			•	`Consumption`: Sum of all `Expense` cashflow type transactions. This represents capital that has been spent.
+			•	`Net Savings`: The remainder (`Total Inflows` - `Consumption`), representing retained capital.
+	•	Tier 4 (Expense Breakdown):
+		•	The `Consumption` node further splits into the top 5–7 budget categories, with the remainder aggregated into an `Other Expenses` node.
+	•	Tier 5 (Expense Sub-Breakdown):
+		•	The `Other Expenses` node splits further into the next 5-7 smaller budget categories, providing a second level of detail.
 
 B) Estate Flow (Net Worth / Estate Screen Sankey)
 	•	Left: Income + portfolio distributions (if modeled)
@@ -43,7 +52,7 @@ C) Portfolio Return Waterfall as Sankey (Portfolio Screen)
 	•	CapEx → asset ledger entries
 	•	Fees/taxes → supporting manual records
 	•	Must support: month, YTD, rolling 12 months, custom range.
-	•	Must cap complexity: max ~12-15 nodes per Sankey; enforce “Other” aggregation.
+	•	Must cap complexity: max ~20-25 nodes per Sankey; enforce “Other” aggregation.
 
 ⸻
 
@@ -81,9 +90,10 @@ CapEx is excluded from “spend/burn” but included in net worth via asset basi
 
 Priority order:
 	1.	Latest Net Worth Hero
-	2.	Income→Uses Sankey (Revised with income sources)
-	3.	Portfolio Return Sankey (Gross→Fees→Taxes→After-Tax)
-	4.	Alerts/insights (spend spikes, missing imports, stale prices)
+	2.	Capital Flow & Expense Breakdown Sankey
+	3.	Collapsible Tabular Capital Flow Breakdown
+	4.	Portfolio Allocation Pie Chart
+	5.	Alerts/insights (spend spikes, missing imports, stale prices)
 
 4.2 Cashflow
 	•	Monthly income vs expenses trend
@@ -293,8 +303,8 @@ Phase 7: Forecasting
 ⸻
 
 11) Acceptance Criteria (Key)
-	•	Home screen shows: Net Worth Hero + Income Sankey + Return Sankey with drilldowns.
-	•	The Income Sankey must exclude transactions marked with the 'Investment' cashflow type.
+	•	Home screen shows: Net Worth Hero + Capital Flow Sankey + Portfolio Allocation Pie Chart.
+	•	The Capital Flow Sankey must correctly combine 'Income' and 'Investment' (yield) type transactions.
 	•	Importing the same CSV twice produces no duplicates.
 	•	A transaction can be tagged with multiple tags and contributes to both tag totals.
 	•	Marking a transaction as CapEx:
@@ -302,3 +312,4 @@ Phase 7: Forecasting
 	•	- increases the selected asset’s basis ledger
 	•	Top 25 holdings refresh hourly during market hours; others refresh after market; UI clearly indicates quote staleness.
 	•	Portfolio screen displays before fees / after fees / after taxes and the Sankey that explains the difference.
+

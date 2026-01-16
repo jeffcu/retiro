@@ -1,0 +1,71 @@
+.collapsible-card {
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    margin-bottom: 2rem;
+    background-color: var(--dark-bg);
+}
+
+.collapsible-header {
+    padding: 1rem 1.5rem;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.collapsible-header h2 {
+    border: none;
+    padding: 0;
+    margin: 0;
+}
+
+.collapsible-header .toggle-icon {
+    font-size: 1.5em;
+    transition: transform 0.2s ease-in-out;
+}
+
+.collapsible-header .toggle-icon.open {
+    transform: rotate(90deg);
+}
+
+.collapsible-content {
+    padding: 0 1.5rem 1.5rem 1.5rem;
+    border-top: 1px solid var(--border-color);
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 2rem;
+}
+
+@media (min-width: 900px) {
+    .collapsible-content {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+.flow-table-container h3 {
+    color: var(--gold-accent);
+    margin-bottom: 0.5rem;
+}
+
+.flow-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.flow-table th, .flow-table td {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border-color);
+    text-align: left;
+}
+
+.flow-table td:last-child {
+    text-align: right;
+    font-family: monospace;
+    font-size: 1.1em;
+}
+
+.flow-table tfoot td {
+    font-weight: bold;
+    background-color: var(--light-bg);
+    border-top: 2px solid var(--border-color);
+}

@@ -238,10 +238,9 @@ coverage/
     "@types/react": "^18.2.15",
     "@types/react-dom": "^18.2.7",
     "@vitejs/plugin-react": "^4.0.3",
-    "vite": "^7.3.1"
+    "vite": "^4.0.3"
   }
 }
-
 
 --- FILE: projects/trust/requirements.txt ---
 
@@ -408,7 +407,7 @@ Development will follow the user-feature centric plan outlined in the PRS (Secti
 
 --- FILE: projects/trust/library/Trust Financial System.txt ---
 
-Curie Trust Financial Control Center — Project Requirements Specification (PRS) v1.2
+Curie Trust Financial Control Center — Project Requirements Specification (PRS) v1.4
 
 1) Mission
 
@@ -427,12 +426,21 @@ Sankey diagrams are not decorative. They are the primary language for “money a
 
 2.1 Required Sankey Diagrams (Must-Haves)
 
-A) Income Sources → Uses of Money (Home Screen Primary Sankey) - REVISED
-	•	Left tier: Income sources, broken down by category (e.g., "Social Security", "Interest Income", "Tax Refunds", "Other Income"). This is driven by user-defined rules that assign a category to transactions with the 'Income' cashflow type.
-	•	Middle-left node: A single aggregation node for "Total Income" for the selected period.
-	•	Middle-right split: From "Total Income", flows to Expenses (consumption), CapEx (asset-building), and Net Savings/Surplus.
-	•	Right split for Expenses: Top 5–7 budget categories, remainder as Other.
-	•	CapEx flows to specific asset(s) (e.g., “Main Residence Basis”).
+A) Capital Flow & Expense Breakdown (Home Screen Primary Sankey) - REVISED v1.4
+	•	Purpose: To visualize the complete financial loop, from all capital sources to their ultimate allocation as either consumption or savings, with a detailed expense breakdown.
+	•	Tier 1 (Sources of Capital):
+		•	`Income Categories`: Sum of transactions with `Income` cashflow type, broken out by individual categories (e.g., "Salary", "Rebates & Returns"). The specific categories displayed are user-configurable in Data & Settings.
+		•	`Portfolio Yield`: Sum of transactions with `Investment` cashflow type categorized as yield (e.g., "Dividends", "Interest Income").
+	•	Tier 2 (Aggregation):
+		•	A single node, `Total Inflows`, representing the total cash generated. All Tier 1 nodes flow into this node.
+	•	Tier 3 (Primary Allocation):
+		•	`Total Inflows` splits into two paths:
+			•	`Consumption`: Sum of all `Expense` cashflow type transactions. This represents capital that has been spent.
+			•	`Net Savings`: The remainder (`Total Inflows` - `Consumption`), representing retained capital.
+	•	Tier 4 (Expense Breakdown):
+		•	The `Consumption` node further splits into the top 5–7 budget categories, with the remainder aggregated into an `Other Expenses` node.
+	•	Tier 5 (Expense Sub-Breakdown):
+		•	The `Other Expenses` node splits further into the next 5-7 smaller budget categories, providing a second level of detail.
 
 B) Estate Flow (Net Worth / Estate Screen Sankey)
 	•	Left: Income + portfolio distributions (if modeled)
@@ -453,7 +461,7 @@ C) Portfolio Return Waterfall as Sankey (Portfolio Screen)
 	•	CapEx → asset ledger entries
 	•	Fees/taxes → supporting manual records
 	•	Must support: month, YTD, rolling 12 months, custom range.
-	•	Must cap complexity: max ~12-15 nodes per Sankey; enforce “Other” aggregation.
+	•	Must cap complexity: max ~20-25 nodes per Sankey; enforce “Other” aggregation.
 
 ⸻
 
@@ -491,9 +499,10 @@ CapEx is excluded from “spend/burn” but included in net worth via asset basi
 
 Priority order:
 	1.	Latest Net Worth Hero
-	2.	Income→Uses Sankey (Revised with income sources)
-	3.	Portfolio Return Sankey (Gross→Fees→Taxes→After-Tax)
-	4.	Alerts/insights (spend spikes, missing imports, stale prices)
+	2.	Capital Flow & Expense Breakdown Sankey
+	3.	Collapsible Tabular Capital Flow Breakdown
+	4.	Portfolio Allocation Pie Chart
+	5.	Alerts/insights (spend spikes, missing imports, stale prices)
 
 4.2 Cashflow
 	•	Monthly income vs expenses trend
@@ -703,8 +712,8 @@ Phase 7: Forecasting
 ⸻
 
 11) Acceptance Criteria (Key)
-	•	Home screen shows: Net Worth Hero + Income Sankey + Return Sankey with drilldowns.
-	•	The Income Sankey must exclude transactions marked with the 'Investment' cashflow type.
+	•	Home screen shows: Net Worth Hero + Capital Flow Sankey + Portfolio Allocation Pie Chart.
+	•	The Capital Flow Sankey must correctly combine 'Income' and 'Investment' (yield) type transactions.
 	•	Importing the same CSV twice produces no duplicates.
 	•	A transaction can be tagged with multiple tags and contributes to both tag totals.
 	•	Marking a transaction as CapEx:
@@ -712,6 +721,7 @@ Phase 7: Forecasting
 	•	- increases the selected asset’s basis ledger
 	•	Top 25 holdings refresh hourly during market hours; others refresh after market; UI clearly indicates quote staleness.
 	•	Portfolio screen displays before fees / after fees / after taxes and the Sankey that explains the difference.
+
 
 
 --- FILE: projects/trust/library/acceptance_test.md.txt ---
@@ -1070,11 +1080,11 @@ if __name__ == "__main__":
 }
 
 .sankey-container-card {
-  background-color: #383838; /* A lighter grey, but still dark theme friendly */
+  background-color: #545454; /* Per Captain's order: dark background (7/10 scale) */
 }
 
 .sankey-container-card h2 {
-  color: #E2B254; /* Gold accent for title in this special card */
+  color: var(--text-color); /* High contrast light text for the dark background */
 }
 
 
@@ -1109,6 +1119,7 @@ import PortfolioView from './components/PortfolioView';
 import DataImportView from './components/DataImportView';
 import PlaceholderView from './components/PlaceholderView';
 import TransactionListView from './components/TransactionListView';
+import ErrorBoundary from './components/ErrorBoundary'; // ADDED: Diagnostic component
 import './App.css';
 
 function App() {
@@ -1149,7 +1160,9 @@ function App() {
       <SideBar activeView={currentView.name} setActiveView={setActiveView} />
       <main className="main-content">
         <h1>{currentView.name}</h1>
-        {renderView()}
+        <ErrorBoundary> {/* WRAPPED: Catches rendering errors */}
+          {renderView()}
+        </ErrorBoundary>
       </main>
     </>
   );
@@ -1178,45 +1191,39 @@ const SankeyChart = ({ data, onNodeClick = () => {} }) => {
     };
 
     return (
-        // --- VISUAL REFINEMENT (User Request) --- //
-        // Added a light grey background to the chart container for better contrast.
-        <div style={{ height: '600px', width: '100%', backgroundColor: '#f5f5f5', borderRadius: '4px', padding: '1rem' }}>
+        // --- FIX: Removed inconsistent light-background wrapper div that was causing a rendering crash. --- //
+        <div style={{ height: '600px', width: '100%' }}>
             <ResponsiveSankey
                 data={data} 
-                // --- LAYOUT OPTIMIZATION (User Request) ---
-                // Tighter margins, more compact layout, and thicker nodes/flows.
                 margin={{ top: 40, right: 200, bottom: 40, left: 80 }}
-                align="center" // 'center' provides a more compact layout than 'justify'
-                colors={{ scheme: 'category10' }} // A colorblind-safe, distinct palette
+                align="center"
+                colors={{ scheme: 'category10' }}
                 nodeOpacity={1}
                 nodeHoverOthersOpacity={0.35}
-                nodeThickness={24} // Increased for more visual weight
-                nodeSpacing={8}    // Decreased for tighter vertical layout
+                nodeThickness={24}
+                nodeSpacing={8}
                 nodeBorderWidth={0}
                 nodeBorderRadius={3}
                 
-                // Link/flow styling for light background
+                // Link/flow styling for DARK background
                 linkOpacity={0.6}
-                linkColor="#adadad" // Medium grey for good contrast on light bg
-                enableLinkGradient={false}
-
                 linkHoverOthersOpacity={0.1}
-                linkContract={0} // Removed contract for thicker-appearing flows
+                linkContract={0}
+                enableLinkGradient={true}
+
                 labelPosition="outside"
                 labelOrientation="horizontal"
                 labelPadding={16}
-                // Label color inverted for light background
-                labelTextColor="#333333"
-
-                onClick={handleNodeClick} // Added click handler for future drill-down
                 
-                // Tooltip for links (flows)
+                onClick={handleNodeClick}
+                
+                // Tooltip for links (flows) with dark theme
                 linkTooltip={({ link }) => (
                     <div style={{
                         padding: '12px',
-                        background: '#fff',
-                        color: '#000',
-                        border: '1px solid #ccc',
+                        background: '#222',
+                        color: '#eee',
+                        border: '1px solid #333',
                         borderRadius: '3px',
                     }}>
                         <strong>{link.source.id}</strong> → <strong>{link.target.id}</strong>
@@ -1225,15 +1232,13 @@ const SankeyChart = ({ data, onNodeClick = () => {} }) => {
                     </div>
                 )}
 
-                // --- FIX: Display node name and value on hover --- //
-                // Reverted to a simpler implementation to ensure both the node's ID (name)
-                // and its value are always displayed as requested.
+                // Tooltip for nodes with dark theme
                 nodeTooltip={node => (
                     <div style={{
                         padding: '12px',
-                        background: '#fff',
-                        color: '#000',
-                        border: '1px solid #ccc',
+                        background: '#222',
+                        color: '#eee',
+                        border: '1px solid #333',
                         borderRadius: '3px',
                     }}>
                         <strong>{node.id}</strong>
@@ -1242,7 +1247,22 @@ const SankeyChart = ({ data, onNodeClick = () => {} }) => {
                     </div>
                 )}
                 
-                // legends prop removed to simplify the UI as per prior request.
+                // --- FIX: Added a full theme object for dark mode consistency, like other charts. ---
+                theme={{
+                    labels: {
+                        text: {
+                            fill: '#ccc', // This light grey is now used for labels, ensuring high contrast.
+                            fontSize: 12
+                        }
+                    },
+                    tooltip: {
+                        container: {
+                            background: '#222',
+                            color: '#eee',
+                            border: '1px solid #333'
+                        }
+                    }
+                }}
             />
         </div>
     )
@@ -1260,210 +1280,163 @@ for visualizations like Sankey diagrams, and running forecasts.
 """
 from typing import Dict, Any, List
 from collections import defaultdict
-from datetime import datetime
-from .database import (
-    get_sankey_aggregates, 
-    get_holdings_aggregation_by_symbol, 
-    get_cashflow_aggregation_by_month, 
-    get_latest_transaction_year, 
-    get_holdings_aggregation_by_asset_type,
-    get_total_portfolio_market_value
-)
+from . import database as db
 
-def generate_income_sankey(period: str, exclude_invisible: bool = False) -> Dict[str, Any]:
+MAX_PRIMARY_EXPENSE_CATEGORIES = 7
+
+def _calculate_capital_flow_details(period: str, exclude_invisible: bool = False) -> Dict[str, Any]:
+    """Core logic to calculate all components of the capital flow.
+    Returns a structured dictionary suitable for both tables and Sankey diagrams.
     """
-    Analyzes transaction aggregates to generate data for the income Sankey diagram.
-    This version ensures the diagram is always balanced by using an intermediate
-    node and explicitly showing deficits.
-    (PRS Section 2.1.A, 3.1)
-
-    Args:
-        period: The time period to analyze (e.g., 'all', '2024', '6m').
-        exclude_invisible: If True, filters out transactions from accounts
-                           marked as not visible.
-
-    Returns:
-        A dictionary formatted for the Nivo Sankey component.
-    """
-    aggregates = get_sankey_aggregates(period=period, exclude_invisible=exclude_invisible)
+    aggregates = db.get_capital_flow_aggregates(period=period, exclude_invisible=exclude_invisible)
     
-    total_income = 0.0
+    # Get user settings for which income categories to show
+    selected_income_categories = db.get_setting('sankey_income_categories') or []
+
+    income_by_category = defaultdict(float)
+    portfolio_yield = 0.0
     expense_by_category = defaultdict(float)
-    total_capex = 0.0
-    
+
     for row in aggregates:
-        cashflow_type = row.get('cashflow_type')
-        total = row.get('total', 0.0)
+        source_type, category, total = row['source_type'], row['category'], row['total']
+        if total is None: continue
 
-        if cashflow_type == 'Income' and total > 0:
-            total_income += total
-        elif cashflow_type == 'Expense' and total < 0:
-            category = row.get('category') or 'Uncategorized'
-            expense_by_category[category] += abs(total)
-        elif cashflow_type == 'Capital Expenditure' and total < 0:
-            total_capex += abs(total)
-
-    total_expenses = sum(expense_by_category.values())
-    net_surplus = total_income - total_expenses - total_capex
-
-    nodes = []
-    links = []
-
-    # --- NEW: Balanced and Sorted Sankey Architecture --- #
-
-    # 0. Define reserved names to prevent topological loops.
-    RESERVED_NODE_NAMES = {
-        "Income", "Available Funds", "Net Surplus", 
-        "Net Deficit", "Capital Expenditure", "Other Expenses"
-    }
-
-    # 1. Define core source and intermediate distribution nodes.
-    if total_income > 0:
-        nodes.append({"id": "Income"})
+        if source_type == 'Income':
+            # Only include income if it's in the user-selected list
+            if category in selected_income_categories:
+                income_by_category[category] += total
+        elif source_type == 'Portfolio Yield':
+            portfolio_yield += total
+        elif source_type == 'Expense':
+            expense_by_category[category or 'Uncategorized'] += abs(total)
     
-    nodes.append({"id": "Available Funds"})
+    total_op_income = sum(income_by_category.values())
+    total_inflows = total_op_income + portfolio_yield
+    total_consumption = sum(expense_by_category.values())
+    net_savings = total_inflows - total_consumption
 
-    # 2. Handle deficit vs. surplus to establish balanced inflows.
-    if net_surplus >= 0:
-        if total_income > 0:
-            links.append({"source": "Income", "target": "Available Funds", "value": round(total_income, 2)})
-    else:
-        net_deficit = abs(net_surplus)
-        nodes.append({"id": "Net Deficit"})
-        if total_income > 0:
-            links.append({"source": "Income", "target": "Available Funds", "value": round(total_income, 2)})
-        links.append({"source": "Net Deficit", "target": "Available Funds", "value": round(net_deficit, 2)})
-
-    # 3. Sanitize expense category names to prevent collisions.
-    sanitized_expenses = defaultdict(float)
-    for category, amount in expense_by_category.items():
-        safe_name = f"{category} (Expense)" if category in RESERVED_NODE_NAMES else category
-        sanitized_expenses[safe_name] += amount
-
-    # 4. Assemble and sort all outflows from "Available Funds".
-    outflows = []
-    if net_surplus > 0:
-        outflows.append(("Net Surplus", net_surplus))
-    if total_capex > 0:
-        outflows.append(("Capital Expenditure", total_capex))
-
-    # Use top N expense categories and group the rest into "Other Expenses".
-    MAX_EXPENSE_CATEGORIES = 6 
-    sorted_expenses = sorted(sanitized_expenses.items(), key=lambda item: item[1], reverse=True)
-    
-    top_expenses_list = sorted_expenses[:MAX_EXPENSE_CATEGORIES]
-    other_expenses_list = sorted_expenses[MAX_EXPENSE_CATEGORIES:]
+    # Expense breakdown logic
+    sorted_expenses = sorted(expense_by_category.items(), key=lambda item: item[1], reverse=True)
+    top_expenses = dict(sorted_expenses[:MAX_PRIMARY_EXPENSE_CATEGORIES])
+    other_expenses_list = sorted_expenses[MAX_PRIMARY_EXPENSE_CATEGORIES:]
     other_expenses_total = sum(amount for _, amount in other_expenses_list)
-
-    outflows.extend(top_expenses_list)
-
-    if other_expenses_total > 0:
-        outflows.append(("Other Expenses", other_expenses_total))
-
-    # Sort the master list of outflows by value, descending.
-    outflows.sort(key=lambda item: item[1], reverse=True)
-
-    # 5. Create nodes and links from the sorted outflows.
-    for target_node, amount in outflows:
-        if amount > 0:
-            nodes.append({"id": target_node})
-            links.append({"source": "Available Funds", "target": target_node, "value": round(amount, 2)})
-
-    # 6. Handle the sub-tier breakout for "Other Expenses", also sorted.
-    if other_expenses_total > 0:
-        other_expenses_list.sort(key=lambda item: item[1], reverse=True)
-        for category, amount in other_expenses_list:
-            if amount > 0:
-                nodes.append({"id": category})
-                links.append({"source": "Other Expenses", "target": category, "value": round(amount, 2)})
-
-    # 7. Finalize node list, ensuring no duplicates.
-    unique_node_ids = {node['id'] for node in nodes}
-    final_nodes = [{"id": node_id} for node_id in sorted(list(unique_node_ids))]
-
-    if not links:
-        return {"nodes": [], "links": []}
+    other_expenses_breakdown = dict(other_expenses_list) # All remaining expenses are included.
 
     return {
-        "nodes": final_nodes,
-        "links": links
+        "inflows_by_category": dict(income_by_category),
+        "portfolio_yield": portfolio_yield,
+        "total_inflows": total_inflows,
+        "total_consumption": total_consumption,
+        "net_savings": net_savings,
+        "consumption_breakdown": {
+            "top_categories": top_expenses,
+            "other_total": other_expenses_total,
+            "other_breakdown": other_expenses_breakdown
+        }
     }
 
+def generate_capital_flow_table_data(period: str, exclude_invisible: bool = False) -> Dict[str, Any]:
+    """Generates the capital flow data specifically for the new tabular view."""
+    return _calculate_capital_flow_details(period, exclude_invisible)
+
+def generate_capital_flow_sankey(period: str, exclude_invisible: bool = False) -> Dict[str, Any]:
+    """
+    Uses the detailed capital flow data to generate the Sankey diagram structure.
+    (PRS Section 2.1.A - REVISED v1.4)
+    """
+    details = _calculate_capital_flow_details(period, exclude_invisible)
+    nodes, links = [], []
+
+    if details['total_inflows'] <= 0:
+        return {"nodes": [], "links": []}
+
+    # --- FIX: Create a master set of all reserved node names up front. ---
+    # This includes all structural nodes and all data-driven income sources.
+    # Any data-driven expense node will be checked against this master set.
+    RESERVED_NODE_IDS = {
+        "Total Inflows", 
+        "Consumption", 
+        "Net Savings", 
+        "Portfolio Yield",
+        "Other Expenses" # This structural node is now explicitly reserved.
+    }
+    RESERVED_NODE_IDS.update(details['inflows_by_category'].keys())
+
+    def disambiguate_expense_node(name: str) -> str:
+        """If an expense category name conflicts with any reserved name, append '(Expense)'."""
+        return f"{name} (Expense)" if name in RESERVED_NODE_IDS else name
+
+    # Tier 1 & 2: Sources -> Total Inflows
+    nodes.append({"id": "Total Inflows"})
+    for category, amount in details['inflows_by_category'].items():
+        if amount > 0:
+            nodes.append({"id": category})
+            links.append({"source": category, "target": "Total Inflows", "value": round(amount, 2)})
+    if details['portfolio_yield'] > 0:
+        nodes.append({"id": "Portfolio Yield"})
+        links.append({"source": "Portfolio Yield", "target": "Total Inflows", "value": round(details['portfolio_yield'], 2)})
+
+    # Tier 3: Primary Allocation
+    nodes.extend([{"id": "Consumption"}, {"id": "Net Savings"}])
+    if details['total_consumption'] > 0:
+        links.append({"source": "Total Inflows", "target": "Consumption", "value": round(details['total_consumption'], 2)})
+    if details['net_savings'] > 0:
+        links.append({"source": "Total Inflows", "target": "Net Savings", "value": round(details['net_savings'], 2)})
+
+    # Tier 4: Expense Breakdown
+    consumption_breakdown = details['consumption_breakdown']
+    for category, amount in consumption_breakdown['top_categories'].items():
+        if amount > 0:
+            node_id = disambiguate_expense_node(category)
+            nodes.append({"id": node_id})
+            links.append({"source": "Consumption", "target": node_id, "value": round(amount, 2)})
+    
+    if consumption_breakdown['other_total'] > 0:
+        # The name for this structural node is fixed and pre-reserved.
+        other_expenses_node_id = "Other Expenses"
+        nodes.append({"id": other_expenses_node_id})
+        links.append({"source": "Consumption", "target": other_expenses_node_id, "value": round(consumption_breakdown['other_total'], 2)})
+
+        # Tier 5: 'Other Expenses' Sub-Breakdown
+        for category, amount in consumption_breakdown['other_breakdown'].items():
+            if amount > 0:
+                node_id = disambiguate_expense_node(category)
+                nodes.append({"id": node_id})
+                links.append({"source": other_expenses_node_id, "target": node_id, "value": round(amount, 2)})
+
+    # Finalize node list by finding all unique node IDs used.
+    unique_node_ids = {node['id'] for node in nodes}
+    final_nodes = [{ "id": node_id } for node_id in sorted(list(unique_node_ids))]
+
+    return {"nodes": final_nodes, "links": links}
 
 def prepare_cashflow_chart_data(filters: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """
-    Prepares monthly cashflow summary data for the frontend bar chart.
-    This version is driven by the filters provided, including the time period.
-    """
-    data = get_cashflow_aggregation_by_month(filters=filters)
-
-    # The data comes in as a list of {'month': 'YYYY-MM', 'income', 'expense'}.
-    # We format it for Nivo.
-    return [
-        {
-            "month": row['month'],
-            "Income": row['income'],
-            "Expense": abs(row['expense']) # Make expense positive for bar chart
-        }
-        for row in data
-    ]
+    """Prepares monthly cashflow summary data for the frontend bar chart."""
+    data = db.get_cashflow_aggregation_by_month(filters=filters)
+    return [{"month": row['month'], "Income": row['income'], "Expense": abs(row['expense'])} for row in data]
 
 def prepare_portfolio_chart_data(filters: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """
-    Prepares portfolio summary data for the frontend bar chart.
-    """
-    # Aggregate market value by symbol based on filters.
-    data = get_holdings_aggregation_by_symbol(filters=filters)
-
-    # Format for Nivo bar chart: [{id: 'symbol', value: 12345}, ...]
-    return [
-        {
-            "id": row['symbol'],
-            "value": row['total_market_value']
-        }
-        for row in data
-    ]
-
+    """Prepares portfolio summary data for the frontend bar chart."""
+    data = db.get_holdings_aggregation_by_symbol(filters=filters)
+    return [{"id": row['symbol'], "value": row['total_market_value']} for row in data]
 
 def prepare_portfolio_allocation_chart_data() -> Dict[str, Any]:
-    """
-    Creates a data structure for the portfolio allocation pie chart and
-    accompanying table by aggregating all holdings that have an asset type.
-    """
-    grand_total_market_value = get_total_portfolio_market_value()
-    # This query already groups by asset_type and sums the market_value.
-    aggregated_by_type = get_holdings_aggregation_by_asset_type()
+    """Creates a data structure for the portfolio allocation pie chart and table."""
+    grand_total_market_value = db.get_total_portfolio_market_value()
+    aggregated_by_type = db.get_holdings_aggregation_by_asset_type()
 
     if not aggregated_by_type or grand_total_market_value == 0:
         return {"tableData": [], "chartData": []}
 
-    table_data = []
-    chart_data = []
-
+    table_data, chart_data = [], []
     for row in aggregated_by_type:
-        category_name = row['asset_type']
-        value = row['total_market_value']
+        category_name, value = row['asset_type'], row['total_market_value']
         percentage = (value / grand_total_market_value) * 100
+        table_data.append({"categoryName": category_name, "value": int(round(value)), "percentage": f"{percentage:.1f}%"})
+        chart_data.append({"id": category_name, "label": category_name, "value": round(value, 2), "percentage": round(percentage, 1)})
 
-        # Data for the summary table
-        table_data.append({
-            "categoryName": category_name,
-            "value": int(round(value)),
-            "percentage": f"{percentage:.1f}%"
-        })
+    return {"tableData": table_data, "chartData": chart_data}
 
-        # Data for the pie chart component
-        chart_data.append({
-            "id": category_name,
-            "label": category_name,
-            "value": round(value, 2),
-            "percentage": round(percentage, 1)
-        })
-
-    return {
-        "tableData": table_data,
-        "chartData": chart_data # The data is already sorted by value DESC from the DB query
-    }
 
 
 
@@ -1546,6 +1519,7 @@ class PriceQuote:
 
 import sqlite3
 import uuid
+import json
 from pathlib import Path
 from typing import List, Dict, Any, Tuple
 from src.data_model import Transaction, Holding, PriceQuote # Added PriceQuote
@@ -1609,7 +1583,6 @@ def _ensure_schema(conn: sqlite3.Connection):
     );
     """)
 
-    # --- NEW: Table for Price History ---
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS price_history (
         quote_id TEXT PRIMARY KEY,
@@ -1637,6 +1610,14 @@ def _ensure_schema(conn: sqlite3.Connection):
     CREATE TABLE IF NOT EXISTS account_visibility (
         account_id TEXT PRIMARY KEY,
         is_visible INTEGER NOT NULL DEFAULT 1
+    );
+    """)
+
+    # --- NEW: Generic table for application settings ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
     );
     """)
 
@@ -1735,6 +1716,30 @@ def initialize_database():
     conn.close()
     print("--- Database initialization complete. ---")
 
+# --- NEW: Generic settings functions ---
+def get_setting(key: str) -> Any | None:
+    """Fetches a setting value by key and decodes its JSON content."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT value FROM app_settings WHERE key = ?", (key,))
+    row = cursor.fetchone()
+    conn.close()
+    if row and row['value']:
+        try:
+            return json.loads(row['value'])
+        except json.JSONDecodeError:
+            return row['value'] # Fallback for non-JSON data
+    return None
+
+def set_setting(key: str, value: Any):
+    """Saves a setting value by key, encoding the value as a JSON string."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    json_value = json.dumps(value)
+    cursor.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", (key, json_value))
+    conn.commit()
+    conn.close()
+
 def save_transactions(transactions: List[Transaction]):
     if not transactions:
         return
@@ -1773,50 +1778,33 @@ def save_holdings_snapshot(holdings: List[Holding], account_id: str):
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # 1. Fetch existing metadata for this account
     cursor.execute("SELECT symbol, tags, asset_type FROM holdings WHERE trim(lower(account_id)) = trim(lower(?))", (cleaned_account_id,))
-    existing_metadata = {}
-    for row in cursor.fetchall():
-        existing_metadata[row['symbol']] = {
-            'tags': [t.strip() for t in row['tags'].split(',')] if row['tags'] else [],
-            'asset_type': row['asset_type']
-        }
-    
+    existing_metadata = {row['symbol']: {'tags': [t.strip() for t in row['tags'].split(',')] if row['tags'] else [], 'asset_type': row['asset_type']} for row in cursor.fetchall()}
     print(f"Found existing metadata for {len(existing_metadata)} symbols in account '{cleaned_account_id}'.")
 
-    # 2. Merge existing metadata into the new holdings list
     for h in holdings:
         if h.symbol in existing_metadata:
             meta = existing_metadata[h.symbol]
-            # If the new holding from the CSV has no tags, but the old one did, preserve them.
             if not h.tags and meta['tags']:
                 h.tags = meta['tags']
-                print(f"Preserving tags for {h.symbol}: {h.tags}")
-            # If the new holding from the CSV has no asset_type, but the old one did, preserve it.
             if not h.asset_type and meta['asset_type']:
                 h.asset_type = meta['asset_type']
-                print(f"Preserving asset_type for {h.symbol}: {h.asset_type}")
 
-    deleted_count = 0
-    inserted_count = 0
+    deleted_count, inserted_count = 0, 0
     try:
-        # 3. Delete old records for the account
         cursor.execute("DELETE FROM holdings WHERE trim(lower(account_id)) = trim(lower(?))", (cleaned_account_id,))
         deleted_count = cursor.rowcount
         print(f"Deleted {deleted_count} stale holdings for account '{cleaned_account_id}'.")
         
-        # 4. Insert the merged holdings
         if holdings:
             sql = """INSERT INTO holdings (
-                        holding_id, account_id, symbol, quantity, cost_basis, market_value, tags, asset_type
+                         holding_id, account_id, symbol, quantity, cost_basis, 
+                         market_value, tags, asset_type
                      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);"""
             data_to_insert = [
-                (
-                    h.holding_id, h.account_id, h.symbol, float(h.quantity), float(h.cost_basis),
-                    float(h.market_value) if h.market_value is not None else None,
-                    ','.join(h.tags) if h.tags else None,
-                    h.asset_type
-                ) for h in holdings
+                (h.holding_id, h.account_id, h.symbol, float(h.quantity), float(h.cost_basis),
+                 float(h.market_value) if h.market_value is not None else None, ','.join(h.tags) if h.tags else None, h.asset_type) 
+                for h in holdings
             ]
             cursor.executemany(sql, data_to_insert)
             inserted_count = cursor.rowcount
@@ -1835,14 +1823,10 @@ def save_import_run(run_data: Dict[str, Any]):
     conn = get_db_connection()
     cursor = conn.cursor()
     sql = """INSERT INTO import_runs (
-                 import_run_id, file_name, import_type, import_timestamp,
+                 import_run_id, file_name, import_type, import_timestamp, 
                  record_count, total_amount, total_market_value, total_cost_basis
              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);"""
-    data_tuple = (
-        run_data['import_run_id'], run_data['file_name'], run_data['import_type'],
-        run_data['import_timestamp'], run_data.get('record_count'), run_data.get('total_amount'),
-        run_data.get('total_market_value'), run_data.get('total_cost_basis')
-    )
+    data_tuple = (run_data['import_run_id'], run_data['file_name'], run_data['import_type'], run_data['import_timestamp'], run_data.get('record_count'), run_data.get('total_amount'), run_data.get('total_market_value'), run_data.get('total_cost_basis'))
     try:
         cursor.execute(sql, data_tuple)
         conn.commit()
@@ -1854,7 +1838,6 @@ def save_import_run(run_data: Dict[str, Any]):
     finally:
         conn.close()
 
-
 def _build_where_clause(filters: Dict, allowed_fields: List[str]) -> Tuple[List[str], List[Any]]:
     clauses, params = [], []
     if not filters:
@@ -1863,8 +1846,6 @@ def _build_where_clause(filters: Dict, allowed_fields: List[str]) -> Tuple[List[
         if key not in allowed_fields or not value:
             continue
 
-        # --- NEW: Special handling for 'Uncategorized' filter ---
-        # This aligns filtering with the display logic where NULLs are shown as "Uncategorized".
         if key == 'category' and value == 'Uncategorized':
             clauses.append("(category IS NULL OR category = '' OR category = ?)")
             params.append('Uncategorized')
@@ -1951,19 +1932,15 @@ def update_holding(holding_id: str, updates: Dict[str, Any]):
     cursor = conn.cursor()
     
     allowed_fields = ['tags', 'asset_type']
-    set_clauses = []
-    params = []
-
+    set_clauses, params = [], []
     for field, value in updates.items():
         if field not in allowed_fields:
             continue
-
         if field == 'tags' and isinstance(value, list):
             set_clauses.append("tags = ?")
             params.append(','.join(value) if value else None)
         elif field == 'asset_type':
             set_clauses.append("asset_type = ?")
-            # Ensure empty strings are saved as NULL
             params.append(value if value and str(value).strip() else None)
     
     if not set_clauses:
@@ -1972,7 +1949,6 @@ def update_holding(holding_id: str, updates: Dict[str, Any]):
 
     sql = f"UPDATE holdings SET {', '.join(set_clauses)} WHERE holding_id = ?"
     params.append(holding_id)
-
     try:
         cursor.execute(sql, tuple(params))
         conn.commit()
@@ -1992,49 +1968,76 @@ def get_all_import_runs() -> List[Dict[str, Any]]:
     conn.close()
     return [dict(row) for row in rows]
 
+def get_income_categories() -> List[str]:
+    """Gets a distinct list of all non-empty categories assigned to Income transactions."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT DISTINCT category FROM transactions WHERE cashflow_type = 'Income' AND category IS NOT NULL AND category != '' ORDER BY category")
+    return [row['category'] for row in cursor.fetchall()]
+
 def get_filter_options() -> Dict[str, List[str]]:
     conn, options = get_db_connection(), {}
     cursor = conn.cursor()
-    # Get all distinct categories, excluding 'Uncategorized' from the initial list to handle it as a special case.
     cursor.execute("SELECT DISTINCT category FROM transactions WHERE category IS NOT NULL AND category != '' AND category != 'Uncategorized' ORDER BY category")
     options['categories'] = [row['category'] for row in cursor.fetchall()]
-
-    # --- NEW: Conditionally add 'Uncategorized' if relevant transactions exist ---
     cursor.execute("SELECT 1 FROM transactions WHERE category IS NULL OR category = '' OR category = 'Uncategorized' LIMIT 1")
     if cursor.fetchone():
         options['categories'].append('Uncategorized')
-        # Re-sort to maintain alphabetical order
         options['categories'].sort()
-
-    cursor.execute("""
-        SELECT account_id FROM transactions WHERE account_id IS NOT NULL
-        UNION
-        SELECT account_id FROM holdings WHERE account_id IS NOT NULL
-        ORDER BY account_id ASC
-    """)
+    cursor.execute("SELECT account_id FROM transactions WHERE account_id IS NOT NULL UNION SELECT account_id FROM holdings WHERE account_id IS NOT NULL ORDER BY account_id ASC")
     options['accounts'] = [row['account_id'] for row in cursor.fetchall()]
-
     cursor.execute("SELECT DISTINCT institution FROM transactions WHERE institution IS NOT NULL ORDER BY institution")
     options['institutions'] = [row['institution'] for row in cursor.fetchall()]
-
     cursor.execute("SELECT DISTINCT asset_type FROM holdings WHERE asset_type IS NOT NULL AND asset_type != '' ORDER BY asset_type")
     options['assetTypes'] = [row['asset_type'] for row in cursor.fetchall()]
-
     options['cashflowTypes'] = ["Income", "Expense", "Transfer", "Capital Expenditure", "Investment"]
     conn.close()
     return options
 
-def get_sankey_aggregates(period: str, exclude_invisible: bool = False) -> List[Dict[str, Any]]:
+def get_capital_flow_aggregates(period: str, exclude_invisible: bool = False) -> List[Dict[str, Any]]:
+    """ 
+    Fetches all data needed for the Capital Flow Sankey in a single query.
+    (PRS Section 2.1.A)
+    """
     conn = get_db_connection()
     cursor = conn.cursor()
-    where_clauses = ["t.cashflow_type IN ('Income', 'Expense', 'Capital Expenditure')"]
-    params = []
+    where_clauses, params = [], []
+
     if exclude_invisible:
         where_clauses.append("t.account_id NOT IN (SELECT account_id FROM account_visibility WHERE is_visible = 0)")
+    
     _apply_period_filter_to_query(where_clauses, params, period, date_column='transaction_date', table_prefix='t.')
-    where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
-    query = f"""SELECT cashflow_type, category, SUM(amount) as total FROM transactions t {where_sql} GROUP BY cashflow_type, category"""
-    cursor.execute(query, params)
+    
+    where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+
+    # UPDATED QUERY: Income is now grouped by category to support breakdowns.
+    query = f""" 
+    -- Income by Category
+    SELECT 'Income' as source_type, category, SUM(amount) as total
+    FROM transactions t
+    WHERE {where_sql} AND t.cashflow_type = 'Income'
+    GROUP BY category
+
+    UNION ALL
+
+    -- Portfolio Yield
+    SELECT 'Portfolio Yield' as source_type, 'N/A' as category, SUM(amount) as total
+    FROM transactions t
+    WHERE {where_sql} AND t.cashflow_type = 'Investment' AND t.category IN ('Dividends', 'Interest Income')
+
+    UNION ALL
+
+    -- Consumption Expenses
+    SELECT 'Expense' as source_type, category, SUM(amount) as total
+    FROM transactions t
+    WHERE {where_sql} AND t.cashflow_type = 'Expense'
+    GROUP BY category
+    """
+    
+    # Each part of the UNION query uses the same set of WHERE clause parameters.
+    # We must provide the parameter list repeated for each part.
+    final_params = params * 3 
+    cursor.execute(query, final_params)
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
@@ -2048,36 +2051,23 @@ def get_latest_transaction_year() -> int | None:
     return int(result['latest_year']) if result and result['latest_year'] else None
 
 def get_cashflow_aggregation_by_month(filters: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """
-    Aggregates income and expense by month based on a flexible filter dictionary.
-    This function is driven by the 'period' in the filters, not a separate year.
-    """
+    """Aggregates income and expense by month based on a flexible filter dictionary."""
     conn = get_db_connection()
     cursor = conn.cursor()
-
-    # Use a copy to avoid mutating the original filters dict
     local_filters = filters.copy()
     period = local_filters.pop('period', None)
-
     allowed_fields = ['category', 'account_id', 'institution', 'description', 'tags', 'cashflow_type']
     clauses, params = _build_where_clause(local_filters, allowed_fields)
-
-    # The helper function correctly handles various period formats (e.g., 'all', '2024', '6m')
     _apply_period_filter_to_query(clauses, params, period, date_column='transaction_date')
-
     where_str = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-
-    query = f"""
-        SELECT 
-            strftime('%Y-%m', transaction_date) as month, 
-            SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as income, 
-            SUM(CASE WHEN amount < 0 AND cashflow_type = 'Expense' THEN amount ELSE 0 END) as expense 
-        FROM transactions 
-        {where_str} 
-        GROUP BY month 
-        ORDER BY month ASC
-    """
-
+    query = f"""SELECT 
+                    strftime('%Y-%m', transaction_date) as month, 
+                    SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as income, 
+                    SUM(CASE WHEN amount < 0 AND cashflow_type = 'Expense' THEN amount ELSE 0 END) as expense 
+                FROM transactions 
+                {where_str} 
+                GROUP BY month 
+                ORDER BY month ASC"""
     cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
@@ -2091,30 +2081,34 @@ def get_holdings_aggregation_by_symbol(filters: Dict[str, Any]) -> List[Dict[str
     clauses, params = _build_where_clause(filters, allowed_fields)
     _apply_period_filter_to_query(clauses, params, period, date_column='last_price_timestamp')
     where_str = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    query = f"""SELECT symbol, SUM(market_value) as total_market_value FROM holdings {where_str} GROUP BY symbol HAVING total_market_value > 0 ORDER BY total_market_value DESC LIMIT 20"""
+    query = f"""SELECT 
+                    symbol, 
+                    SUM(market_value) as total_market_value 
+                FROM holdings 
+                {where_str} 
+                GROUP BY symbol 
+                HAVING total_market_value > 0 
+                ORDER BY total_market_value DESC 
+                LIMIT 20"""
     cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
 
 def get_holdings_aggregation_by_asset_type() -> List[Dict[str, Any]]:
-    """
-    Groups holdings by their asset_type and sums their market_value.
-    Filters out holdings with no market value or asset type.
-    """
+    """Groups holdings by asset_type and sums their market_value."""
     conn = get_db_connection()
     cursor = conn.cursor()
-    query = """
-        SELECT 
-            asset_type, 
-            SUM(market_value) as total_market_value
-        FROM holdings
-        WHERE 
-            market_value IS NOT NULL AND market_value > 0 AND
-            asset_type IS NOT NULL AND asset_type != ''
-        GROUP BY asset_type
-        ORDER BY total_market_value DESC;
-    """
+    query = """SELECT 
+                    asset_type, 
+                    SUM(market_value) as total_market_value 
+                FROM holdings 
+                WHERE market_value IS NOT NULL 
+                  AND market_value > 0 
+                  AND asset_type IS NOT NULL 
+                  AND asset_type != '' 
+                GROUP BY asset_type 
+                ORDER BY total_market_value DESC;"""
     cursor.execute(query)
     rows = cursor.fetchall()
     conn.close()
@@ -2140,7 +2134,12 @@ def _transform_rule_record(rule_row: sqlite3.Row) -> Dict[str, Any]:
 def create_rule(rule_data: Dict[str, Any]) -> Dict[str, Any]:
     conn = get_db_connection()
     cursor, rule_id = conn.cursor(), str(uuid.uuid4())
-    sql = """INSERT INTO rules (rule_id, pattern, category, cashflow_type, tags, priority, case_sensitive, account_filter_mode, account_filter_list, condition_category, condition_institution, condition_cashflow_type, condition_tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"""
+    sql = """INSERT INTO rules (
+                 rule_id, pattern, category, cashflow_type, tags, priority, 
+                 case_sensitive, account_filter_mode, account_filter_list, 
+                 condition_category, condition_institution, condition_cashflow_type, 
+                 condition_tags
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"""
     tags_str, account_list_str = ','.join(rule_data.get('tags', [])), ','.join(rule_data.get('account_filter_list', []))
     cursor.execute(sql, (rule_id, rule_data.get('pattern'), rule_data['category'], rule_data['cashflow_type'], tags_str, rule_data.get('priority', 100), 1 if rule_data.get('case_sensitive') else 0, rule_data.get('account_filter_mode', 'include'), account_list_str, rule_data.get('condition_category'), rule_data.get('condition_institution'), rule_data.get('condition_cashflow_type'), rule_data.get('condition_tags')))
     conn.commit()
@@ -2229,25 +2228,14 @@ def purge_table_data(target_table: str) -> dict:
     finally:
         conn.close()
 
-# --- NEW: Functions for Market Data ---
-
 def save_price_quotes(quotes: Dict[str, Dict[str, Any]]):
-    """Saves a batch of price quotes to the price_history table."""
-    if not quotes:
-        return
+    if not quotes: return
     conn = get_db_connection()
     cursor = conn.cursor()
-    sql = """INSERT INTO price_history (quote_id, symbol, price, quote_timestamp, source) 
-             VALUES (?, ?, ?, ?, ?);"""
-    data_to_insert = [
-        (
-            str(uuid.uuid4()),
-            symbol,
-            float(data['price']),
-            data['timestamp'],
-            data['source']
-        ) for symbol, data in quotes.items()
-    ]
+    sql = """INSERT INTO price_history (
+                 quote_id, symbol, price, quote_timestamp, source
+             ) VALUES (?, ?, ?, ?, ?);"""
+    data_to_insert = [(str(uuid.uuid4()), symbol, float(data['price']), data['timestamp'], data['source']) for symbol, data in quotes.items()]
     try:
         cursor.executemany(sql, data_to_insert)
         conn.commit()
@@ -2260,26 +2248,14 @@ def save_price_quotes(quotes: Dict[str, Dict[str, Any]]):
         conn.close()
 
 def update_holdings_with_new_prices(quotes: Dict[str, Dict[str, Any]]):
-    """Updates the holdings table with the latest prices and recalculates market value."""
-    if not quotes:
-        return
+    if not quotes: return
     conn = get_db_connection()
     cursor = conn.cursor()
     updated_count = 0
     try:
         for symbol, data in quotes.items():
-            price = float(data['price'])
-            timestamp = data['timestamp']
-            # This single query updates all holdings for a given symbol across all accounts
-            cursor.execute("""
-                UPDATE holdings 
-                SET 
-                    last_price = ?,
-                    last_price_timestamp = ?,
-                    market_value = quantity * ?,
-                    last_price_update_failed = 0
-                WHERE symbol = ?;
-            """, (price, timestamp, price, symbol))
+            price, timestamp = float(data['price']), data['timestamp']
+            cursor.execute("UPDATE holdings SET last_price = ?, last_price_timestamp = ?, market_value = quantity * ?, last_price_update_failed = 0 WHERE symbol = ?;", (price, timestamp, price, symbol))
             updated_count += cursor.rowcount
         conn.commit()
         print(f"Updated {updated_count} holding records with new prices.")
@@ -2291,12 +2267,9 @@ def update_holdings_with_new_prices(quotes: Dict[str, Dict[str, Any]]):
         conn.close()
 
 def mark_holdings_as_failed(symbols: List[str]):
-    """Sets the failure flag for a list of holding symbols."""
-    if not symbols:
-        return
+    if not symbols: return
     conn = get_db_connection()
     cursor = conn.cursor()
-    # Use parameter substitution to safely handle the list of symbols
     placeholders = ', '.join('?' for _ in symbols)
     sql = f"UPDATE holdings SET last_price_update_failed = 1 WHERE symbol IN ({placeholders})"
     try:
@@ -2372,10 +2345,7 @@ from src.market_data import polling_service, market_scheduler
 
 load_dotenv()
 
-app = FastAPI(
-    title="Curie Trust Financial Control Center API",
-    version="1.0",
-)
+app = FastAPI(title="Curie Trust Financial Control Center API", version="1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -2385,6 +2355,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- Pydantic Models ---
 class RuleCreate(BaseModel):
     category: str
     cashflow_type: str
@@ -2433,24 +2404,44 @@ class PortfolioAllocationResponse(BaseModel):
     chartData: List[AllocationDataItem]
     tableData: List[AllocationTableItem]
 
-
+# --- App Events ---
 @app.on_event("startup")
 async def startup_event():
     print("API is starting up...")
     initialize_database()
-    # Reverted to check for the correct, primary API key as per MDS.
-    api_key = os.getenv("MASSIVE_API_KEY")
-    if not api_key or "YOUR_API_KEY_HERE" in api_key or len(api_key) < 10:
-        print("WARNING: MASSIVE_API_KEY is not set correctly in .env. Market data features will fail.")
-    
-    # --- NEW: Launch the automated market data poller --- #
+    if not os.getenv("MASSIVE_API_KEY") or "YOUR_API_KEY_HERE" in os.getenv("MASSIVE_API_KEY", ""):
+        print("WARNING: MASSIVE_API_KEY is not set correctly. Market data features will fail.")
     print("Launching background market data polling scheduler...")
     asyncio.create_task(market_scheduler.background_market_poller())
+
+# --- Dependency Functions for Filters ---
+def get_transaction_filters(
+    category: Optional[str] = Query(None),
+    account_id: Optional[str] = Query(None),
+    institution: Optional[str] = Query(None),
+    description: Optional[str] = Query(None),
+    tags: Optional[str] = Query(None),
+    cashflow_type: Optional[str] = Query(None),
+    period: Optional[str] = Query(None)
+):
+    return {k: v for k, v in locals().items() if v is not None}
+
+def get_holding_filters(
+    account_id: Optional[str] = Query(None),
+    symbol: Optional[str] = Query(None),
+    tags: Optional[str] = Query(None),
+    asset_type: Optional[str] = Query(None),
+    period: Optional[str] = Query(None)
+):
+    return {k: v for k, v in locals().items() if v is not None}
+
+# --- API Endpoints ---
 
 @app.get("/")
 async def root():
     return {"message": "Curie Trust Financial Control Center API is running."}
 
+# --- Import Endpoints ---
 @app.post("/api/import/transactions", tags=["Import"])
 async def import_transactions_csv(account_id: str = Form(...), file: UploadFile = File(...)):
     if not file.filename or not file.filename.lower().endswith('.csv'):
@@ -2461,8 +2452,11 @@ async def import_transactions_csv(account_id: str = Form(...), file: UploadFile 
         if transactions:
             save_transactions(transactions)
         run_data = {
-            "import_run_id": str(uuid.uuid4()), "file_name": file.filename, "import_type": "transactions",
-            "import_timestamp": datetime.now(timezone.utc).isoformat(), "record_count": summary.get('record_count'),
+            "import_run_id": str(uuid.uuid4()),
+            "file_name": file.filename,
+            "import_type": "transactions",
+            "import_timestamp": datetime.now(timezone.utc).isoformat(),
+            "record_count": summary.get('record_count'),
             "total_amount": float(summary.get('total_amount', 0.0))
         }
         db.save_import_run(run_data)
@@ -2477,14 +2471,17 @@ async def import_holdings_csv(account_id: str = Form(...), file: UploadFile = Fi
         raise HTTPException(status_code=400, detail="Invalid file type. Please upload a CSV.")
     cleaned_account_id = account_id.strip()
     if not cleaned_account_id:
-        raise HTTPException(status_code=400, detail="Account ID cannot be empty or just whitespace.")
+        raise HTTPException(status_code=400, detail="Account ID cannot be empty.")
     contents = await file.read()
     try:
         holdings, summary, skipped, warnings = holdings_importer.parse_holdings_csv(contents, cleaned_account_id)
         deleted, inserted = db.save_holdings_snapshot(holdings, cleaned_account_id)
         run_data = {
-            "import_run_id": str(uuid.uuid4()), "file_name": file.filename, "import_type": "holdings",
-            "import_timestamp": datetime.now(timezone.utc).isoformat(), "record_count": summary.get('record_count'),
+            "import_run_id": str(uuid.uuid4()),
+            "file_name": file.filename,
+            "import_type": "holdings",
+            "import_timestamp": datetime.now(timezone.utc).isoformat(),
+            "record_count": summary.get('record_count'),
             "total_market_value": float(summary.get('total_market_value', 0.0)),
             "total_cost_basis": float(summary.get('total_cost_basis', 0.0))
         }
@@ -2492,19 +2489,20 @@ async def import_holdings_csv(account_id: str = Form(...), file: UploadFile = Fi
         return {"message": f"Import complete. Processed {summary.get('record_count', 0)} holdings.", "filename": file.filename, "holdings_count": len(holdings), "deleted_stale_holdings": deleted, "skipped_rows": skipped, "import_warnings": warnings}
     except Exception as e:
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to process holdings CSV file: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to process holdings CSV: {e}")
 
 @app.get("/api/import/runs", tags=["Import"])
 async def get_all_import_runs():
     return db.get_all_import_runs()
 
+# --- Rules Endpoints ---
 @app.post("/api/rules", response_model=RuleResponse, status_code=201, tags=["Rules"])
 async def create_new_rule(rule: RuleCreate):
     try:
-        return db.create_rule(rule.dict())
+        new_rule = db.create_rule(rule.dict())
+        return new_rule
     except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"An internal error occurred: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/rules", response_model=List[RuleResponse], tags=["Rules"])
 async def get_all_rules():
@@ -2516,30 +2514,39 @@ async def delete_rule_by_id(rule_id: str):
         raise HTTPException(status_code=404, detail="Rule not found.")
     return Response(status_code=204)
 
-@app.get("/api/sankey/income", tags=["Analysis"])
-async def get_income_sankey_data(period: str = "all") -> Dict[str, List[Dict[str, Any]]]:
-    return analysis.generate_income_sankey(period, exclude_invisible=True)
+@app.post("/api/transactions/recategorize", tags=["Processing"])
+async def trigger_recategorization():
+    re_categorized_count = rules_engine.recategorize_all_transactions()
+    return {"message": f"Successfully re-categorized {re_categorized_count} transactions."}
 
-def get_transaction_filters(category: Optional[str] = Query(None), account_id: Optional[str] = Query(None), institution: Optional[str] = Query(None), description: Optional[str] = Query(None), tags: Optional[str] = Query(None), cashflow_type: Optional[str] = Query(None), period: Optional[str] = Query(None)) -> Dict[str, Any]:
-    filters = {"category": category, "account_id": account_id, "institution": institution, "description": description, "tags": tags, "cashflow_type": cashflow_type, "period": period}
-    return {k: v for k, v in filters.items() if v is not None}
+# --- Analysis Endpoints ---
+@app.get("/api/sankey/home", tags=["Analysis"])
+async def get_home_sankey_data(period: str = "all"):
+    return analysis.generate_capital_flow_sankey(period, exclude_invisible=True)
 
-def get_holding_filters(
-    account_id: Optional[str] = Query(None),
-    symbol: Optional[str] = Query(None),
-    tags: Optional[str] = Query(None),
-    asset_type: Optional[str] = Query(None),  
-    period: Optional[str] = Query(None)
-) -> Dict[str, Any]:
-    filters = {
-        "account_id": account_id,
-        "symbol": symbol,
-        "tags": tags,
-        "asset_type": asset_type,  
-        "period": period
-    }
-    return {k: v for k, v in filters.items() if v is not None}
+@app.get("/api/analysis/capital-flow-table", tags=["Analysis"])
+async def get_home_capital_flow_table(period: str = "all"):
+    return analysis.generate_capital_flow_table_data(period, exclude_invisible=True)
 
+@app.get("/api/portfolio/summary", tags=["Analysis"])
+async def get_portfolio_summary():
+    holdings = db.get_holdings()
+    total_market_value = sum(h.get('market_value', 0) for h in holdings if h.get('market_value') is not None)
+    return {"total_market_value": total_market_value}
+
+@app.get("/api/analysis/cashflow-chart", tags=["Analysis"])
+async def get_cashflow_chart(filters: Dict[str, Any] = Depends(get_transaction_filters)):
+    return analysis.prepare_cashflow_chart_data(filters)
+
+@app.get("/api/analysis/portfolio-allocation", tags=["Analysis"], response_model=PortfolioAllocationResponse)
+async def get_portfolio_allocation_data():
+    return analysis.prepare_portfolio_allocation_chart_data()
+
+@app.get("/api/analysis/portfolio-chart", tags=["Analysis"])
+async def get_portfolio_chart(filters: Dict[str, Any] = Depends(get_holding_filters)):
+    return analysis.prepare_portfolio_chart_data(filters)
+
+# --- Data & Filter Endpoints ---
 @app.get("/api/transactions", tags=["Data"])
 async def get_filtered_transactions(filters: Dict[str, Any] = Depends(get_transaction_filters)):
     return db.get_transactions(filters)
@@ -2549,14 +2556,26 @@ async def update_transaction(transaction_id: str, payload: TransactionUpdate):
     tx_dict = db.get_transaction(transaction_id)
     if not tx_dict:
         raise HTTPException(status_code=404, detail="Transaction not found.")
+    
+    tx_date = datetime.strptime(tx_dict['transaction_date'].split(' ')[0], '%Y-%m-%d').date()
+    amount = Decimal(str(tx_dict['amount']))
+    cashflow_type = CashflowType.from_string(payload.cashflow_type)
+
     tx_obj = Transaction(
-        transaction_id=tx_dict['transaction_id'], account_id=tx_dict['account_id'],
-        transaction_date=datetime.strptime(tx_dict['transaction_date'].split(' ')[0], '%Y-%m-%d').date(),
-        amount=Decimal(str(tx_dict['amount'])), description=payload.description,
-        category=payload.category, cashflow_type=CashflowType.from_string(payload.cashflow_type),
-        tags=payload.tags, merchant=tx_dict.get('merchant'), asset_id=tx_dict.get('asset_id'),
-        import_run_id=tx_dict.get('import_run_id'), raw_data_hash=tx_dict.get('raw_data_hash'),
-        institution=tx_dict.get('institution'), original_category=tx_dict.get('original_category')
+        transaction_id=tx_dict['transaction_id'],
+        account_id=tx_dict['account_id'],
+        transaction_date=tx_date,
+        amount=amount,
+        description=payload.description,
+        category=payload.category,
+        cashflow_type=cashflow_type,
+        tags=payload.tags,
+        merchant=tx_dict.get('merchant'),
+        asset_id=tx_dict.get('asset_id'),
+        import_run_id=tx_dict.get('import_run_id'),
+        raw_data_hash=tx_dict.get('raw_data_hash'),
+        institution=tx_dict.get('institution'),
+        original_category=tx_dict.get('original_category')
     )
     tx_obj.is_transfer = tx_obj.cashflow_type == CashflowType.TRANSFER
     db.save_transactions([tx_obj])
@@ -2568,44 +2587,21 @@ async def get_filtered_holdings(filters: Dict[str, Any] = Depends(get_holding_fi
 
 @app.put("/api/holdings/{holding_id}", tags=["Data"])
 async def update_holding(holding_id: str, payload: HoldingUpdate):
-    updates = payload.dict()
-    db.update_holding(holding_id, updates)
+    db.update_holding(holding_id, payload.dict())
     updated_holding = db.get_holding(holding_id)
     if not updated_holding:
         raise HTTPException(status_code=404, detail="Holding not found after update.")
     return updated_holding
 
-@app.post("/api/transactions/recategorize", tags=["Processing"])
-async def trigger_recategorization():
-    count = rules_engine.recategorize_all_transactions()
-    return {"message": f"Successfully re-categorized {count} transactions."}
-
-@app.get("/api/portfolio/summary", tags=["Analysis"])
-async def get_portfolio_summary():
-    holdings = db.get_holdings()
-    total_market_value = sum(h.get('market_value', 0) for h in holdings if h.get('market_value') is not None)
-    return {"total_market_value": total_market_value}
-
 @app.get("/api/filter-options", tags=["Filters"])
 async def get_filter_options():
     return db.get_filter_options()
 
-@app.get("/api/analysis/cashflow-chart", tags=["Analysis"])
-async def get_cashflow_chart(filters: Dict[str, Any] = Depends(get_transaction_filters)):
-    return analysis.prepare_cashflow_chart_data(filters)
+@app.get("/api/filter-options/income-categories", response_model=List[str], tags=["Filters"])
+async def get_income_category_options():
+    return db.get_income_categories()
 
-@app.get("/api/analysis/portfolio-allocation", tags=["Analysis"], response_model=PortfolioAllocationResponse)
-async def get_portfolio_allocation_data() -> PortfolioAllocationResponse:
-    """
-    Returns portfolio allocation data grouped by high-level asset class,
-    formatted for a pie chart and table.
-    """
-    return analysis.prepare_portfolio_allocation_chart_data()
-
-@app.get("/api/analysis/portfolio-chart", tags=["Analysis"])
-async def get_portfolio_chart(filters: Dict[str, Any] = Depends(get_holding_filters)):
-    return analysis.prepare_portfolio_chart_data(filters)
-
+# --- Account & Settings Endpoints ---
 @app.get("/api/accounts", response_model=List[str], tags=["Accounts"])
 async def get_all_accounts():
     return db.get_all_account_ids()
@@ -2619,36 +2615,34 @@ async def update_visibility_settings(payload: AccountVisibilitySettings):
     db.set_account_visibility(payload.settings)
     return Response(status_code=204)
 
+@app.get("/api/settings/sankey-income-categories", response_model=List[str], tags=["Settings"])
+async def get_sankey_income_settings():
+    return db.get_setting('sankey_income_categories') or []
+
+@app.put("/api/settings/sankey-income-categories", status_code=204, tags=["Settings"])
+async def set_sankey_income_settings(categories: List[str] = Body(...)):
+    db.set_setting('sankey_income_categories', categories)
+    return Response(status_code=204)
+
+# --- Admin & Market Data Endpoints ---
 @app.post("/api/data/purge", tags=["Admin"])
 async def purge_data(request: PurgeRequest):
     try:
-        result = db.purge_table_data(request.target)
-        return {"message": f"Successfully purged table: {request.target}", "details": result}
+        purge_details = db.purge_table_data(request.target)
+        return {"message": f"Successfully purged table: {request.target}", "details": purge_details}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-# --- Market Data Endpoints --- #
 @app.post("/api/market-data/refresh", tags=["Market Data"])
-async def trigger_market_data_refresh(
-    background_tasks: BackgroundTasks,
-    limit: int = Query(25, description="Number of top holdings to refresh. Use 0 for all.")
-):
-    """
-    Triggers a background task to refresh market data for top holdings using the live provider.
-    """
-    limit = limit if limit > 0 else 1000 # Use a high number for 'all'
+async def trigger_market_data_refresh(background_tasks: BackgroundTasks, limit: int = Query(25, description="Number of top holdings to refresh. Use 0 for all.")):
+    limit = limit if limit > 0 else 1000
     background_tasks.add_task(polling_service.refresh_market_data, top_n=limit)
     return {"message": f"Live market data refresh initiated in the background for top {limit} holdings."}
 
 @app.post("/api/market-data/refresh-eod", tags=["Market Data"])
 async def trigger_eod_market_data_refresh(background_tasks: BackgroundTasks):
-    """
-    Triggers a background task to refresh all holdings with yesterday's closing price
-    using the bulk EOD provider.
-    """
     background_tasks.add_task(polling_service.refresh_eod_data)
     return {"message": "Bulk EOD data refresh initiated in the background for ALL holdings."}
-
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)
@@ -2698,14 +2692,13 @@ def apply_rules_to_transaction(transaction: Transaction, rules: List[Rule]) -> T
     sorted_rules = sorted(rules, key=lambda r: r.priority)
 
     # Preserve the transaction's state *before* rules run, for condition checking.
-    # The `original_category` from the file is the most truthful source for conditions.
-    # Fall back to the current category if that's all we have.
-    category_for_condition_check = transaction.original_category or transaction.category
+    # CORRECTED: The user creates rules based on the CURRENT category, so we must check against that.
+    category_for_condition_check = transaction.category
     cashflow_type_for_condition_check = transaction.cashflow_type
 
-    # Reset fields that are always determined by rules. Tags are replaced by a matching rule.
-    transaction.tags = []
+    # Reset fields that are always determined by rules.
     transaction.is_transfer = False
+    # CORRECTED: Do NOT reset tags. Tags are only overwritten if a rule with a tag action matches.
 
     # --- Rule Matching Loop ---
     for rule in sorted_rules:
@@ -2943,6 +2936,176 @@ const BarChart = ({ data, indexBy, keys, axisLeftLabel, axisBottomLabel }) => {
 export default BarChart;
 
 
+--- FILE: projects/trust/src/components/CapitalFlowTable.css ---
+
+.collapsible-card {
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    margin-bottom: 2rem;
+    background-color: var(--dark-bg);
+}
+
+.collapsible-header {
+    padding: 1rem 1.5rem;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.collapsible-header h2 {
+    border: none;
+    padding: 0;
+    margin: 0;
+}
+
+.collapsible-header .toggle-icon {
+    font-size: 1.5em;
+    transition: transform 0.2s ease-in-out;
+}
+
+.collapsible-header .toggle-icon.open {
+    transform: rotate(90deg);
+}
+
+.collapsible-content {
+    padding: 0 1.5rem 1.5rem 1.5rem;
+    border-top: 1px solid var(--border-color);
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 2rem;
+}
+
+@media (min-width: 900px) {
+    .collapsible-content {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+.flow-table-container h3 {
+    color: var(--gold-accent);
+    margin-bottom: 0.5rem;
+}
+
+.flow-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.flow-table th, .flow-table td {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border-color);
+    text-align: left;
+}
+
+.flow-table td:last-child {
+    text-align: right;
+    font-family: monospace;
+    font-size: 1.1em;
+}
+
+.flow-table tfoot td {
+    font-weight: bold;
+    background-color: var(--light-bg);
+    border-top: 2px solid var(--border-color);
+}
+
+
+--- FILE: projects/trust/src/components/CapitalFlowTable.jsx ---
+
+import { useState, useEffect } from 'react';
+import './CapitalFlowTable.css';
+
+const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+}).format(value || 0);
+
+const FlowSection = ({ title, data, total, isSubSection = false }) => (
+    <div className="flow-table-container">
+        <h3>{title}</h3>
+        <table className="flow-table">
+            <tbody>
+                {Object.entries(data).map(([key, value]) => (
+                    <tr key={key}>
+                        <td>{key}</td>
+                        <td>{formatCurrency(value)}</td>
+                    </tr>
+                ))}
+            </tbody>
+            {!isSubSection && (
+                <tfoot>
+                    <tr>
+                        <td>Total</td>
+                        <td>{formatCurrency(total)}</td>
+                    </tr>
+                </tfoot>
+            )}
+        </table>
+    </div>
+);
+
+const CapitalFlowTable = ({ period }) => {
+    const [isOpen, setIsOpen] = useState(false);
+    const [data, setData] = useState(null);
+    const [isLoading, setIsLoading] = useState(true);
+
+    useEffect(() => {
+        const fetchData = async () => {
+            try {
+                setIsLoading(true);
+                const response = await fetch(`/api/analysis/capital-flow-table?period=${period}`);
+                if (!response.ok) throw new Error('Failed to fetch capital flow table data');
+                setData(await response.json());
+            } catch (error) {
+                console.error(error);
+                setData(null);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        fetchData();
+    }, [period]);
+
+    if (isLoading) {
+        return <div className="card"><p>Loading flow details...</p></div>;
+    }
+
+    if (!data || data.total_inflows <= 0) {
+        return null; // Don't render if there's no data
+    }
+
+    const inflowsData = {
+        ...data.inflows_by_category,
+        'Portfolio Yield': data.portfolio_yield
+    };
+
+    const expensesData = {
+        ...data.consumption_breakdown.top_categories,
+        'Other Expenses': data.consumption_breakdown.other_total
+    };
+    
+    return (
+        <div className="collapsible-card">
+            <header className="collapsible-header" onClick={() => setIsOpen(!isOpen)}>
+                <h2>Tabular Capital Flow</h2>
+                <span className={`toggle-icon ${isOpen ? 'open' : ''}`}>▶</span>
+            </header>
+            {isOpen && (
+                <div className="collapsible-content">
+                    <FlowSection title="Inflows" data={inflowsData} total={data.total_inflows} />
+                    <FlowSection title="Consumption" data={expensesData} total={data.total_consumption} />
+                </div>
+            )}
+        </div>
+    );
+};
+
+export default CapitalFlowTable;
+
+
 --- FILE: projects/trust/src/components/DataImportView.css ---
 
 .importer-container {
@@ -3093,6 +3256,7 @@ import { useState, useEffect } from 'react';
 import './DataImportView.css';
 import ImportSummary from './ImportSummary';
 import RulesEditor from './RulesEditor';
+import IncomeSankeySettings from './IncomeSankeySettings';
 
 const FileUploader = ({ title, importType, onUploadSuccess }) => {
     const [file, setFile] = useState(null);
@@ -3101,9 +3265,7 @@ const FileUploader = ({ title, importType, onUploadSuccess }) => {
     const [isError, setIsError] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
 
-    const handleFileChange = (e) => {
-        setFile(e.target.files[0]);
-    };
+    const handleFileChange = (e) => setFile(e.target.files[0]);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -3122,25 +3284,15 @@ const FileUploader = ({ title, importType, onUploadSuccess }) => {
         setIsError(false);
 
         try {
-            const endpoint = importType === 'transactions' 
-                ? '/api/import/transactions' 
-                : '/api/import/holdings';
-
-            const response = await fetch(endpoint, {
-                method: 'POST',
-                body: formData,
-            });
-
+            const endpoint = importType === 'transactions' ? '/api/import/transactions' : '/api/import/holdings';
+            const response = await fetch(endpoint, { method: 'POST', body: formData });
             const result = await response.json();
-
-            if (!response.ok) {
-                throw new Error(result.detail || 'Upload failed');
-            }
+            if (!response.ok) throw new Error(result.detail || 'Upload failed');
 
             setMessage(result.message);
             setFile(null);
             e.target.reset();
-            onUploadSuccess(); // Call the callback on success
+            onUploadSuccess();
         } catch (err) {
             setMessage(`Error: ${err.message}`);
             setIsError(true);
@@ -3155,29 +3307,15 @@ const FileUploader = ({ title, importType, onUploadSuccess }) => {
             <form onSubmit={handleSubmit}>
                 <div className="form-group">
                     <label htmlFor={`${importType}-account-id`}>Account ID</label>
-                    <input 
-                        type="text" 
-                        id={`${importType}-account-id`}
-                        placeholder="e.g., brokerage, checking"
-                        onChange={(e) => setAccountId(e.target.value)} 
-                        required 
-                    />
+                    <input type="text" id={`${importType}-account-id`} placeholder="e.g., brokerage, checking" onChange={(e) => setAccountId(e.target.value)} required />
                 </div>
                 <div className="form-group">
                     <label htmlFor={`${importType}-file`}>CSV File</label>
-                    <input 
-                        type="file" 
-                        id={`${importType}-file`}
-                        accept=".csv" 
-                        onChange={handleFileChange} 
-                        required 
-                    />
+                    <input type="file" id={`${importType}-file`} accept=".csv" onChange={handleFileChange} required />
                 </div>
                 <button type="submit" disabled={isUploading}>{isUploading ? 'Uploading...' : 'Upload'}</button>
             </form>
-            {message && (
-                <p className={`message ${isError ? 'error' : 'success'}`}>{message}</p>
-            )}
+            {message && <p className={`message ${isError ? 'error' : 'success'}`}>{message}</p>}
         </div>
     );
 };
@@ -3192,22 +3330,14 @@ const AccountVisibilityManager = ({ onSettingsChanged }) => {
         const fetchData = async () => {
             try {
                 setIsLoading(true);
-                const [accountsRes, visibilityRes] = await Promise.all([
-                    fetch('/api/accounts'),
-                    fetch('/api/accounts/visibility')
-                ]);
+                const [accountsRes, visibilityRes] = await Promise.all([fetch('/api/accounts'), fetch('/api/accounts/visibility')]);
                 if (!accountsRes.ok || !visibilityRes.ok) throw new Error("Failed to fetch account data");
 
                 const accountsData = await accountsRes.json();
                 const visibilityData = await visibilityRes.json();
 
                 setAccounts(accountsData);
-                // Ensure every account has a visibility setting, defaulting to true
-                const initialVisibility = accountsData.reduce((acc, accountId) => {
-                    acc[accountId] = visibilityData.hasOwnProperty(accountId) ? visibilityData[accountId] : true;
-                    return acc;
-                }, {});
-                setVisibility(initialVisibility);
+                setVisibility(accountsData.reduce((acc, id) => ({ ...acc, [id]: visibilityData.hasOwnProperty(id) ? visibilityData[id] : true }), {}));
             } catch (error) {
                 console.error("Failed to fetch account settings", error);
             } finally {
@@ -3217,23 +3347,16 @@ const AccountVisibilityManager = ({ onSettingsChanged }) => {
         fetchData();
     }, []);
 
-    const handleToggle = (accountId) => {
-        setVisibility(prev => ({ ...prev, [accountId]: !prev[accountId] }));
-    };
+    const handleToggle = (accountId) => setVisibility(prev => ({ ...prev, [accountId]: !prev[accountId] }));
 
     const handleSave = async () => {
         setIsSaving(true);
         try {
-            const response = await fetch('/api/accounts/visibility', {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ settings: visibility }),
-            });
+            const response = await fetch('/api/accounts/visibility', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ settings: visibility }) });
             if (!response.ok) throw new Error('Failed to save settings');
             alert('Visibility settings saved successfully!');
-            onSettingsChanged(); // Notify parent to refresh other components if needed
+            onSettingsChanged();
         } catch (error) {
-            console.error("Failed to save visibility settings:", error);
             alert(`Error: ${error.message}`);
         } finally {
             setIsSaving(false);
@@ -3243,27 +3366,18 @@ const AccountVisibilityManager = ({ onSettingsChanged }) => {
     return (
         <div className='visibility-manager-card'>
             <h3>Account Visibility (for Sankey Chart)</h3>
-            {isLoading ? (
-                <p>Loading accounts...</p>
-            ) : (
+            {isLoading ? <p>Loading accounts...</p> : (
                 <>
                     <div className='account-list'>
-                        {accounts.map(accountId => (
-                            <div key={accountId} className='account-item'>
-                                <input 
-                                    type="checkbox" 
-                                    id={`vis-${accountId}`}
-                                    checked={visibility[accountId] || false}
-                                    onChange={() => handleToggle(accountId)}
-                                />
-                                <label htmlFor={`vis-${accountId}`}>{accountId}</label>
+                        {accounts.map(id => (
+                            <div key={id} className='account-item'>
+                                <input type="checkbox" id={`vis-${id}`} checked={visibility[id] || false} onChange={() => handleToggle(id)} />
+                                <label htmlFor={`vis-${id}`}>{id}</label>
                             </div>
                         ))}
                     </div>
                     <div className='visibility-actions'>
-                        <button onClick={handleSave} disabled={isSaving}>
-                            {isSaving ? 'Saving...' : 'Save Settings'}
-                        </button>
+                        <button onClick={handleSave} disabled={isSaving}>{isSaving ? 'Saving...' : 'Save Settings'}</button>
                     </div>
                 </>
             )}
@@ -3273,29 +3387,22 @@ const AccountVisibilityManager = ({ onSettingsChanged }) => {
 
 const DataImportView = () => {
     const [refreshKey, setRefreshKey] = useState(0);
-
-    const handleRefresh = () => {
-        setRefreshKey(prevKey => prevKey + 1); // Increment key to trigger refresh
-    };
+    const handleRefresh = () => setRefreshKey(prevKey => prevKey + 1);
 
     return (
         <>
             <div className="card">
                 <h2>Data Importers</h2>
                 <div className="importer-container">
-                    <FileUploader 
-                        title="Import Transactions" 
-                        importType="transactions" 
-                        onUploadSuccess={handleRefresh} 
-                    />
-                    <FileUploader 
-                        title="Import Portfolio Holdings" 
-                        importType="holdings" 
-                        onUploadSuccess={handleRefresh} 
-                    />
+                    <FileUploader title="Import Transactions" importType="transactions" onUploadSuccess={handleRefresh} />
+                    <FileUploader title="Import Portfolio Holdings" importType="holdings" onUploadSuccess={handleRefresh} />
                 </div>
             </div>
-            <AccountVisibilityManager onSettingsChanged={handleRefresh} />
+            <div className="card">
+                <h2>Chart & Display Settings</h2>
+                 <AccountVisibilityManager onSettingsChanged={handleRefresh} />
+                 <IncomeSankeySettings onSettingsChanged={handleRefresh} />
+            </div>
             <RulesEditor />
             <ImportSummary refreshKey={refreshKey} />
         </>
@@ -3303,6 +3410,98 @@ const DataImportView = () => {
 };
 
 export default DataImportView;
+
+--- FILE: projects/trust/src/components/ErrorBoundary.css ---
+
+.error-boundary-card {
+    background-color: #5a2a2a;
+    border: 1px solid #8c3c3c;
+    color: #f2a7a7;
+    padding: 1.5rem;
+    border-radius: 8px;
+    margin: 2rem;
+}
+
+.error-boundary-card h2 {
+    color: #fff;
+    border-bottom-color: #8c3c3c;
+    margin-top: 0;
+}
+
+.error-boundary-card p {
+    color: #f2a7a7;
+}
+
+.error-boundary-card details {
+    margin-top: 1rem;
+    background-color: rgba(0,0,0,0.2);
+    padding: 1rem;
+    border-radius: 4px;
+}
+
+.error-boundary-card summary {
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.error-boundary-card pre {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    margin-top: 0.5rem;
+    font-size: 0.8em;
+    color: #ffc2c2;
+}
+
+
+--- FILE: projects/trust/src/components/ErrorBoundary.jsx ---
+
+import React from 'react';
+import './ErrorBoundary.css';
+
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null, errorInfo: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    // Update state so the next render will show the fallback UI.
+    return { hasError: true };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    // Log the error for diagnostics
+    console.error("Uncaught error:", error, errorInfo);
+    this.setState({
+        error: error,
+        errorInfo: errorInfo
+    });
+  }
+
+  render() {
+    if (this.state.hasError) {
+      // Render fallback UI
+      return (
+        <div className="error-boundary-card">
+            <h2>System Anomaly Detected</h2>
+            <p>A critical error has occurred in a user interface component, causing a display failure.</p>
+            <details>
+                <summary>Diagnostic Details (for Engineering)</summary>
+                <pre>
+                    {this.state.error && this.state.error.toString()}
+                    <br />
+                    {this.state.errorInfo && this.state.errorInfo.componentStack}
+                </pre>
+            </details>
+        </div>
+      );
+    }
+
+    return this.props.children; 
+  }
+}
+
+export default ErrorBoundary;
 
 
 --- FILE: projects/trust/src/components/FilterPanel.css ---
@@ -3634,6 +3833,7 @@ import SankeyChart from '../SankeyChart';
 import MockSankey from './MockSankey';
 import TimeFilter from './TimeFilter';
 import PieChart from './PieChart';
+import CapitalFlowTable from './CapitalFlowTable';
 import './HomeView.css';
 
 const NetWorthHero = () => {
@@ -3650,7 +3850,7 @@ const NetWorthHero = () => {
                 setNetWorth(data.total_market_value);
             } catch (error) {
                 console.error('Error fetching net worth:', error);
-                setNetWorth(0); // Default to 0 on error
+                setNetWorth(0);
             } finally {
                 setLoading(false);
             }
@@ -3658,26 +3858,19 @@ const NetWorthHero = () => {
         fetchSummary();
     }, []);
 
-    const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
-        style: 'currency',
-        currency: 'USD',
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 0,
-    }).format(value || 0);
+    const formatCurrency = (value) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(value || 0);
 
     return (
         <div className="net-worth-hero">
             <h2>Latest Net Worth</h2>
-            <p className="value">
-                {loading ? 'Calculating...' : formatCurrency(netWorth)}
-            </p>
+            <p className="value">{loading ? 'Calculating...' : formatCurrency(netWorth)}</p>
             <p className="timestamp">As of latest holdings import</p>
         </div>
     );
 };
 
 const HomeView = ({ navigateTo }) => {
-    const [incomeSankeyData, setIncomeSankeyData] = useState({ nodes: [], links: [] });
+    const [capitalFlowData, setCapitalFlowData] = useState({ nodes: [], links: [] });
     const [sankeyLoading, setSankeyLoading] = useState(true);
     const [selectedPeriod, setSelectedPeriod] = useState('all');
     const [portfolioAllocation, setPortfolioAllocation] = useState({ chartData: [], tableData: [] });
@@ -3687,10 +3880,10 @@ const HomeView = ({ navigateTo }) => {
         const fetchSankeyData = async () => {
             try {
                 setSankeyLoading(true);
-                const response = await fetch(`/api/sankey/income?period=${selectedPeriod}`);
-                if (!response.ok) throw new Error('Failed to fetch income sankey');
-                const data = await response.json();
-                setIncomeSankeyData(data);
+                const response = await fetch(`/api/sankey/home?period=${selectedPeriod}`);
+                if (!response.ok) throw new Error('Failed to fetch Capital Flow data');
+                const sankeyData = await response.json();
+                setCapitalFlowData(sankeyData);
             } catch (error) {
                 console.error(error);
             } finally {
@@ -3706,74 +3899,61 @@ const HomeView = ({ navigateTo }) => {
                 setAllocationLoading(true);
                 const response = await fetch('/api/analysis/portfolio-allocation');
                 if (!response.ok) throw new Error('Failed to fetch portfolio allocation');
-                const data = await response.json();
-                setPortfolioAllocation(data);
+                setPortfolioAllocation(await response.json());
             } catch (error) {
                 console.error(error);
             } finally {
                 setAllocationLoading(false);
             }
         };
-
         fetchAllocationData();
     }, []);
 
     const handleSankeyNodeClick = (node) => {
         const { id } = node;
+        const nonFilterable = ["Total Inflows", "Consumption", "Net Savings", "Other Expenses"];
+        if (nonFilterable.includes(id)) return;
+
         let filters = { period: selectedPeriod };
-
-        const nonFilterableNodes = ["Income", "Available Funds", "Net Surplus", "Net Deficit"];
-        if (nonFilterableNodes.includes(id)) {
-            console.log(`Drill-down on structural node '${id}' is disabled.`);
-            return;
-        }
-
-        if (id === 'Capital Expenditure') {
-            filters.cashflow_type = 'Capital Expenditure';
-        } else if (id.endsWith('(Expense)')) {
-            filters.category = id.replace(' (Expense)', '');
+        
+        if (id === 'Operational Income') {
+            filters.cashflow_type = 'Income';
+        } else if (id === 'Portfolio Yield') {
+            filters.cashflow_type = 'Investment';
         } else {
+            // Assume any other clickable node is an expense category or income category
+            // We'll need a way to differentiate. For now, assume expense.
+            // A better approach would be to get the node's type from the backend.
             filters.category = id;
         }
 
-        console.log(`Navigating to Cashflow view with filters:`, filters);
         navigateTo('Cashflow', filters);
     };
-
-    const isSankeyVisible = !sankeyLoading && incomeSankeyData && incomeSankeyData.links.length > 0;
-    const isAllocationVisible = !allocationLoading && portfolioAllocation.chartData && portfolioAllocation.chartData.length > 0;
 
     return (
         <>
             <NetWorthHero />
             
-            <div className="card sankey-container-card"> 
+            <div className="card sankey-container-card">
                 <div className="sankey-header">
-                    <h2>Income → Uses of Money</h2>
+                    <h2>Capital Flow & Expense Breakdown</h2>
                     <TimeFilter selectedPeriod={selectedPeriod} onPeriodChange={setSelectedPeriod} />
                 </div>
-                {sankeyLoading ? (
-                    <p>Loading chart data...</p>
-                ) : isSankeyVisible ? (
-                    <SankeyChart data={incomeSankeyData} onNodeClick={handleSankeyNodeClick} />
-                ) : (
-                    <p>No transaction data available for the selected period. Please import a transactions CSV file.</p>
-                )}
+                {sankeyLoading ? <p>Loading chart data...</p> : 
+                 capitalFlowData?.links.length > 0 ? <SankeyChart data={capitalFlowData} onNodeClick={handleSankeyNodeClick} /> : 
+                 <p>No transaction data for this period.</p>}
             </div>
+
+            <CapitalFlowTable period={selectedPeriod} />
 
             <div className="card">
                 <h2>Portfolio Allocation</h2>
-                {allocationLoading ? (
-                    <p>Loading allocation data...</p>
-                ) : isAllocationVisible ? (
+                {allocationLoading ? <p>Loading allocation data...</p> : 
+                 portfolioAllocation?.chartData.length > 0 ? 
                     <div className="allocation-container">
-                        <div className="pie-chart-wrapper">
-                            <PieChart data={portfolioAllocation.chartData} />
-                        </div>
-                    </div>
-                ) : (
-                    <p>No holdings data with asset types found. Please import a holdings CSV with an 'asset_type' column.</p>
-                )}
+                        <div className="pie-chart-wrapper"><PieChart data={portfolioAllocation.chartData} /></div>
+                    </div> : 
+                    <p>No holdings data with asset types found.</p>}
             </div>
             
             <div className="card">
@@ -3961,6 +4141,175 @@ const ImportSummary = ({ refreshKey }) => {
 
 export default ImportSummary;
 
+
+--- FILE: projects/trust/src/components/IncomeSankeySettings.css ---
+
+.income-settings-card {
+    background-color: var(--dark-bg);
+    padding: 1.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    margin-top: 2rem;
+}
+
+.income-settings-card h3 {
+    margin-top: 0;
+    color: var(--gold-accent);
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.5rem;
+}
+
+.category-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+    max-height: 250px;
+    overflow-y: auto;
+    padding: 0.5rem;
+    background-color: var(--medium-bg);
+    border-radius: 4px;
+}
+
+.category-item {
+    display: flex;
+    align-items: center;
+    padding: 0.5rem 0.75rem;
+    border-radius: 4px;
+}
+
+.category-item input[type="checkbox"] {
+    margin-right: 0.75rem;
+    width: 16px;
+    height: 16px;
+}
+
+.category-item label {
+    font-size: 0.9em;
+}
+
+.settings-actions {
+    text-align: right;
+}
+
+.settings-actions button {
+    background-color: var(--gold-accent);
+    color: var(--dark-bg);
+    border: none;
+    padding: 0.6rem 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.settings-actions button:disabled {
+    background-color: #555;
+    cursor: not-allowed;
+}
+
+
+--- FILE: projects/trust/src/components/IncomeSankeySettings.jsx ---
+
+import { useState, useEffect } from 'react';
+import './IncomeSankeySettings.css';
+
+const IncomeSankeySettings = ({ onSettingsChanged }) => {
+    const [allCategories, setAllCategories] = useState([]);
+    const [selectedCategories, setSelectedCategories] = useState(new Set());
+    const [isLoading, setIsLoading] = useState(true);
+    const [isSaving, setIsSaving] = useState(false);
+
+    useEffect(() => {
+        const fetchSettings = async () => {
+            try {
+                setIsLoading(true);
+                const [categoriesRes, savedSettingsRes] = await Promise.all([
+                    fetch('/api/filter-options/income-categories'),
+                    fetch('/api/settings/sankey-income-categories')
+                ]);
+
+                if (!categoriesRes.ok || !savedSettingsRes.ok) {
+                    throw new Error("Failed to fetch income category settings");
+                }
+
+                const categoriesData = await categoriesRes.json();
+                const savedSettingsData = await savedSettingsRes.json();
+
+                setAllCategories(categoriesData);
+                setSelectedCategories(new Set(savedSettingsData));
+            } catch (error) {
+                console.error("Failed to load income Sankey settings:", error);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        fetchSettings();
+    }, []);
+
+    const handleToggle = (category) => {
+        setSelectedCategories(prev => {
+            const newSet = new Set(prev);
+            if (newSet.has(category)) {
+                newSet.delete(category);
+            } else {
+                newSet.add(category);
+            }
+            return newSet;
+        });
+    };
+
+    const handleSave = async () => {
+        setIsSaving(true);
+        try {
+            const response = await fetch('/api/settings/sankey-income-categories', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(Array.from(selectedCategories)),
+            });
+            if (!response.ok) throw new Error('Failed to save settings');
+            alert('Income source settings saved successfully!');
+            onSettingsChanged(); // Notify parent to refresh other components if needed
+        } catch (error) {
+            console.error("Failed to save settings:", error);
+            alert(`Error: ${error.message}`);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    return (
+        <div className='income-settings-card'>
+            <h3>Income Sources Sankey Settings</h3>
+            <p>Select the income categories to display in the "Income Sources" chart on the Home screen. 'Drawdown' is always included by default.</p>
+            {isLoading ? (
+                <p>Loading categories...</p>
+            ) : (
+                <>
+                    <div className='category-list'>
+                        {allCategories.map(cat => (
+                            <div key={cat} className='category-item'>
+                                <input 
+                                    type="checkbox" 
+                                    id={`income-cat-${cat}`}
+                                    checked={selectedCategories.has(cat)}
+                                    onChange={() => handleToggle(cat)}
+                                />
+                                <label htmlFor={`income-cat-${cat}`}>{cat}</label>
+                            </div>
+                        ))}
+                    </div>
+                    <div className='settings-actions'>
+                        <button onClick={handleSave} disabled={isSaving}>
+                            {isSaving ? 'Saving...' : 'Save Settings'}
+                        </button>
+                    </div>
+                </>
+            )}
+        </div>
+    );
+};
+
+export default IncomeSankeySettings;
 
 --- FILE: projects/trust/src/components/MockSankey.jsx ---
 

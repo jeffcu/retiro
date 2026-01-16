@@ -3,6 +3,7 @@ import SankeyChart from '../SankeyChart';
 import MockSankey from './MockSankey';
 import TimeFilter from './TimeFilter';
 import PieChart from './PieChart';
+import CapitalFlowTable from './CapitalFlowTable';
 import './HomeView.css';
 
 const NetWorthHero = () => {
@@ -19,7 +20,7 @@ const NetWorthHero = () => {
                 setNetWorth(data.total_market_value);
             } catch (error) {
                 console.error('Error fetching net worth:', error);
-                setNetWorth(0); // Default to 0 on error
+                setNetWorth(0);
             } finally {
                 setLoading(false);
             }
@@ -27,26 +28,19 @@ const NetWorthHero = () => {
         fetchSummary();
     }, []);
 
-    const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
-        style: 'currency',
-        currency: 'USD',
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 0,
-    }).format(value || 0);
+    const formatCurrency = (value) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(value || 0);
 
     return (
         <div className="net-worth-hero">
             <h2>Latest Net Worth</h2>
-            <p className="value">
-                {loading ? 'Calculating...' : formatCurrency(netWorth)}
-            </p>
+            <p className="value">{loading ? 'Calculating...' : formatCurrency(netWorth)}</p>
             <p className="timestamp">As of latest holdings import</p>
         </div>
     );
 };
 
 const HomeView = ({ navigateTo }) => {
-    const [incomeSankeyData, setIncomeSankeyData] = useState({ nodes: [], links: [] });
+    const [capitalFlowData, setCapitalFlowData] = useState({ nodes: [], links: [] });
     const [sankeyLoading, setSankeyLoading] = useState(true);
     const [selectedPeriod, setSelectedPeriod] = useState('all');
     const [portfolioAllocation, setPortfolioAllocation] = useState({ chartData: [], tableData: [] });
@@ -56,10 +50,10 @@ const HomeView = ({ navigateTo }) => {
         const fetchSankeyData = async () => {
             try {
                 setSankeyLoading(true);
-                const response = await fetch(`/api/sankey/income?period=${selectedPeriod}`);
-                if (!response.ok) throw new Error('Failed to fetch income sankey');
-                const data = await response.json();
-                setIncomeSankeyData(data);
+                const response = await fetch(`/api/sankey/home?period=${selectedPeriod}`);
+                if (!response.ok) throw new Error('Failed to fetch Capital Flow data');
+                const sankeyData = await response.json();
+                setCapitalFlowData(sankeyData);
             } catch (error) {
                 console.error(error);
             } finally {
@@ -75,74 +69,61 @@ const HomeView = ({ navigateTo }) => {
                 setAllocationLoading(true);
                 const response = await fetch('/api/analysis/portfolio-allocation');
                 if (!response.ok) throw new Error('Failed to fetch portfolio allocation');
-                const data = await response.json();
-                setPortfolioAllocation(data);
+                setPortfolioAllocation(await response.json());
             } catch (error) {
                 console.error(error);
             } finally {
                 setAllocationLoading(false);
             }
         };
-
         fetchAllocationData();
     }, []);
 
     const handleSankeyNodeClick = (node) => {
         const { id } = node;
+        const nonFilterable = ["Total Inflows", "Consumption", "Net Savings", "Other Expenses"];
+        if (nonFilterable.includes(id)) return;
+
         let filters = { period: selectedPeriod };
-
-        const nonFilterableNodes = ["Income", "Available Funds", "Net Surplus", "Net Deficit"];
-        if (nonFilterableNodes.includes(id)) {
-            console.log(`Drill-down on structural node '${id}' is disabled.`);
-            return;
-        }
-
-        if (id === 'Capital Expenditure') {
-            filters.cashflow_type = 'Capital Expenditure';
-        } else if (id.endsWith('(Expense)')) {
-            filters.category = id.replace(' (Expense)', '');
+        
+        if (id === 'Operational Income') {
+            filters.cashflow_type = 'Income';
+        } else if (id === 'Portfolio Yield') {
+            filters.cashflow_type = 'Investment';
         } else {
+            // Assume any other clickable node is an expense category or income category
+            // We'll need a way to differentiate. For now, assume expense.
+            // A better approach would be to get the node's type from the backend.
             filters.category = id;
         }
 
-        console.log(`Navigating to Cashflow view with filters:`, filters);
         navigateTo('Cashflow', filters);
     };
-
-    const isSankeyVisible = !sankeyLoading && incomeSankeyData && incomeSankeyData.links.length > 0;
-    const isAllocationVisible = !allocationLoading && portfolioAllocation.chartData && portfolioAllocation.chartData.length > 0;
 
     return (
         <>
             <NetWorthHero />
             
-            <div className="card sankey-container-card"> 
+            <div className="card sankey-container-card">
                 <div className="sankey-header">
-                    <h2>Income → Uses of Money</h2>
+                    <h2>Capital Flow & Expense Breakdown</h2>
                     <TimeFilter selectedPeriod={selectedPeriod} onPeriodChange={setSelectedPeriod} />
                 </div>
-                {sankeyLoading ? (
-                    <p>Loading chart data...</p>
-                ) : isSankeyVisible ? (
-                    <SankeyChart data={incomeSankeyData} onNodeClick={handleSankeyNodeClick} />
-                ) : (
-                    <p>No transaction data available for the selected period. Please import a transactions CSV file.</p>
-                )}
+                {sankeyLoading ? <p>Loading chart data...</p> : 
+                 capitalFlowData?.links.length > 0 ? <SankeyChart data={capitalFlowData} onNodeClick={handleSankeyNodeClick} /> : 
+                 <p>No transaction data for this period.</p>}
             </div>
+
+            <CapitalFlowTable period={selectedPeriod} />
 
             <div className="card">
                 <h2>Portfolio Allocation</h2>
-                {allocationLoading ? (
-                    <p>Loading allocation data...</p>
-                ) : isAllocationVisible ? (
+                {allocationLoading ? <p>Loading allocation data...</p> : 
+                 portfolioAllocation?.chartData.length > 0 ? 
                     <div className="allocation-container">
-                        <div className="pie-chart-wrapper">
-                            <PieChart data={portfolioAllocation.chartData} />
-                        </div>
-                    </div>
-                ) : (
-                    <p>No holdings data with asset types found. Please import a holdings CSV with an 'asset_type' column.</p>
-                )}
+                        <div className="pie-chart-wrapper"><PieChart data={portfolioAllocation.chartData} /></div>
+                    </div> : 
+                    <p>No holdings data with asset types found.</p>}
             </div>
             
             <div className="card">

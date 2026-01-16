@@ -5,6 +5,7 @@ import PortfolioView from './components/PortfolioView';
 import DataImportView from './components/DataImportView';
 import PlaceholderView from './components/PlaceholderView';
 import TransactionListView from './components/TransactionListView';
+import ErrorBoundary from './components/ErrorBoundary'; // ADDED: Diagnostic component
 import './App.css';
 
 function App() {
@@ -45,7 +46,9 @@ function App() {
       <SideBar activeView={currentView.name} setActiveView={setActiveView} />
       <main className="main-content">
         <h1>{currentView.name}</h1>
-        {renderView()}
+        <ErrorBoundary> {/* WRAPPED: Catches rendering errors */}
+          {renderView()}
+        </ErrorBoundary>
       </main>
     </>
   );
