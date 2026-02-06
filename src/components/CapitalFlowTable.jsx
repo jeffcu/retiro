@@ -64,8 +64,10 @@ const CapitalFlowTable = ({ period }) => {
 
     const inflowsData = {
         ...data.inflows_by_category,
-        'Portfolio Yield': data.portfolio_yield
     };
+    if (data.investment_income > 0) {
+        inflowsData['Investment Income'] = data.investment_income;
+    }
 
     const expensesData = {
         ...data.consumption_breakdown.top_categories,

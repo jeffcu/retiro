@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import './DataImportView.css';
 import ImportSummary from './ImportSummary';
 import RulesEditor from './RulesEditor';
 import IncomeSankeySettings from './IncomeSankeySettings';
+import TaxFactsEditor from "./TaxFactsEditor.jsx"; // FIX: Explicitly added .jsx extension to resolve import error.
 
 const FileUploader = ({ title, importType, onUploadSuccess }) => {
     const [file, setFile] = useState(null);
@@ -72,7 +73,7 @@ const AccountVisibilityManager = ({ onSettingsChanged }) => {
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
 
-    useEffect(() => {
+    useState(() => {
         const fetchData = async () => {
             try {
                 setIsLoading(true);
@@ -148,6 +149,10 @@ const DataImportView = () => {
                 <h2>Chart & Display Settings</h2>
                  <AccountVisibilityManager onSettingsChanged={handleRefresh} />
                  <IncomeSankeySettings onSettingsChanged={handleRefresh} />
+            </div>
+            <div className="card">
+                <h2>Personal Inputs</h2>
+                <TaxFactsEditor />
             </div>
             <RulesEditor />
             <ImportSummary refreshKey={refreshKey} />

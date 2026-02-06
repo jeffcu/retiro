@@ -1,0 +1,48 @@
+.tax-summary-card {
+    /* Uses standard .card styles */
+}
+
+.tax-summary-card h2 {
+    /* Uses standard h2 styles */
+}
+
+.tax-summary-card .summary-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1rem;
+    font-size: 0.95em;
+}
+
+.tax-summary-card .summary-table th,
+.tax-summary-card .summary-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color);
+    text-align: left;
+}
+
+.tax-summary-card .summary-table th {
+    color: #ccc;
+    font-weight: 500;
+}
+
+.tax-summary-card .summary-table td {
+    color: var(--text-color);
+}
+
+.tax-summary-card .summary-table td:not(:first-child):not(:last-child) {
+    font-family: monospace;
+    font-size: 1.1em;
+    text-align: center;
+}
+
+.tax-summary-card .summary-table td.notes-cell {
+    font-style: italic;
+    color: #999;
+    font-size: 0.9em;
+    font-family: inherit;
+    text-align: left;
+}
+
+.tax-summary-card .error-message {
+    color: #ff9a9a;
+}

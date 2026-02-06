@@ -57,6 +57,7 @@ The system is decomposed into the following distinct modules within the `src` di
 *   `price_history`: Caches historical and intraday price quotes for securities.
 *   `rules`: Stores user-defined rules for transaction categorization.
 *   `import_profiles`: Saves column mappings and settings for specific CSV formats.
+*   `tax_year_facts`: Stores key data from annual tax returns to calculate after-tax returns. Contains columns like `tax_year` (PK), `filing_status`, `fed_taxable_income`, `fed_total_tax`, `state_taxable_income`, `state_total_tax`.
 
 ### 5. API Interfaces
 
@@ -68,6 +69,8 @@ The backend will expose RESTful endpoints for the frontend, such as:
 *   `POST /api/import/csv`: Accepts a CSV file for ingestion.
 *   `GET /api/transactions?category=Travel`: Retrieves transactions based on filters.
 *   `PUT /api/transaction/{id}`: Updates a single transaction (e.g., manual re-categorization).
+*   `GET /api/tax-facts?year={year}`: Retrieves the stored tax facts for a given year.
+*   `POST /api/tax-facts/{year}`: Creates or updates the tax facts for a given year.
 
 #### 5.2 External APIs
 
@@ -79,7 +82,7 @@ The system employs a multi-provider strategy for market data, orchestrated by th
 *   **Module:** `src/market_data/massive_provider.py`
 
 **Provider 2: Alphavantage**
-*   **Usage:** Primary provider for assets of type `Mutual Fund Open` and `Mutual Fund Closed`.
+*   **Usage:** Primary provider for assets of type `Mutual Fund - Open-end` and `Mutual Fund - Closed-end`.
 *   **Authentication:** API Key (`ALPHA_VANTAGE_API_KEY`).
 *   **Module:** `src/market_data/alphavantage_provider.py`
 
@@ -117,11 +120,12 @@ Development will follow the user-feature centric plan outlined in the PRS (Secti
 *   **Phase 4: The Portfolio View (Completed)**
     *   Goal: Establish initial portfolio tracking.
 
-*   **Phase 5: Automated Market Data & Layered Returns (Completed)**
+*   **Phase 5: Automated Market Data & Layered Returns (Current)**
     *   Goal: Automate portfolio pricing using a multi-provider strategy and introduce advanced return metrics.
 
 *   **Phase 6: Advanced Rules Engine & Portfolio Separation (Completed)**
     *   Goal: Implement the v2 rules engine to separate portfolio activity from cash flow.
 
-*   **Phase 7: Forecasting (Next)**
+*   **Phase 7: Forecasting**
     *   Goal: Provide future-looking financial projections.
+

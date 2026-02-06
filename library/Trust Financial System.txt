@@ -131,6 +131,7 @@ Priority order:
 	•	CSV import, mapping profiles, dedupe logs
 	•	Filter Rules editor (see section 5.3)
 	•	Manual entry: fees, taxes, market value snapshots
+	•	Tax Facts Entry: A form to input key data from annual tax returns (e.g., Form 1040, 540) to enable after-tax calculations.
 	•	Backup/restore
 
 ⸻
@@ -215,17 +216,22 @@ The primary provider is the Massive API, which has a free tier with a rate limit
 7) Returns Before Fees / After Fees / After Taxes
 
 7.1 Inputs
-	•	Portfolio value time series:
-	•	From holdings snapshots + intraday quotes
-	•	User-entered Fee Records
-	•	User-entered Tax Records from tax returns (annual totals and/or allocated)
+	•	Portfolio value time series from holdings snapshots + intraday quotes.
+	•	User-entered Fee Records (manual entry for management fees, etc.).
+	•	User-entered Tax Year Facts from annual tax returns. The system will prompt for key lines to calculate effective tax rates on investment income. Required inputs include:
+		•	Tax Year
+		•	Filing Status
+		•	Federal Taxable Income (Form 1040, Line 15)
+		•	Federal Total Tax (Form 1040, Line 24)
+		•	State Taxable Income (e.g., CA 540, Line 19)
+		•	State Total Tax (e.g., CA 540, Line 31)
 
 7.2 Output Metrics (Required)
 
 For selected period:
 	•	Gross Return ($, %): value change adjusted for contributions/withdrawals if available; otherwise snapshot-to-snapshot change labeled “approx.”
 	•	After Fees Return: gross minus fees in period
-	•	After Taxes Return: after-fees minus taxes in period
+	•	After Taxes Return: after-fees minus taxes in period, calculated using effective rates from user-provided Tax Year Facts.
 
 All return views must label:
 	•	“Exact” vs “Estimated” based on data completeness.
@@ -244,7 +250,7 @@ All return views must label:
 	•	HoldingSnapshot (positions)
 	•	PriceQuote (intraday/EOD)
 	•	FeeRecord
-	•	TaxRecord
+	•	TaxYearFacts (stores key data points from annual tax returns)
 	•	ImportProfile + ImportRun + ImportRowHash (dedupe/audit)
 	•	FilterRule (pattern, case_sensitive, account_filters, action, import_profile_id)
 
@@ -284,9 +290,14 @@ Phase 4: The Portfolio View (Completed)
 	•	Goal: Establish the initial portfolio tracking capability.
 	•	Features: Import a holdings CSV. A new Portfolio screen displays a list of holdings and their current market value (via on-demand price fetches).
 
-Phase 5: Automated Market Data & Layered Returns (Completed)
+Phase 5: Automated Market Data & Layered Returns (In Progress)
 	•	Goal: Automate portfolio pricing and introduce advanced return metrics.
-	•	Features: Implement the scheduled “drip” pricing service. The Portfolio screen displays Gross, After-Fee, and After-Tax returns, visualized in the Returns Sankey.
+	•	Features: 
+		• Implement the scheduled “drip” pricing service using a multi-provider strategy.
+		• Implement the `TaxFactsEditor` UI for manual entry of annual tax data.
+		• Implement backend database table (`TaxYearFacts`) and API endpoints to store and retrieve tax data.
+		• Update the analysis engine to calculate after-tax returns using stored tax facts.
+		• The Portfolio screen displays Gross, After-Fee, and After-Tax returns, visualized in the Returns Sankey.
 
 Phase 6: Advanced Rules Engine & Portfolio Separation (Completed)
 	•	Goal: Implement the v2 rules engine to separate portfolio activity from cash flow.

@@ -75,7 +75,7 @@ async def refresh_market_data(top_n: int = 0) -> Dict[str, Any]:
             # --- Provider Routing Logic ---
             if asset_type == "Common Stock":
                 provider_module = massive_provider
-            elif asset_type in ["Mutual Fund Open", "Mutual Fund Closed"]:
+            elif asset_type in ["Mutual Fund - Open-end", "Mutual Fund - Closed-end"]:
                 provider_module = alphavantage_provider
             else:
                 print(f"Skipping {symbol}: unsupported asset type '{asset_type}'.")

@@ -1,0 +1,47 @@
+.investment-summary-card {
+    /* Uses the standard .card styles from App.css */
+}
+
+.investment-summary-card h2 {
+    /* Uses standard h2 styles */
+}
+
+.investment-summary-card .summary-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1rem;
+}
+
+.investment-summary-card .summary-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 1.1em;
+}
+
+.investment-summary-card .summary-table td:last-child {
+    text-align: right;
+    font-family: monospace;
+    font-weight: 500;
+}
+
+.investment-summary-card .summary-table .positive {
+    color: var(--gold-accent);
+}
+
+.investment-summary-card .summary-table .negative {
+    color: #ff9a9a; /* A light red for negative values */
+}
+
+.investment-summary-card .summary-table tfoot td {
+    font-weight: bold;
+    font-size: 1.2em;
+    border-top: 2px solid var(--border-color);
+    background-color: var(--light-bg);
+}
+
+.investment-summary-card .summary-notes {
+    margin-top: 1.5rem;
+    font-size: 0.85em;
+    color: #ccc;
+    text-align: center;
+}

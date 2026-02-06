@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import SankeyChart from '../SankeyChart';
-import MockSankey from './MockSankey';
 import TimeFilter from './TimeFilter';
 import PieChart from './PieChart';
 import CapitalFlowTable from './CapitalFlowTable';
+import InvestmentSummaryTable from './InvestmentSummaryTable'; // Import the new component
+import TaxRateSummaryTable from './TaxRateSummaryTable'; // Import the new component
 import './HomeView.css';
 
 const NetWorthHero = () => {
@@ -126,10 +127,9 @@ const HomeView = ({ navigateTo }) => {
                     <p>No holdings data with asset types found.</p>}
             </div>
             
-            <div className="card">
-                <h2>Portfolio Return Waterfall</h2>
-                <MockSankey type="returns" />
-            </div>
+            <InvestmentSummaryTable period={selectedPeriod} />
+
+            <TaxRateSummaryTable />
         </>
     );
 };

@@ -101,7 +101,13 @@ def apply_rules_to_transaction(transaction: Transaction, rules: List[Rule]) -> T
         print(f"Rule '{rule.rule_id}' ('{rule.pattern or 'any'}') matched transaction '{transaction.description}'. Applying category '{rule.category}'.")
         transaction.category = rule.category
         transaction.cashflow_type = rule.cashflow_type
-        transaction.tags = list(set(rule.tags)) # A rule's tags overwrite any previous.
+        
+        # --- FIX: Append tags from the rule, don't replace them. ---
+        if rule.tags:
+            existing_tags = set(t.strip() for t in transaction.tags if t.strip())
+            new_tags = set(t.strip() for t in rule.tags if t.strip())
+            transaction.tags = sorted(list(existing_tags.union(new_tags)))
+            
         transaction.is_transfer = rule.cashflow_type == CashflowType.TRANSFER
         
         return transaction # A rule matched, our job is done.
@@ -177,7 +183,7 @@ def recategorize_all_transactions() -> int:
             merchant=tx_dict.get('merchant'),
             category=tx_dict.get('category'), # Pass current category
             cashflow_type=CashflowType.from_string(tx_dict.get('cashflow_type')),
-            tags=tx_dict.get('tags', '').split(',') if tx_dict.get('tags') else [],
+            tags=[t.strip() for t in tx_dict.get('tags', '').split(',') if t.strip()] if tx_dict.get('tags') else [],
             asset_id=tx_dict.get('asset_id'),
             import_run_id=tx_dict.get('import_run_id'),
             raw_data_hash=tx_dict.get('raw_data_hash'),

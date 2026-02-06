@@ -335,6 +335,7 @@ The system is decomposed into the following distinct modules within the `src` di
 *   `price_history`: Caches historical and intraday price quotes for securities.
 *   `rules`: Stores user-defined rules for transaction categorization.
 *   `import_profiles`: Saves column mappings and settings for specific CSV formats.
+*   `tax_year_facts`: Stores key data from annual tax returns to calculate after-tax returns. Contains columns like `tax_year` (PK), `filing_status`, `fed_taxable_income`, `fed_total_tax`, `state_taxable_income`, `state_total_tax`.
 
 ### 5. API Interfaces
 
@@ -346,6 +347,8 @@ The backend will expose RESTful endpoints for the frontend, such as:
 *   `POST /api/import/csv`: Accepts a CSV file for ingestion.
 *   `GET /api/transactions?category=Travel`: Retrieves transactions based on filters.
 *   `PUT /api/transaction/{id}`: Updates a single transaction (e.g., manual re-categorization).
+*   `GET /api/tax-facts?year={year}`: Retrieves the stored tax facts for a given year.
+*   `POST /api/tax-facts/{year}`: Creates or updates the tax facts for a given year.
 
 #### 5.2 External APIs
 
@@ -357,7 +360,7 @@ The system employs a multi-provider strategy for market data, orchestrated by th
 *   **Module:** `src/market_data/massive_provider.py`
 
 **Provider 2: Alphavantage**
-*   **Usage:** Primary provider for assets of type `Mutual Fund Open` and `Mutual Fund Closed`.
+*   **Usage:** Primary provider for assets of type `Mutual Fund - Open-end` and `Mutual Fund - Closed-end`.
 *   **Authentication:** API Key (`ALPHA_VANTAGE_API_KEY`).
 *   **Module:** `src/market_data/alphavantage_provider.py`
 
@@ -395,14 +398,15 @@ Development will follow the user-feature centric plan outlined in the PRS (Secti
 *   **Phase 4: The Portfolio View (Completed)**
     *   Goal: Establish initial portfolio tracking.
 
-*   **Phase 5: Automated Market Data & Layered Returns (Completed)**
+*   **Phase 5: Automated Market Data & Layered Returns (Current)**
     *   Goal: Automate portfolio pricing using a multi-provider strategy and introduce advanced return metrics.
 
 *   **Phase 6: Advanced Rules Engine & Portfolio Separation (Completed)**
     *   Goal: Implement the v2 rules engine to separate portfolio activity from cash flow.
 
-*   **Phase 7: Forecasting (Next)**
+*   **Phase 7: Forecasting**
     *   Goal: Provide future-looking financial projections.
+
 
 
 --- FILE: projects/trust/library/Trust Financial System.txt ---
@@ -540,6 +544,7 @@ Priority order:
 	•	CSV import, mapping profiles, dedupe logs
 	•	Filter Rules editor (see section 5.3)
 	•	Manual entry: fees, taxes, market value snapshots
+	•	Tax Facts Entry: A form to input key data from annual tax returns (e.g., Form 1040, 540) to enable after-tax calculations.
 	•	Backup/restore
 
 ⸻
@@ -624,17 +629,22 @@ The primary provider is the Massive API, which has a free tier with a rate limit
 7) Returns Before Fees / After Fees / After Taxes
 
 7.1 Inputs
-	•	Portfolio value time series:
-	•	From holdings snapshots + intraday quotes
-	•	User-entered Fee Records
-	•	User-entered Tax Records from tax returns (annual totals and/or allocated)
+	•	Portfolio value time series from holdings snapshots + intraday quotes.
+	•	User-entered Fee Records (manual entry for management fees, etc.).
+	•	User-entered Tax Year Facts from annual tax returns. The system will prompt for key lines to calculate effective tax rates on investment income. Required inputs include:
+		•	Tax Year
+		•	Filing Status
+		•	Federal Taxable Income (Form 1040, Line 15)
+		•	Federal Total Tax (Form 1040, Line 24)
+		•	State Taxable Income (e.g., CA 540, Line 19)
+		•	State Total Tax (e.g., CA 540, Line 31)
 
 7.2 Output Metrics (Required)
 
 For selected period:
 	•	Gross Return ($, %): value change adjusted for contributions/withdrawals if available; otherwise snapshot-to-snapshot change labeled “approx.”
 	•	After Fees Return: gross minus fees in period
-	•	After Taxes Return: after-fees minus taxes in period
+	•	After Taxes Return: after-fees minus taxes in period, calculated using effective rates from user-provided Tax Year Facts.
 
 All return views must label:
 	•	“Exact” vs “Estimated” based on data completeness.
@@ -653,7 +663,7 @@ All return views must label:
 	•	HoldingSnapshot (positions)
 	•	PriceQuote (intraday/EOD)
 	•	FeeRecord
-	•	TaxRecord
+	•	TaxYearFacts (stores key data points from annual tax returns)
 	•	ImportProfile + ImportRun + ImportRowHash (dedupe/audit)
 	•	FilterRule (pattern, case_sensitive, account_filters, action, import_profile_id)
 
@@ -693,9 +703,14 @@ Phase 4: The Portfolio View (Completed)
 	•	Goal: Establish the initial portfolio tracking capability.
 	•	Features: Import a holdings CSV. A new Portfolio screen displays a list of holdings and their current market value (via on-demand price fetches).
 
-Phase 5: Automated Market Data & Layered Returns (Completed)
+Phase 5: Automated Market Data & Layered Returns (In Progress)
 	•	Goal: Automate portfolio pricing and introduce advanced return metrics.
-	•	Features: Implement the scheduled “drip” pricing service. The Portfolio screen displays Gross, After-Fee, and After-Tax returns, visualized in the Returns Sankey.
+	•	Features: 
+		• Implement the scheduled “drip” pricing service using a multi-provider strategy.
+		• Implement the `TaxFactsEditor` UI for manual entry of annual tax data.
+		• Implement backend database table (`TaxYearFacts`) and API endpoints to store and retrieve tax data.
+		• Update the analysis engine to calculate after-tax returns using stored tax facts.
+		• The Portfolio screen displays Gross, After-Fee, and After-Tax returns, visualized in the Returns Sankey.
 
 Phase 6: Advanced Rules Engine & Portfolio Separation (Completed)
 	•	Goal: Implement the v2 rules engine to separate portfolio activity from cash flow.
@@ -744,7 +759,7 @@ All acceptance criteria for phases 0 through 4 and 6.1 (Core Feature Verificatio
 
 **Objective**: Automate portfolio pricing using a multi-provider strategy and introduce advanced return metrics.
 
-**Result**: IN PROGRESS
+**Result**: CURRENT PHASE
 
 ### 5.1 Multi-Provider Pricing Service
 
@@ -768,8 +783,28 @@ All acceptance criteria for phases 0 through 4 and 6.1 (Core Feature Verificatio
     1. Navigate to the Portfolio screen.
     2. The "Last Updated" column for both AAPL and VTSAX should display the recent timestamp without any error styling.
 
-### 5.2 Layered Returns (Future)
-- [ ] **Verification**: The Portfolio screen displays Gross, After-Fee, and After-Tax returns, visualized in the Returns Sankey.
+### 5.2 Layered Returns & Tax Facts
+
+**Objective**: Verify the end-to-end functionality of entering tax data and seeing it reflected in after-tax return calculations.
+
+**Acceptance Criteria**:
+- [ ] **UI Implementation**: The `TaxFactsEditor` component is present and functional on the Data & Settings screen.
+- [ ] **Data Persistence (Create/Update)**: 
+    1. Navigate to Data & Settings -> Personal Inputs.
+    2. Select a tax year (e.g., 2024) from the dropdown.
+    3. Enter valid numbers in all four tax data fields (Federal/State Taxable Income, Federal/State Total Tax).
+    4. Click "Save 2024 Facts".
+    5. Verify a success message is shown.
+- [ ] **Data Persistence (Read)**:
+    1. Select a different tax year, then select the original test year (e.g., 2024) again.
+    2. Verify the previously entered numbers are correctly re-loaded into the form fields.
+- [ ] **Backend Verification**:
+    1. Using a SQLite browser, query the `tax_year_facts` table in `data/trust.db`.
+    2. Confirm that a row exists for the test year (e.g., 2024) and that all columns contain the correct data saved from the UI.
+- [ ] **After-Tax Calculation Display**:
+    1. Navigate to the Portfolio screen.
+    2. Verify that a metric for "After-Tax Return" is displayed alongside Gross and After-Fee returns.
+    3. Verify the Returns Sankey correctly visualizes the `Gross Return -> Taxes -> After-Tax Return` flow, using the entered tax data to perform its calculations.
 
 ---
 
@@ -1214,6 +1249,8 @@ const SankeyChart = ({ data, onNodeClick = () => {} }) => {
                 labelPosition="outside"
                 labelOrientation="horizontal"
                 labelPadding={16}
+                // --- FIX: Explicitly set a single, high-contrast color for all labels. ---
+                labelTextColor="#f0f0f0"
                 
                 onClick={handleNodeClick}
                 
@@ -1247,11 +1284,12 @@ const SankeyChart = ({ data, onNodeClick = () => {} }) => {
                     </div>
                 )}
                 
-                // --- FIX: Added a full theme object for dark mode consistency, like other charts. ---
+                // Theme for other elements like tooltips and axes (if any).
+                // Label color is now handled by the `labelTextColor` prop for direct control.
                 theme={{
                     labels: {
                         text: {
-                            fill: '#ccc', // This light grey is now used for labels, ensuring high contrast.
+                            // `fill` is now controlled by the `labelTextColor` prop above.
                             fontSize: 12
                         }
                     },
@@ -1273,11 +1311,6 @@ export default SankeyChart;
 
 --- FILE: projects/trust/src/analysis.py ---
 
-"""
-This module contains functions for financial calculations, generating data
-for visualizations like Sankey diagrams, and running forecasts.
-(PRS Sections 2, 4, 7)
-"""
 from typing import Dict, Any, List
 from collections import defaultdict
 from . import database as db
@@ -1294,7 +1327,7 @@ def _calculate_capital_flow_details(period: str, exclude_invisible: bool = False
     selected_income_categories = db.get_setting('sankey_income_categories') or []
 
     income_by_category = defaultdict(float)
-    portfolio_yield = 0.0
+    investment_income = 0.0
     expense_by_category = defaultdict(float)
 
     for row in aggregates:
@@ -1305,13 +1338,13 @@ def _calculate_capital_flow_details(period: str, exclude_invisible: bool = False
             # Only include income if it's in the user-selected list
             if category in selected_income_categories:
                 income_by_category[category] += total
-        elif source_type == 'Portfolio Yield':
-            portfolio_yield += total
+        elif source_type == 'Investment Income':
+            investment_income += total
         elif source_type == 'Expense':
             expense_by_category[category or 'Uncategorized'] += abs(total)
     
     total_op_income = sum(income_by_category.values())
-    total_inflows = total_op_income + portfolio_yield
+    total_inflows = total_op_income + investment_income
     total_consumption = sum(expense_by_category.values())
     net_savings = total_inflows - total_consumption
 
@@ -1324,7 +1357,7 @@ def _calculate_capital_flow_details(period: str, exclude_invisible: bool = False
 
     return {
         "inflows_by_category": dict(income_by_category),
-        "portfolio_yield": portfolio_yield,
+        "investment_income": investment_income,
         "total_inflows": total_inflows,
         "total_consumption": total_consumption,
         "net_savings": net_savings,
@@ -1357,7 +1390,7 @@ def generate_capital_flow_sankey(period: str, exclude_invisible: bool = False) -
         "Total Inflows", 
         "Consumption", 
         "Net Savings", 
-        "Portfolio Yield",
+        "Investment Income",
         "Other Expenses" # This structural node is now explicitly reserved.
     }
     RESERVED_NODE_IDS.update(details['inflows_by_category'].keys())
@@ -1372,9 +1405,9 @@ def generate_capital_flow_sankey(period: str, exclude_invisible: bool = False) -
         if amount > 0:
             nodes.append({"id": category})
             links.append({"source": category, "target": "Total Inflows", "value": round(amount, 2)})
-    if details['portfolio_yield'] > 0:
-        nodes.append({"id": "Portfolio Yield"})
-        links.append({"source": "Portfolio Yield", "target": "Total Inflows", "value": round(details['portfolio_yield'], 2)})
+    if details['investment_income'] > 0:
+        nodes.append({"id": "Investment Income"})
+        links.append({"source": "Investment Income", "target": "Total Inflows", "value": round(details['investment_income'], 2)})
 
     # Tier 3: Primary Allocation
     nodes.extend([{"id": "Consumption"}, {"id": "Net Savings"}])
@@ -1437,7 +1470,208 @@ def prepare_portfolio_allocation_chart_data() -> Dict[str, Any]:
 
     return {"tableData": table_data, "chartData": chart_data}
 
+def calculate_investment_cashflow_summary(period: str) -> Dict[str, Any]:
+    """
+    Calculates a summary of cashflows from portfolio activities.
+    """
+    # Step 1: Get cash inflows from investments
+    investment_income = db.get_investment_income_for_period(period)
 
+    # Step 2: Get cash outflows for fees
+    fees = db.get_total_investment_fees_for_period(period)
+
+    # Step 3: Calculate estimated taxes on the income
+    year_to_use = None
+    if period.isdigit() and len(period) == 4:
+        year_to_use = int(period)
+    else:
+        year_to_use = db.get_latest_transaction_year()
+
+    notes = f"Using data for period '{period}'."
+    taxes = 0
+
+    if year_to_use:
+        tax_facts = db.get_tax_facts(year_to_use)
+        if tax_facts and tax_facts.get('fed_taxable_income') and tax_facts.get('fed_total_tax'):
+            total_income = (tax_facts.get('fed_taxable_income', 0) or 0) + (tax_facts.get('state_taxable_income', 0) or 0)
+            total_tax = (tax_facts.get('fed_total_tax', 0) or 0) + (tax_facts.get('state_total_tax', 0) or 0)
+            effective_tax_rate = total_tax / total_income if total_income > 0 else 0
+            
+            # Apply the effective rate to the investment income
+            taxes = investment_income * effective_tax_rate if investment_income > 0 else 0
+            notes += f" Estimated taxes based on {effective_tax_rate:.2%} effective rate from {year_to_use} tax data."
+        else:
+            notes += f" Tax facts for {year_to_use} are incomplete; taxes are not calculated."
+    else:
+        notes += " Could not determine a tax year; taxes are not calculated."
+
+    # Step 4: Calculate what's left to spend
+    spendable_cash = investment_income - fees - taxes
+
+    return {
+        "investment_income": investment_income,
+        "advisory_fees": fees,
+        "estimated_taxes": taxes,
+        "spendable_cash": spendable_cash,
+        "notes": notes
+    }
+
+# --- NEW: Tax Rate Calculation ---
+def calculate_effective_tax_rates_for_years(years: List[int]) -> List[Dict[str, Any]]:
+    """
+    Calculates effective tax rates for a given list of years based on stored TaxYearFacts.
+    """
+    results = []
+    for year in years:
+        tax_facts = db.get_tax_facts(year)
+        year_data = {"year": year}
+
+        if not tax_facts:
+            year_data.update({
+                "federal_rate": "N/A",
+                "state_rate": "N/A",
+                "combined_rate": "N/A",
+                "notes": "No tax data entered for this year."
+            })
+            results.append(year_data)
+            continue
+
+        fed_income = tax_facts.get('fed_taxable_income') or 0
+        fed_tax = tax_facts.get('fed_total_tax') or 0
+        state_income = tax_facts.get('state_taxable_income') or 0
+        state_tax = tax_facts.get('state_total_tax') or 0
+        total_income = fed_income + state_income
+        total_tax = fed_tax + state_tax
+
+        year_data["federal_rate"] = f"{(fed_tax / fed_income * 100):.2f}%" if fed_income > 0 else "N/A"
+        year_data["state_rate"] = f"{(state_tax / state_income * 100):.2f}%" if state_income > 0 else "N/A"
+        year_data["combined_rate"] = f"{(total_tax / total_income * 100):.2f}%" if total_income > 0 else "N/A"
+        year_data["notes"] = "Calculated from entered tax facts."
+        
+        results.append(year_data)
+        
+    return results
+
+# --- Layered Returns Calculation --- 
+def calculate_layered_returns(period: str) -> Dict[str, Any]:
+    """
+    Calculates gross return, fees, taxes, and after-tax return for a period.
+    (PRS Section 7.2)
+    """
+    # STEP 1: Calculate Gross Return as (Market Value - Cost Basis).
+    # This is an approximation of total unrealized gain.
+    total_market_value = db.get_total_portfolio_market_value()
+    total_cost_basis = db.get_total_portfolio_cost_basis()
+    gross_return = total_market_value - total_cost_basis
+    
+    # STEP 2: Calculate fees for the specified period.
+    fees = db.get_total_investment_fees_for_period(period)
+
+    # STEP 3: Determine the tax year to use.
+    year_to_use = None
+    if period.isdigit() and len(period) == 4:
+        year_to_use = int(period)
+    else:
+        # Fallback to the latest year with transaction data as a proxy.
+        year_to_use = db.get_latest_transaction_year()
+
+    notes = "Gross return is lifetime unrealized gain (Market Value - Cost Basis). Fees & Taxes are for the selected period."
+
+    if not year_to_use:
+        # No tax data available, so we can't calculate taxes.
+        return {
+            "gross_return": gross_return,
+            "fees": fees,
+            "taxes": 0,
+            "after_tax_return": gross_return - fees,
+            "notes": notes
+        }
+
+    # STEP 4: Fetch tax facts and calculate effective tax rate.
+    tax_facts = db.get_tax_facts(year_to_use)
+    if not tax_facts or not tax_facts.get('fed_taxable_income') or not tax_facts.get('fed_total_tax'):
+        return {
+            "gross_return": gross_return,
+            "fees": fees,
+            "taxes": 0,
+            "after_tax_return": gross_return - fees,
+            "notes": f"{notes} Tax facts for {year_to_use} are incomplete."
+        }
+    
+    # Calculate a blended federal and state effective tax rate.
+    total_income = (tax_facts.get('fed_taxable_income', 0) or 0) + (tax_facts.get('state_taxable_income', 0) or 0)
+    total_tax = (tax_facts.get('fed_total_tax', 0) or 0) + (tax_facts.get('state_total_tax', 0) or 0)
+
+    effective_tax_rate = total_tax / total_income if total_income > 0 else 0
+    
+    # Apply the tax rate to the investment gains (gross return).
+    # This is an estimation, as per PRS.
+    taxes = gross_return * effective_tax_rate if gross_return > 0 else 0
+    after_tax_return = gross_return - fees - taxes
+
+    return {
+        "gross_return": gross_return,
+        "fees": fees,
+        "taxes": taxes,
+        "after_tax_return": after_tax_return,
+        "notes": f"{notes} Using effective tax rate of {effective_tax_rate:.2%} from {year_to_use} tax data."
+    }
+
+def generate_portfolio_return_sankey(period: str) -> Dict[str, Any]:
+    """
+    Generates the data for the Portfolio Return Waterfall Sankey diagram.
+    (PRS Section 2.1.C)
+    """
+    returns = calculate_layered_returns(period)
+
+    gross_return = returns['gross_return']
+    fees = returns['fees']
+    taxes = returns['taxes']
+    after_tax_return = returns['after_tax_return']
+
+    # --- NEW: Handle negative gross returns (a loss) --- 
+    if gross_return <= 0:
+        # If there's a loss, the waterfall is simpler.
+        # Gross Loss -> Fees -> Net Loss
+        nodes = [
+            {"id": "Gross Loss"},
+            {"id": "Fees"},
+            {"id": "Net Loss"}
+        ]
+        links = [
+            {"source": "Gross Loss", "target": "Net Loss", "value": round(abs(gross_return), 2)},
+            {"source": "Fees", "target": "Net Loss", "value": round(fees, 2)}
+        ]
+        return {"nodes": nodes, "links": links, "notes": returns.get('notes')}
+
+    # --- Logic for positive gross returns --- 
+    # Ensure we don't create negative values in the Sankey chart.
+    if gross_return < (fees + taxes):
+        # In this edge case, just show fees and taxes eating the whole return.
+        after_tax_return = 0
+        if gross_return < fees:
+            fees = gross_return
+            taxes = 0
+        else:
+            taxes = gross_return - fees
+
+    nodes = [
+        {"id": "Gross Return"},
+        {"id": "Fees"},
+        {"id": "Taxes"},
+        {"id": "After-Tax Return"}
+    ]
+
+    links = []
+    if gross_return > 0:
+        if fees > 0:
+            links.append({"source": "Gross Return", "target": "Fees", "value": round(fees, 2)})
+        if taxes > 0:
+            links.append({"source": "Gross Return", "target": "Taxes", "value": round(taxes, 2)})
+        if after_tax_return > 0:
+            links.append({"source": "Gross Return", "target": "After-Tax Return", "value": round(after_tax_return, 2)})
+
+    return {"nodes": nodes, "links": links, "notes": returns.get('notes')}
 
 
 
@@ -1621,6 +1855,18 @@ def _ensure_schema(conn: sqlite3.Connection):
     );
     """)
 
+    # --- NEW: Table for storing annual tax return data (PRS Section 7.1) ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS tax_year_facts (
+        tax_year INTEGER PRIMARY KEY,
+        filing_status TEXT,
+        fed_taxable_income REAL,
+        fed_total_tax REAL,
+        state_taxable_income REAL,
+        state_total_tax REAL
+    );
+    """)
+
     # --- Schema Migrations ---
     cursor.execute("PRAGMA table_info(holdings)")
     holdings_cols = {row[1] for row in cursor.fetchall()}
@@ -1778,20 +2024,24 @@ def save_holdings_snapshot(holdings: List[Holding], account_id: str):
     conn = get_db_connection()
     cursor = conn.cursor()
     
+    # --- NEW: Non-destructive import logic --- #
+    # 1. Fetch existing metadata for the account before deleting.
     cursor.execute("SELECT symbol, tags, asset_type FROM holdings WHERE trim(lower(account_id)) = trim(lower(?))", (cleaned_account_id,))
     existing_metadata = {row['symbol']: {'tags': [t.strip() for t in row['tags'].split(',')] if row['tags'] else [], 'asset_type': row['asset_type']} for row in cursor.fetchall()}
     print(f"Found existing metadata for {len(existing_metadata)} symbols in account '{cleaned_account_id}'.")
 
+    # 2. Enrich the new holdings with the existing metadata if the new data is missing it.
     for h in holdings:
         if h.symbol in existing_metadata:
             meta = existing_metadata[h.symbol]
             if not h.tags and meta['tags']:
-                h.tags = meta['tags']
+                h.tags = meta['tags'] # Preserve old tags if new file has none
             if not h.asset_type and meta['asset_type']:
-                h.asset_type = meta['asset_type']
+                h.asset_type = meta['asset_type'] # Preserve old asset_type
 
     deleted_count, inserted_count = 0, 0
     try:
+        # 3. Proceed with the atomic delete-and-insert operation.
         cursor.execute("DELETE FROM holdings WHERE trim(lower(account_id)) = trim(lower(?))", (cleaned_account_id,))
         deleted_count = cursor.rowcount
         print(f"Deleted {deleted_count} stale holdings for account '{cleaned_account_id}'.")
@@ -2010,20 +2260,20 @@ def get_capital_flow_aggregates(period: str, exclude_invisible: bool = False) ->
     
     where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
 
-    # UPDATED QUERY: Income is now grouped by category to support breakdowns.
+    # CORRECTED QUERY: Separates 'Investment Income' from other 'Income' types to prevent double-counting.
     query = f""" 
-    -- Income by Category
+    -- Income by Category (excluding 'Investment Income', handled separately)
     SELECT 'Income' as source_type, category, SUM(amount) as total
     FROM transactions t
-    WHERE {where_sql} AND t.cashflow_type = 'Income'
+    WHERE {where_sql} AND t.cashflow_type = 'Income' AND (t.category IS NULL OR t.category != 'Investment Income')
     GROUP BY category
 
     UNION ALL
 
-    -- Portfolio Yield
-    SELECT 'Portfolio Yield' as source_type, 'N/A' as category, SUM(amount) as total
+    -- Investment Income (a special type of Income, but visualized separately)
+    SELECT 'Investment Income' as source_type, 'Investment Income' as category, SUM(amount) as total
     FROM transactions t
-    WHERE {where_sql} AND t.cashflow_type = 'Investment' AND t.category IN ('Dividends', 'Interest Income')
+    WHERE {where_sql} AND t.cashflow_type = 'Income' AND t.category = 'Investment Income'
 
     UNION ALL
 
@@ -2049,6 +2299,59 @@ def get_latest_transaction_year() -> int | None:
     result = cursor.fetchone()
     conn.close()
     return int(result['latest_year']) if result and result['latest_year'] else None
+
+def get_total_investment_fees_for_period(period: str) -> float:
+    """
+    Calculates the total advisory fees for a given period from transactions.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    where_clauses, params = [], []
+
+    # Define the specific filters for advisory fees
+    where_clauses.append("cashflow_type = 'Investment'")
+    where_clauses.append("category = 'Advisory Fees'")
+
+    _apply_period_filter_to_query(where_clauses, params, period, date_column='transaction_date')
+
+    where_sql = " AND ".join(where_clauses)
+
+    query = f"SELECT SUM(amount) as total_fees FROM transactions WHERE {where_sql}"
+    
+    cursor.execute(query, params)
+    result = cursor.fetchone()
+    conn.close()
+
+    # Fees are typically negative amounts, so we return the absolute value.
+    if result and result['total_fees'] is not None:
+        return abs(float(result['total_fees']))
+    return 0.0
+
+def get_investment_income_for_period(period: str) -> float:
+    """
+    Calculates the total investment income (yield) for a given period.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    where_clauses, params = [], []
+
+    # Per PRS 2.1.A, yield is income categorized as such.
+    where_clauses.append("cashflow_type = 'Income'")
+    where_clauses.append("category = 'Investment Income'")
+
+    _apply_period_filter_to_query(where_clauses, params, period, date_column='transaction_date')
+
+    where_sql = " AND ".join(where_clauses)
+
+    query = f"SELECT SUM(amount) as total_income FROM transactions WHERE {where_sql}"
+    
+    cursor.execute(query, params)
+    result = cursor.fetchone()
+    conn.close()
+
+    if result and result['total_income'] is not None:
+        return float(result['total_income'])
+    return 0.0
 
 def get_cashflow_aggregation_by_month(filters: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Aggregates income and expense by month based on a flexible filter dictionary."""
@@ -2118,7 +2421,16 @@ def get_total_portfolio_market_value() -> float:
     """Calculates the sum of market_value for all holdings."""
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT SUM(market_value) as total FROM holdings WHERE market_value IS NOT NULL AND market_value > 0")
+    cursor.execute("SELECT SUM(market_value) as total FROM holdings WHERE market_value IS NOT NULL")
+    result = cursor.fetchone()
+    conn.close()
+    return result['total'] if result and result['total'] else 0.0
+
+def get_total_portfolio_cost_basis() -> float:
+    """Calculates the sum of cost_basis for all holdings."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT SUM(cost_basis) as total FROM holdings WHERE cost_basis IS NOT NULL")
     result = cursor.fetchone()
     conn.close()
     return result['total'] if result and result['total'] else 0.0
@@ -2283,6 +2595,45 @@ def mark_holdings_as_failed(symbols: List[str]):
     finally:
         conn.close()
 
+# --- NEW: Functions for Tax Facts --- 
+def get_tax_facts(year: int) -> Dict[str, Any] | None:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM tax_year_facts WHERE tax_year = ?", (year,))
+    row = cursor.fetchone()
+    conn.close()
+    # FIX: Use an explicit dictionary comprehension to be safer than dict(row)
+    if not row:
+        return None
+    return {k: row[k] for k in row.keys()}
+
+def save_tax_facts(year: int, data: Dict[str, Any]):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    sql = """INSERT OR REPLACE INTO tax_year_facts (
+                 tax_year, filing_status, fed_taxable_income, fed_total_tax, 
+                 state_taxable_income, state_total_tax
+             ) VALUES (?, ?, ?, ?, ?, ?);"""
+    params = (
+        year,
+        data.get('filing_status'),
+        data.get('fed_taxable_income'),
+        data.get('fed_total_tax'),
+        data.get('state_taxable_income'),
+        data.get('state_total_tax')
+    )
+    try:
+        cursor.execute(sql, params)
+        conn.commit()
+        # Note: Using print for consistency with existing codebase. Should be logging.
+        print(f"Successfully saved/replaced tax facts for year {year}.")
+    except sqlite3.Error as e:
+        print(f"Database error saving tax facts for {year}: {e}")
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
 
 --- FILE: projects/trust/src/index.css ---
 
@@ -2326,7 +2677,7 @@ import uvicorn
 import uuid
 import asyncio
 from datetime import datetime, timezone
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body, Response, Query, Depends, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body, Response, Query, Depends, BackgroundTasks, Path
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import os
@@ -2403,6 +2754,25 @@ class AllocationTableItem(BaseModel):
 class PortfolioAllocationResponse(BaseModel):
     chartData: List[AllocationDataItem]
     tableData: List[AllocationTableItem]
+
+# --- NEW: Pydantic model for Tax Facts ---
+class TaxFactsPayload(BaseModel):
+    filing_status: Optional[str] = None
+    fed_taxable_income: Optional[float] = None
+    fed_total_tax: Optional[float] = None
+    state_taxable_income: Optional[float] = None
+    state_total_tax: Optional[float] = None
+
+class TaxFactsResponse(TaxFactsPayload):
+    tax_year: int
+
+# --- NEW: Pydantic model for Tax Rate Summary ---
+class TaxRateSummary(BaseModel):
+    year: int
+    federal_rate: str
+    state_rate: str
+    combined_rate: str
+    notes: str
 
 # --- App Events ---
 @app.on_event("startup")
@@ -2528,6 +2898,10 @@ async def get_home_sankey_data(period: str = "all"):
 async def get_home_capital_flow_table(period: str = "all"):
     return analysis.generate_capital_flow_table_data(period, exclude_invisible=True)
 
+@app.get("/api/analysis/investment-cashflow-summary", tags=["Analysis"])
+async def get_investment_cashflow_summary(period: str = "all"):
+    return analysis.calculate_investment_cashflow_summary(period)
+
 @app.get("/api/portfolio/summary", tags=["Analysis"])
 async def get_portfolio_summary():
     holdings = db.get_holdings()
@@ -2545,6 +2919,18 @@ async def get_portfolio_allocation_data():
 @app.get("/api/analysis/portfolio-chart", tags=["Analysis"])
 async def get_portfolio_chart(filters: Dict[str, Any] = Depends(get_holding_filters)):
     return analysis.prepare_portfolio_chart_data(filters)
+
+# --- NEW: Effective Tax Rate Endpoint ---
+@app.get("/api/analysis/effective-tax-rates", response_model=List[TaxRateSummary], tags=["Analysis"])
+async def get_effective_tax_rates():
+    """Calculates and returns the effective tax rates for key years."""
+    target_years = [2023, 2024]
+    return analysis.calculate_effective_tax_rates_for_years(target_years)
+
+# --- NEW: Portfolio Returns Sankey Endpoint ---
+@app.get("/api/analysis/portfolio-returns-sankey", tags=["Analysis"])
+async def get_portfolio_returns_sankey(period: str = "all"):
+    return analysis.generate_portfolio_return_sankey(period)
 
 # --- Data & Filter Endpoints ---
 @app.get("/api/transactions", tags=["Data"])
@@ -2623,6 +3009,23 @@ async def get_sankey_income_settings():
 async def set_sankey_income_settings(categories: List[str] = Body(...)):
     db.set_setting('sankey_income_categories', categories)
     return Response(status_code=204)
+
+# --- NEW: Tax Facts Endpoints --- 
+@app.get("/api/tax-facts/{year}", response_model=TaxFactsResponse, tags=["Tax Data"])
+async def get_tax_facts_for_year(year: int = Path(..., ge=2000, le=2100)):
+    facts = db.get_tax_facts(year)
+    if not facts:
+        raise HTTPException(status_code=404, detail=f"Tax facts for year {year} not found.")
+    return facts
+
+@app.post("/api/tax-facts/{year}", response_model=TaxFactsResponse, status_code=201, tags=["Tax Data"])
+async def create_or_update_tax_facts(payload: TaxFactsPayload, year: int = Path(..., ge=2000, le=2100)):
+    try:
+        db.save_tax_facts(year, payload.dict())
+        facts = db.get_tax_facts(year)
+        return facts
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # --- Admin & Market Data Endpoints ---
 @app.post("/api/data/purge", tags=["Admin"])
@@ -2753,7 +3156,13 @@ def apply_rules_to_transaction(transaction: Transaction, rules: List[Rule]) -> T
         print(f"Rule '{rule.rule_id}' ('{rule.pattern or 'any'}') matched transaction '{transaction.description}'. Applying category '{rule.category}'.")
         transaction.category = rule.category
         transaction.cashflow_type = rule.cashflow_type
-        transaction.tags = list(set(rule.tags)) # A rule's tags overwrite any previous.
+        
+        # --- FIX: Append tags from the rule, don't replace them. ---
+        if rule.tags:
+            existing_tags = set(t.strip() for t in transaction.tags if t.strip())
+            new_tags = set(t.strip() for t in rule.tags if t.strip())
+            transaction.tags = sorted(list(existing_tags.union(new_tags)))
+            
         transaction.is_transfer = rule.cashflow_type == CashflowType.TRANSFER
         
         return transaction # A rule matched, our job is done.
@@ -2829,7 +3238,7 @@ def recategorize_all_transactions() -> int:
             merchant=tx_dict.get('merchant'),
             category=tx_dict.get('category'), # Pass current category
             cashflow_type=CashflowType.from_string(tx_dict.get('cashflow_type')),
-            tags=tx_dict.get('tags', '').split(',') if tx_dict.get('tags') else [],
+            tags=[t.strip() for t in tx_dict.get('tags', '').split(',') if t.strip()] if tx_dict.get('tags') else [],
             asset_id=tx_dict.get('asset_id'),
             import_run_id=tx_dict.get('import_run_id'),
             raw_data_hash=tx_dict.get('raw_data_hash'),
@@ -3079,8 +3488,10 @@ const CapitalFlowTable = ({ period }) => {
 
     const inflowsData = {
         ...data.inflows_by_category,
-        'Portfolio Yield': data.portfolio_yield
     };
+    if (data.investment_income > 0) {
+        inflowsData['Investment Income'] = data.investment_income;
+    }
 
     const expensesData = {
         ...data.consumption_breakdown.top_categories,
@@ -3252,11 +3663,12 @@ export default CapitalFlowTable;
 
 --- FILE: projects/trust/src/components/DataImportView.jsx ---
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import './DataImportView.css';
 import ImportSummary from './ImportSummary';
 import RulesEditor from './RulesEditor';
 import IncomeSankeySettings from './IncomeSankeySettings';
+import TaxFactsEditor from "./TaxFactsEditor.jsx"; // FIX: Explicitly added .jsx extension to resolve import error.
 
 const FileUploader = ({ title, importType, onUploadSuccess }) => {
     const [file, setFile] = useState(null);
@@ -3326,7 +3738,7 @@ const AccountVisibilityManager = ({ onSettingsChanged }) => {
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
 
-    useEffect(() => {
+    useState(() => {
         const fetchData = async () => {
             try {
                 setIsLoading(true);
@@ -3403,6 +3815,10 @@ const DataImportView = () => {
                  <AccountVisibilityManager onSettingsChanged={handleRefresh} />
                  <IncomeSankeySettings onSettingsChanged={handleRefresh} />
             </div>
+            <div className="card">
+                <h2>Personal Inputs</h2>
+                <TaxFactsEditor />
+            </div>
             <RulesEditor />
             <ImportSummary refreshKey={refreshKey} />
         </>
@@ -3410,6 +3826,7 @@ const DataImportView = () => {
 };
 
 export default DataImportView;
+
 
 --- FILE: projects/trust/src/components/ErrorBoundary.css ---
 
@@ -3830,10 +4247,11 @@ export default HoldingEditorModal;
 
 import { useState, useEffect } from 'react';
 import SankeyChart from '../SankeyChart';
-import MockSankey from './MockSankey';
 import TimeFilter from './TimeFilter';
 import PieChart from './PieChart';
 import CapitalFlowTable from './CapitalFlowTable';
+import InvestmentSummaryTable from './InvestmentSummaryTable'; // Import the new component
+import TaxRateSummaryTable from './TaxRateSummaryTable'; // Import the new component
 import './HomeView.css';
 
 const NetWorthHero = () => {
@@ -3956,10 +4374,9 @@ const HomeView = ({ navigateTo }) => {
                     <p>No holdings data with asset types found.</p>}
             </div>
             
-            <div className="card">
-                <h2>Portfolio Return Waterfall</h2>
-                <MockSankey type="returns" />
-            </div>
+            <InvestmentSummaryTable period={selectedPeriod} />
+
+            <TaxRateSummaryTable />
         </>
     );
 };
@@ -4311,6 +4728,139 @@ const IncomeSankeySettings = ({ onSettingsChanged }) => {
 
 export default IncomeSankeySettings;
 
+--- FILE: projects/trust/src/components/InvestmentSummaryTable.css ---
+
+.investment-summary-card {
+    /* Uses the standard .card styles from App.css */
+}
+
+.investment-summary-card h2 {
+    /* Uses standard h2 styles */
+}
+
+.investment-summary-card .summary-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1rem;
+}
+
+.investment-summary-card .summary-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 1.1em;
+}
+
+.investment-summary-card .summary-table td:last-child {
+    text-align: right;
+    font-family: monospace;
+    font-weight: 500;
+}
+
+.investment-summary-card .summary-table .positive {
+    color: var(--gold-accent);
+}
+
+.investment-summary-card .summary-table .negative {
+    color: #ff9a9a; /* A light red for negative values */
+}
+
+.investment-summary-card .summary-table tfoot td {
+    font-weight: bold;
+    font-size: 1.2em;
+    border-top: 2px solid var(--border-color);
+    background-color: var(--light-bg);
+}
+
+.investment-summary-card .summary-notes {
+    margin-top: 1.5rem;
+    font-size: 0.85em;
+    color: #ccc;
+    text-align: center;
+}
+
+
+--- FILE: projects/trust/src/components/InvestmentSummaryTable.jsx ---
+
+import { useState, useEffect } from 'react';
+import './InvestmentSummaryTable.css';
+
+const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+}).format(value || 0);
+
+const InvestmentSummaryTable = ({ period }) => {
+    const [summary, setSummary] = useState(null);
+    const [isLoading, setIsLoading] = useState(true);
+
+    useEffect(() => {
+        const fetchSummary = async () => {
+            try {
+                setIsLoading(true);
+                const response = await fetch(`/api/analysis/investment-cashflow-summary?period=${period}`);
+                if (!response.ok) {
+                    throw new Error('Failed to fetch investment cashflow summary');
+                }
+                const data = await response.json();
+                setSummary(data);
+            } catch (error) {
+                console.error(error);
+                setSummary(null);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        fetchSummary();
+    }, [period]);
+
+    if (isLoading) {
+        return (
+            <div className="card investment-summary-card">
+                <h2>Portfolio Cashflow Summary</h2>
+                <p>Loading summary...</p>
+            </div>
+        );
+    }
+    
+    if (!summary) {
+        return null; // Don't render if there's no data or an error
+    }
+
+    return (
+        <div className="card investment-summary-card">
+            <h2>Portfolio Cashflow Summary</h2>
+            <table className="summary-table">
+                <tbody>
+                    <tr>
+                        <td>Investment Income (Yield)</td>
+                        <td className="positive">{formatCurrency(summary.investment_income)}</td>
+                    </tr>
+                    <tr>
+                        <td>Advisory & Management Fees</td>
+                        <td className="negative">({formatCurrency(summary.advisory_fees)})</td>
+                    </tr>
+                    <tr>
+                        <td>Estimated Taxes on Yield</td>
+                        <td className="negative">({formatCurrency(summary.estimated_taxes)})</td>
+                    </tr>
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <td>Spendable Cash from Portfolio</td>
+                        <td>{formatCurrency(summary.spendable_cash)}</td>
+                    </tr>
+                </tfoot>
+            </table>
+            <p className="summary-notes"><em>{summary.notes}</em></p>
+        </div>
+    );
+};
+
+export default InvestmentSummaryTable;
+
+
 --- FILE: projects/trust/src/components/MockSankey.jsx ---
 
 import SankeyChart from '../SankeyChart';
@@ -4638,6 +5188,7 @@ import FilterPanel from './FilterPanel';
 import BarChart from './BarChart';
 import TimeFilter from './TimeFilter';
 import HoldingEditorModal from './HoldingEditorModal';
+import SankeyChart from '../SankeyChart'; // NEW: Import Sankey Chart
 
 const AllocationTable = ({ tableData, formatCurrency }) => {
     return (
@@ -4703,6 +5254,9 @@ const PortfolioView = () => {
     const [editingHolding, setEditingHolding] = useState(null);
     const [portfolioAllocation, setPortfolioAllocation] = useState({ tableData: [] });
     const [allocationLoading, setAllocationLoading] = useState(true);
+    // --- NEW: State for returns sankey ---
+    const [returnsSankey, setReturnsSankey] = useState({ data: null, notes: '' });
+    const [sankeyLoading, setSankeyLoading] = useState(true);
 
     const fetchData = async (filters = activeFilters) => {
         try {
@@ -4731,6 +5285,22 @@ const PortfolioView = () => {
         }
     };
 
+    // --- NEW: Function to fetch returns sankey data ---
+    const fetchReturnsSankey = async (period = 'all') => {
+        try {
+            setSankeyLoading(true);
+            const response = await fetch(`/api/analysis/portfolio-returns-sankey?period=${period}`);
+            if (!response.ok) throw new Error('Failed to fetch Portfolio Returns data');
+            const sankeyData = await response.json();
+            setReturnsSankey({ data: sankeyData, notes: sankeyData.notes });
+        } catch (error) {
+            console.error(error);
+            setError(prev => prev ? `${prev}\n${error.message}` : error.message);
+        } finally {
+            setSankeyLoading(false);
+        }
+    };
+
     useEffect(() => {
         const fetchAllocationData = async () => {
             try {
@@ -4749,6 +5319,7 @@ const PortfolioView = () => {
         
         fetchData();
         fetchAllocationData();
+        fetchReturnsSankey(); // Initial fetch for sankey
     }, []);
 
     const sortedHoldings = useMemo(() => {
@@ -4797,6 +5368,7 @@ const PortfolioView = () => {
     const handlePeriodChange = (period) => {
         const newFilters = { ...activeFilters, period };
         fetchData(newFilters);
+        fetchReturnsSankey(period); // Also refresh sankey data
     };
 
     const handleHoldingSave = () => {
@@ -4823,6 +5395,24 @@ const PortfolioView = () => {
 
     return (
         <>
+            <div className="card sankey-container-card"> 
+                <div className="chart-header">
+                    <h2>Portfolio Return Waterfall</h2>
+                    <TimeFilter 
+                        selectedPeriod={activeFilters.period || 'all'} 
+                        onPeriodChange={handlePeriodChange} 
+                    />
+                </div>
+                {sankeyLoading ? <p>Loading chart data...</p> : 
+                 returnsSankey.data?.links.length > 0 ? (
+                    <>
+                        <SankeyChart data={returnsSankey.data} />
+                        <p style={{textAlign: 'center', fontSize: '0.8em', color: '#ccc'}}><em>{returnsSankey.notes}</em></p>
+                    </>
+                 ) : 
+                 <p>No returns data to display. This is placeholder data until full return calculations are implemented.</p>}
+            </div>
+
             <div className="card">
                 <h2>Asset Allocation Summary</h2>
                 {allocationLoading ? (
@@ -4853,10 +5443,7 @@ const PortfolioView = () => {
             <div className="card">
                 <div className="chart-header">
                     <h2>Top Holdings by Market Value</h2>
-                    <TimeFilter 
-                        selectedPeriod={activeFilters.period || 'all'} 
-                        onPeriodChange={handlePeriodChange} 
-                    />
+                    {/* TimeFilter is now at the top level */}
                 </div>
                 {loading ? (
                     <p>Loading chart...</p>
@@ -5692,6 +6279,423 @@ const SideBar = ({ activeView, setActiveView }) => {
 };
 
 export default SideBar;
+
+--- FILE: projects/trust/src/components/TaxFactsEditor.css ---
+
+.tax-editor-container {
+    background-color: var(--dark-bg);
+    padding: 1.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    margin-top: 2rem;
+}
+
+.tax-editor-container h3 {
+    margin-top: 0;
+    color: var(--gold-accent);
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.5rem;
+}
+
+.tax-editor-container p {
+    font-size: 0.9em;
+    color: #ccc;
+    margin-bottom: 1.5rem;
+}
+
+.tax-form-header {
+    display: flex;
+    gap: 2rem;
+    margin-bottom: 2rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.form-group-inline {
+    display: flex;
+    flex-direction: column;
+}
+
+.form-group-inline label {
+    margin-bottom: 0.5rem;
+    font-size: 0.9em;
+}
+
+.form-group-inline select {
+    padding: 0.5rem;
+    background-color: var(--medium-bg);
+    border: 1px solid #666;
+    border-radius: 4px;
+    color: #fff;
+}
+
+.tax-fields-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 1.5rem;
+}
+
+.tax-field-item label {
+    display: block;
+    font-weight: 500;
+    margin-bottom: 0.25rem;
+}
+
+.tax-field-item .form-location {
+    display: block;
+    font-size: 0.8em;
+    color: #999;
+    margin-bottom: 0.5rem;
+    font-style: italic;
+}
+
+.currency-input {
+    display: flex;
+    align-items: center;
+    background-color: var(--medium-bg);
+    border: 1px solid #666;
+    border-radius: 4px;
+}
+
+.currency-input span {
+    padding: 0 0.75rem;
+    color: #999;
+    font-size: 1.1em;
+}
+
+.currency-input input {
+    width: 100%;
+    padding: 0.6rem;
+    background: none;
+    border: none;
+    color: #fff;
+    font-size: 1.1em;
+}
+
+.currency-input input:focus {
+    outline: none;
+}
+
+.tax-form-actions {
+    margin-top: 2rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 1rem;
+}
+
+.status-message {
+    font-style: italic;
+    color: #ccc;
+    font-size: 0.9em;
+}
+
+.tax-form-actions button {
+    background-color: var(--gold-accent);
+    color: var(--dark-bg);
+    border: none;
+    padding: 0.6rem 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.tax-form-actions button:disabled {
+    background-color: #555;
+    cursor: not-allowed;
+}
+
+
+--- FILE: projects/trust/src/components/TaxFactsEditor.jsx ---
+
+import { useState, useEffect } from 'react';
+import './TaxFactsEditor.css';
+
+const TaxFactsEditor = () => {
+    const currentYear = new Date().getFullYear();
+    const [selectedYear, setSelectedYear] = useState(currentYear - 1);
+    const [statusMessage, setStatusMessage] = useState('');
+    const [isSaving, setIsSaving] = useState(false);
+    const [isLoading, setIsLoading] = useState(false);
+
+    const initialFormState = {
+        filing_status: 'single',
+        fed_taxable_income: '',
+        fed_total_tax: '',
+        state_taxable_income: '',
+        state_total_tax: '',
+    };
+    const [formData, setFormData] = useState(initialFormState);
+
+    useEffect(() => {
+        const fetchTaxFacts = async () => {
+            setIsLoading(true);
+            setStatusMessage(`Loading data for ${selectedYear}...`);
+            try {
+                const response = await fetch(`/api/tax-facts/${selectedYear}`);
+                if (response.ok) {
+                    const data = await response.json();
+                    // Populate form with fetched data, handling nulls
+                    setFormData({
+                        filing_status: data.filing_status || 'single',
+                        fed_taxable_income: data.fed_taxable_income || '',
+                        fed_total_tax: data.fed_total_tax || '',
+                        state_taxable_income: data.state_taxable_income || '',
+                        state_total_tax: data.state_total_tax || '',
+                    });
+                    setStatusMessage(`Loaded existing data for ${selectedYear}.`);
+                } else if (response.status === 404) {
+                    setFormData(initialFormState); // Reset form if no data exists
+                    setStatusMessage(`No data found for ${selectedYear}. Enter new facts.`);
+                } else {
+                    throw new Error(`Failed to fetch data: ${response.statusText}`);
+                }
+            } catch (error) {
+                console.error('Fetch error:', error);
+                setStatusMessage(`Error loading data: ${error.message}`);
+                setFormData(initialFormState);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+
+        fetchTaxFacts();
+    }, [selectedYear]);
+
+    const handleInputChange = (e) => {
+        const { name, value } = e.target;
+        setFormData(prev => ({ ...prev, [name]: value }));
+    };
+
+    const handleSave = async (e) => {
+        e.preventDefault();
+        setIsSaving(true);
+        setStatusMessage('Saving...');
+
+        // Convert empty strings to null and numbers to floats for the backend
+        const payload = Object.fromEntries(
+            Object.entries(formData).map(([key, value]) => {
+                if (key === 'filing_status') {
+                    return [key, value];
+                }
+                const num = parseFloat(value);
+                return [key, isNaN(num) ? null : num];
+            })
+        );
+
+        try {
+            const response = await fetch(`/api/tax-facts/${selectedYear}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            
+            if (!response.ok) {
+                const errData = await response.json();
+                throw new Error(errData.detail || 'Failed to save data');
+            }
+
+            const result = await response.json();
+            console.log('Save successful:', result);
+            setStatusMessage(`Data for ${selectedYear} saved successfully.`);
+        } catch (error) {
+            console.error('Save error:', error);
+            setStatusMessage(`Error saving data: ${error.message}`);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    const yearOptions = Array.from({ length: 10 }, (_, i) => currentYear - 1 - i);
+
+    const taxFields = [
+        { id: 'fed_taxable_income', label: 'Federal Taxable Income', form: 'Form 1040, Line 15' },
+        { id: 'fed_total_tax', label: 'Federal Total Tax', form: 'Form 1040, Line 24' },
+        { id: 'state_taxable_income', label: 'State Taxable Income', form: 'CA 540, Line 19' },
+        { id: 'state_total_tax', label: 'State Total Tax', form: 'CA 540, Line 31' },
+    ];
+
+    return (
+        <div className="tax-editor-container">
+            <h3>Tax Facts for After-Tax Calculations</h3>
+            <p>Enter the following values from your filed tax returns. This data is stored locally and used to calculate the 'After-Tax' portion of the portfolio return waterfall.</p>
+            
+            <form onSubmit={handleSave}>
+                <div className="tax-form-header">
+                    <div className="form-group-inline">
+                        <label htmlFor="tax_year">Tax Year</label>
+                        <select id="tax_year" name="tax_year" value={selectedYear} onChange={(e) => setSelectedYear(parseInt(e.target.value))}>
+                            {yearOptions.map(year => <option key={year} value={year}>{year}</option>)}
+                        </select>
+                    </div>
+                    <div className="form-group-inline">
+                        <label htmlFor="filing_status">Filing Status</label>
+                        <select id="filing_status" name="filing_status" value={formData.filing_status} onChange={handleInputChange}>
+                            <option value="single">Single</option>
+                            <option value="married_filing_jointly">Married Filing Jointly</option>
+                            <option value="married_filing_separately">Married Filing Separately</option>
+                            <option value="head_of_household">Head of Household</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div className="tax-fields-grid">
+                    {taxFields.map(field => (
+                        <div className="tax-field-item" key={field.id}>
+                            <label htmlFor={field.id}>{field.label}</label>
+                            <span className="form-location">{field.form}</span>
+                            <div className="currency-input">
+                                <span>$</span>
+                                <input 
+                                    type="number" 
+                                    id={field.id} 
+                                    name={field.id}
+                                    value={formData[field.id]}
+                                    onChange={handleInputChange}
+                                    placeholder="0"
+                                    step="0.01"
+                                    disabled={isLoading}
+                                />
+                            </div>
+                        </div>
+                    ))}
+                </div>
+
+                <div className="tax-form-actions">
+                    {statusMessage && <div className="status-message">{statusMessage}</div>}
+                    <button type="submit" disabled={isSaving || isLoading}>
+                        {isSaving ? 'Saving...' : `Save ${selectedYear} Facts`}
+                    </button>
+                </div>
+            </form>
+        </div>
+    );
+};
+
+export default TaxFactsEditor;
+
+
+--- FILE: projects/trust/src/components/TaxRateSummaryTable.css ---
+
+.tax-summary-card {
+    /* Uses standard .card styles */
+}
+
+.tax-summary-card h2 {
+    /* Uses standard h2 styles */
+}
+
+.tax-summary-card .summary-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1rem;
+    font-size: 0.95em;
+}
+
+.tax-summary-card .summary-table th,
+.tax-summary-card .summary-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color);
+    text-align: left;
+}
+
+.tax-summary-card .summary-table th {
+    color: #ccc;
+    font-weight: 500;
+}
+
+.tax-summary-card .summary-table td {
+    color: var(--text-color);
+}
+
+.tax-summary-card .summary-table td:not(:first-child):not(:last-child) {
+    font-family: monospace;
+    font-size: 1.1em;
+    text-align: center;
+}
+
+.tax-summary-card .summary-table td.notes-cell {
+    font-style: italic;
+    color: #999;
+    font-size: 0.9em;
+    font-family: inherit;
+    text-align: left;
+}
+
+.tax-summary-card .error-message {
+    color: #ff9a9a;
+}
+
+
+--- FILE: projects/trust/src/components/TaxRateSummaryTable.jsx ---
+
+import { useState, useEffect } from 'react';
+import './TaxRateSummaryTable.css';
+
+const TaxRateSummaryTable = () => {
+    const [taxData, setTaxData] = useState([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [error, setError] = useState(null);
+
+    useEffect(() => {
+        const fetchTaxData = async () => {
+            try {
+                setIsLoading(true);
+                const response = await fetch('/api/analysis/effective-tax-rates');
+                if (!response.ok) {
+                    throw new Error('Failed to fetch tax rate data');
+                }
+                const data = await response.json();
+                setTaxData(data);
+            } catch (err) {
+                setError(err.message);
+                console.error(err);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        fetchTaxData();
+    }, []);
+
+    return (
+        <div className="card tax-summary-card">
+            <h2>Effective Tax Rates</h2>
+            {isLoading ? (
+                <p>Calculating rates...</p>
+            ) : error ? (
+                <p className="error-message">Error: {error}</p>
+            ) : (
+                <table className="summary-table">
+                    <thead>
+                        <tr>
+                            <th>Tax Year</th>
+                            <th>Effective Federal Rate</th>
+                            <th>Effective State Rate</th>
+                            <th>Effective Combined Rate</th>
+                            <th>Notes</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {taxData.map(row => (
+                            <tr key={row.year}>
+                                <td><strong>{row.year}</strong></td>
+                                <td>{row.federal_rate}</td>
+                                <td>{row.state_rate}</td>
+                                <td>{row.combined_rate}</td>
+                                <td className="notes-cell">{row.notes}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            )}
+        </div>
+    );
+};
+
+export default TaxRateSummaryTable;
+
 
 --- FILE: projects/trust/src/components/TimeFilter.css ---
 
@@ -7110,7 +8114,7 @@ async def refresh_market_data(top_n: int = 0) -> Dict[str, Any]:
             # --- Provider Routing Logic ---
             if asset_type == "Common Stock":
                 provider_module = massive_provider
-            elif asset_type in ["Mutual Fund Open", "Mutual Fund Closed"]:
+            elif asset_type in ["Mutual Fund - Open-end", "Mutual Fund - Closed-end"]:
                 provider_module = alphavantage_provider
             else:
                 print(f"Skipping {symbol}: unsupported asset type '{asset_type}'.")

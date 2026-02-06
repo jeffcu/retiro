@@ -102,6 +102,18 @@ def _ensure_schema(conn: sqlite3.Connection):
     );
     """)
 
+    # --- NEW: Table for storing annual tax return data (PRS Section 7.1) ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS tax_year_facts (
+        tax_year INTEGER PRIMARY KEY,
+        filing_status TEXT,
+        fed_taxable_income REAL,
+        fed_total_tax REAL,
+        state_taxable_income REAL,
+        state_total_tax REAL
+    );
+    """)
+
     # --- Schema Migrations ---
     cursor.execute("PRAGMA table_info(holdings)")
     holdings_cols = {row[1] for row in cursor.fetchall()}
@@ -259,20 +271,24 @@ def save_holdings_snapshot(holdings: List[Holding], account_id: str):
     conn = get_db_connection()
     cursor = conn.cursor()
     
+    # --- NEW: Non-destructive import logic --- #
+    # 1. Fetch existing metadata for the account before deleting.
     cursor.execute("SELECT symbol, tags, asset_type FROM holdings WHERE trim(lower(account_id)) = trim(lower(?))", (cleaned_account_id,))
     existing_metadata = {row['symbol']: {'tags': [t.strip() for t in row['tags'].split(',')] if row['tags'] else [], 'asset_type': row['asset_type']} for row in cursor.fetchall()}
     print(f"Found existing metadata for {len(existing_metadata)} symbols in account '{cleaned_account_id}'.")
 
+    # 2. Enrich the new holdings with the existing metadata if the new data is missing it.
     for h in holdings:
         if h.symbol in existing_metadata:
             meta = existing_metadata[h.symbol]
             if not h.tags and meta['tags']:
-                h.tags = meta['tags']
+                h.tags = meta['tags'] # Preserve old tags if new file has none
             if not h.asset_type and meta['asset_type']:
-                h.asset_type = meta['asset_type']
+                h.asset_type = meta['asset_type'] # Preserve old asset_type
 
     deleted_count, inserted_count = 0, 0
     try:
+        # 3. Proceed with the atomic delete-and-insert operation.
         cursor.execute("DELETE FROM holdings WHERE trim(lower(account_id)) = trim(lower(?))", (cleaned_account_id,))
         deleted_count = cursor.rowcount
         print(f"Deleted {deleted_count} stale holdings for account '{cleaned_account_id}'.")
@@ -491,20 +507,20 @@ def get_capital_flow_aggregates(period: str, exclude_invisible: bool = False) ->
     
     where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
 
-    # UPDATED QUERY: Income is now grouped by category to support breakdowns.
+    # CORRECTED QUERY: Separates 'Investment Income' from other 'Income' types to prevent double-counting.
     query = f""" 
-    -- Income by Category
+    -- Income by Category (excluding 'Investment Income', handled separately)
     SELECT 'Income' as source_type, category, SUM(amount) as total
     FROM transactions t
-    WHERE {where_sql} AND t.cashflow_type = 'Income'
+    WHERE {where_sql} AND t.cashflow_type = 'Income' AND (t.category IS NULL OR t.category != 'Investment Income')
     GROUP BY category
 
     UNION ALL
 
-    -- Portfolio Yield
-    SELECT 'Portfolio Yield' as source_type, 'N/A' as category, SUM(amount) as total
+    -- Investment Income (a special type of Income, but visualized separately)
+    SELECT 'Investment Income' as source_type, 'Investment Income' as category, SUM(amount) as total
     FROM transactions t
-    WHERE {where_sql} AND t.cashflow_type = 'Investment' AND t.category IN ('Dividends', 'Interest Income')
+    WHERE {where_sql} AND t.cashflow_type = 'Income' AND t.category = 'Investment Income'
 
     UNION ALL
 
@@ -530,6 +546,59 @@ def get_latest_transaction_year() -> int | None:
     result = cursor.fetchone()
     conn.close()
     return int(result['latest_year']) if result and result['latest_year'] else None
+
+def get_total_investment_fees_for_period(period: str) -> float:
+    """
+    Calculates the total advisory fees for a given period from transactions.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    where_clauses, params = [], []
+
+    # Define the specific filters for advisory fees
+    where_clauses.append("cashflow_type = 'Investment'")
+    where_clauses.append("category = 'Advisory Fees'")
+
+    _apply_period_filter_to_query(where_clauses, params, period, date_column='transaction_date')
+
+    where_sql = " AND ".join(where_clauses)
+
+    query = f"SELECT SUM(amount) as total_fees FROM transactions WHERE {where_sql}"
+    
+    cursor.execute(query, params)
+    result = cursor.fetchone()
+    conn.close()
+
+    # Fees are typically negative amounts, so we return the absolute value.
+    if result and result['total_fees'] is not None:
+        return abs(float(result['total_fees']))
+    return 0.0
+
+def get_investment_income_for_period(period: str) -> float:
+    """
+    Calculates the total investment income (yield) for a given period.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    where_clauses, params = [], []
+
+    # Per PRS 2.1.A, yield is income categorized as such.
+    where_clauses.append("cashflow_type = 'Income'")
+    where_clauses.append("category = 'Investment Income'")
+
+    _apply_period_filter_to_query(where_clauses, params, period, date_column='transaction_date')
+
+    where_sql = " AND ".join(where_clauses)
+
+    query = f"SELECT SUM(amount) as total_income FROM transactions WHERE {where_sql}"
+    
+    cursor.execute(query, params)
+    result = cursor.fetchone()
+    conn.close()
+
+    if result and result['total_income'] is not None:
+        return float(result['total_income'])
+    return 0.0
 
 def get_cashflow_aggregation_by_month(filters: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Aggregates income and expense by month based on a flexible filter dictionary."""
@@ -599,7 +668,16 @@ def get_total_portfolio_market_value() -> float:
     """Calculates the sum of market_value for all holdings."""
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT SUM(market_value) as total FROM holdings WHERE market_value IS NOT NULL AND market_value > 0")
+    cursor.execute("SELECT SUM(market_value) as total FROM holdings WHERE market_value IS NOT NULL")
+    result = cursor.fetchone()
+    conn.close()
+    return result['total'] if result and result['total'] else 0.0
+
+def get_total_portfolio_cost_basis() -> float:
+    """Calculates the sum of cost_basis for all holdings."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT SUM(cost_basis) as total FROM holdings WHERE cost_basis IS NOT NULL")
     result = cursor.fetchone()
     conn.close()
     return result['total'] if result and result['total'] else 0.0
@@ -759,6 +837,45 @@ def mark_holdings_as_failed(symbols: List[str]):
         print(f"Marked {cursor.rowcount} holdings as failed for symbols: {symbols}")
     except sqlite3.Error as e:
         print(f"Database error marking holdings as failed: {e}")
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+# --- NEW: Functions for Tax Facts --- 
+def get_tax_facts(year: int) -> Dict[str, Any] | None:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM tax_year_facts WHERE tax_year = ?", (year,))
+    row = cursor.fetchone()
+    conn.close()
+    # FIX: Use an explicit dictionary comprehension to be safer than dict(row)
+    if not row:
+        return None
+    return {k: row[k] for k in row.keys()}
+
+def save_tax_facts(year: int, data: Dict[str, Any]):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    sql = """INSERT OR REPLACE INTO tax_year_facts (
+                 tax_year, filing_status, fed_taxable_income, fed_total_tax, 
+                 state_taxable_income, state_total_tax
+             ) VALUES (?, ?, ?, ?, ?, ?);"""
+    params = (
+        year,
+        data.get('filing_status'),
+        data.get('fed_taxable_income'),
+        data.get('fed_total_tax'),
+        data.get('state_taxable_income'),
+        data.get('state_total_tax')
+    )
+    try:
+        cursor.execute(sql, params)
+        conn.commit()
+        # Note: Using print for consistency with existing codebase. Should be logging.
+        print(f"Successfully saved/replaced tax facts for year {year}.")
+    except sqlite3.Error as e:
+        print(f"Database error saving tax facts for {year}: {e}")
         conn.rollback()
         raise e
     finally:

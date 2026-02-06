@@ -16,7 +16,7 @@ All acceptance criteria for phases 0 through 4 and 6.1 (Core Feature Verificatio
 
 **Objective**: Automate portfolio pricing using a multi-provider strategy and introduce advanced return metrics.
 
-**Result**: IN PROGRESS
+**Result**: CURRENT PHASE
 
 ### 5.1 Multi-Provider Pricing Service
 
@@ -40,8 +40,28 @@ All acceptance criteria for phases 0 through 4 and 6.1 (Core Feature Verificatio
     1. Navigate to the Portfolio screen.
     2. The "Last Updated" column for both AAPL and VTSAX should display the recent timestamp without any error styling.
 
-### 5.2 Layered Returns (Future)
-- [ ] **Verification**: The Portfolio screen displays Gross, After-Fee, and After-Tax returns, visualized in the Returns Sankey.
+### 5.2 Layered Returns & Tax Facts
+
+**Objective**: Verify the end-to-end functionality of entering tax data and seeing it reflected in after-tax return calculations.
+
+**Acceptance Criteria**:
+- [ ] **UI Implementation**: The `TaxFactsEditor` component is present and functional on the Data & Settings screen.
+- [ ] **Data Persistence (Create/Update)**: 
+    1. Navigate to Data & Settings -> Personal Inputs.
+    2. Select a tax year (e.g., 2024) from the dropdown.
+    3. Enter valid numbers in all four tax data fields (Federal/State Taxable Income, Federal/State Total Tax).
+    4. Click "Save 2024 Facts".
+    5. Verify a success message is shown.
+- [ ] **Data Persistence (Read)**:
+    1. Select a different tax year, then select the original test year (e.g., 2024) again.
+    2. Verify the previously entered numbers are correctly re-loaded into the form fields.
+- [ ] **Backend Verification**:
+    1. Using a SQLite browser, query the `tax_year_facts` table in `data/trust.db`.
+    2. Confirm that a row exists for the test year (e.g., 2024) and that all columns contain the correct data saved from the UI.
+- [ ] **After-Tax Calculation Display**:
+    1. Navigate to the Portfolio screen.
+    2. Verify that a metric for "After-Tax Return" is displayed alongside Gross and After-Fee returns.
+    3. Verify the Returns Sankey correctly visualizes the `Gross Return -> Taxes -> After-Tax Return` flow, using the entered tax data to perform its calculations.
 
 ---
 

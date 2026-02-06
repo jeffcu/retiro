@@ -2,7 +2,7 @@ import uvicorn
 import uuid
 import asyncio
 from datetime import datetime, timezone
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body, Response, Query, Depends, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body, Response, Query, Depends, BackgroundTasks, Path
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import os
@@ -79,6 +79,25 @@ class AllocationTableItem(BaseModel):
 class PortfolioAllocationResponse(BaseModel):
     chartData: List[AllocationDataItem]
     tableData: List[AllocationTableItem]
+
+# --- NEW: Pydantic model for Tax Facts ---
+class TaxFactsPayload(BaseModel):
+    filing_status: Optional[str] = None
+    fed_taxable_income: Optional[float] = None
+    fed_total_tax: Optional[float] = None
+    state_taxable_income: Optional[float] = None
+    state_total_tax: Optional[float] = None
+
+class TaxFactsResponse(TaxFactsPayload):
+    tax_year: int
+
+# --- NEW: Pydantic model for Tax Rate Summary ---
+class TaxRateSummary(BaseModel):
+    year: int
+    federal_rate: str
+    state_rate: str
+    combined_rate: str
+    notes: str
 
 # --- App Events ---
 @app.on_event("startup")
@@ -204,6 +223,10 @@ async def get_home_sankey_data(period: str = "all"):
 async def get_home_capital_flow_table(period: str = "all"):
     return analysis.generate_capital_flow_table_data(period, exclude_invisible=True)
 
+@app.get("/api/analysis/investment-cashflow-summary", tags=["Analysis"])
+async def get_investment_cashflow_summary(period: str = "all"):
+    return analysis.calculate_investment_cashflow_summary(period)
+
 @app.get("/api/portfolio/summary", tags=["Analysis"])
 async def get_portfolio_summary():
     holdings = db.get_holdings()
@@ -221,6 +244,18 @@ async def get_portfolio_allocation_data():
 @app.get("/api/analysis/portfolio-chart", tags=["Analysis"])
 async def get_portfolio_chart(filters: Dict[str, Any] = Depends(get_holding_filters)):
     return analysis.prepare_portfolio_chart_data(filters)
+
+# --- NEW: Effective Tax Rate Endpoint ---
+@app.get("/api/analysis/effective-tax-rates", response_model=List[TaxRateSummary], tags=["Analysis"])
+async def get_effective_tax_rates():
+    """Calculates and returns the effective tax rates for key years."""
+    target_years = [2023, 2024]
+    return analysis.calculate_effective_tax_rates_for_years(target_years)
+
+# --- NEW: Portfolio Returns Sankey Endpoint ---
+@app.get("/api/analysis/portfolio-returns-sankey", tags=["Analysis"])
+async def get_portfolio_returns_sankey(period: str = "all"):
+    return analysis.generate_portfolio_return_sankey(period)
 
 # --- Data & Filter Endpoints ---
 @app.get("/api/transactions", tags=["Data"])
@@ -299,6 +334,23 @@ async def get_sankey_income_settings():
 async def set_sankey_income_settings(categories: List[str] = Body(...)):
     db.set_setting('sankey_income_categories', categories)
     return Response(status_code=204)
+
+# --- NEW: Tax Facts Endpoints --- 
+@app.get("/api/tax-facts/{year}", response_model=TaxFactsResponse, tags=["Tax Data"])
+async def get_tax_facts_for_year(year: int = Path(..., ge=2000, le=2100)):
+    facts = db.get_tax_facts(year)
+    if not facts:
+        raise HTTPException(status_code=404, detail=f"Tax facts for year {year} not found.")
+    return facts
+
+@app.post("/api/tax-facts/{year}", response_model=TaxFactsResponse, status_code=201, tags=["Tax Data"])
+async def create_or_update_tax_facts(payload: TaxFactsPayload, year: int = Path(..., ge=2000, le=2100)):
+    try:
+        db.save_tax_facts(year, payload.dict())
+        facts = db.get_tax_facts(year)
+        return facts
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # --- Admin & Market Data Endpoints ---
 @app.post("/api/data/purge", tags=["Admin"])
