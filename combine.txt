@@ -1705,90 +1705,36 @@ def calculate_effective_tax_rates_for_years(years: List[int]) -> List[Dict[str, 
         
     return results
 
-# --- NEW: Layered Portfolio Return Calculation ---
-def calculate_layered_portfolio_returns(period: str) -> Dict[str, Any]:
+# --- REVISED: Portfolio Overall Gains Calculation ---
+def calculate_portfolio_summary_metrics() -> Dict[str, Any]:
     """
-    Calculates layered portfolio returns.
-
-    NOTE: This is a highly simplified, "since inception" calculation due to the lack
-    of historical portfolio value snapshots. It should be labeled as an approximation.
-    - Gross Return is based on total market value vs. total cost basis.
-    - Fees are correctly calculated for the given period.
-    - Taxes are estimated based on the effective tax rate applied to investment *yield* for
-      the period, as capital gains data is not available.
+    Calculates key portfolio summary metrics based on "since inception" data.
+    This provides a simple, non-period-specific overview of the portfolio's
+    current standing against its cost basis, as requested by the Captain.
     """
     total_market_value = db.get_total_portfolio_market_value()
     total_cost_basis = db.get_total_portfolio_cost_basis()
 
     if total_cost_basis == 0:
-        return { # Return a zeroed-out state if there's no portfolio
-            "gross_return_dollars": 0,
-            "gross_return_percent": 0,
-            "fees_dollars": 0,
-            "after_fees_return_dollars": 0,
-            "after_fees_return_percent": 0,
-            "taxes_dollars": 0,
-            "after_taxes_return_dollars": 0,
-            "after_taxes_return_percent": 0,
-            "notes": "No portfolio cost basis found. Cannot calculate returns."
+        return {
+            "total_market_value": round(total_market_value, 2),
+            "total_cost_basis": 0,
+            "total_gain_dollars": 0,
+            "total_gain_percent": 0,
+            "notes": "Portfolio cost basis is zero. Cannot calculate gains."
         }
 
-    # 1. Gross Return (Since Inception)
-    gross_return_dollars = total_market_value - total_cost_basis
-    gross_return_percent = (gross_return_dollars / total_cost_basis) * 100
-
-    # 2. Fees (For the Period)
-    fees_dollars = db.get_total_investment_fees_for_period(period)
-
-    # 3. After Fees Return
-    after_fees_return_dollars = gross_return_dollars - fees_dollars
-    after_fees_return_percent = (after_fees_return_dollars / total_cost_basis) * 100
-
-    # 4. Estimated Taxes (For the Period, on YIELD only)
-    year_to_use = None
-    if period.isdigit() and len(period) == 4:
-        year_to_use = int(period)
-    else:
-        # For 'all', '6m', etc., use the latest year with transaction data as a proxy
-        year_to_use = db.get_latest_transaction_year()
-
-    notes = [f"Return calculated since inception (Total Market Value vs Total Cost Basis). Fees and Taxes are for the selected period '{period}'."]
-    taxes_dollars = 0
-
-    if year_to_use:
-        investment_income_for_period = db.get_investment_income_for_period(period)
-        tax_facts = db.get_tax_facts(year_to_use)
-        
-        if tax_facts and tax_facts.get('fed_taxable_income') and tax_facts.get('fed_total_tax'):
-            total_income = (tax_facts.get('fed_taxable_income', 0) or 0) + (tax_facts.get('state_taxable_income', 0) or 0)
-            total_tax = (tax_facts.get('fed_total_tax', 0) or 0) + (tax_facts.get('state_total_tax', 0) or 0)
-            
-            if total_income > 0:
-                effective_tax_rate = total_tax / total_income
-                taxes_dollars = investment_income_for_period * effective_tax_rate
-                notes.append(f"Taxes estimated using {effective_tax_rate:.2%} effective rate from {year_to_use} tax data, applied to period investment yield of ${investment_income_for_period:,.0f}.")
-            else:
-                notes.append(f"Taxable income for {year_to_use} is zero; cannot calculate tax rate.")
-        else:
-            notes.append(f"Tax facts for {year_to_use} are incomplete; taxes could not be estimated.")
-    else:
-        notes.append("Could not determine a tax year; taxes could not be estimated.")
-
-    # 5. After Taxes Return
-    after_taxes_return_dollars = after_fees_return_dollars - taxes_dollars
-    after_taxes_return_percent = (after_taxes_return_dollars / total_cost_basis) * 100
+    total_gain_dollars = total_market_value - total_cost_basis
+    total_gain_percent = (total_gain_dollars / total_cost_basis) * 100 if total_cost_basis else 0
 
     return {
-        "gross_return_dollars": round(gross_return_dollars, 2),
-        "gross_return_percent": round(gross_return_percent, 2),
-        "fees_dollars": round(fees_dollars, 2),
-        "after_fees_return_dollars": round(after_fees_return_dollars, 2),
-        "after_fees_return_percent": round(after_fees_return_percent, 2),
-        "taxes_dollars": round(taxes_dollars, 2),
-        "after_taxes_return_dollars": round(after_taxes_return_dollars, 2),
-        "after_taxes_return_percent": round(after_taxes_return_percent, 2),
-        "notes": " ".join(notes)
+        "total_market_value": round(total_market_value, 2),
+        "total_cost_basis": round(total_cost_basis, 2),
+        "total_gain_dollars": round(total_gain_dollars, 2),
+        "total_gain_percent": round(total_gain_percent, 2),
+        "notes": "Calculated since inception (Total Market Value vs. Total Cost Basis). This is not a time-weighted return."
     }
+
 
 --- FILE: projects/trust/src/data_model.py ---
 
@@ -2753,10 +2699,13 @@ def get_tax_facts(year: int) -> Dict[str, Any] | None:
     return {k: row[k] for k in row.keys()}
 
 def get_latest_complete_tax_facts() -> Dict[str, Any] | None:
-    """Fetches the tax facts for the most recent year that has data."""
+    """Fetches the tax facts for the most recent year that has usable data for rate calculation."""
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM tax_year_facts ORDER BY tax_year DESC LIMIT 1")
+    # --- FIX: The query now ensures that the data is valid for calculation. ---
+    cursor.execute("""SELECT * FROM tax_year_facts 
+                     WHERE fed_taxable_income > 0 AND fed_total_tax > 0
+                     ORDER BY tax_year DESC LIMIT 1""")
     row = cursor.fetchone()
     conn.close()
     if not row:
@@ -2844,6 +2793,81 @@ def delete_future_income_stream(stream_id: str) -> bool:
         conn.close()
 
 
+--- FILE: projects/trust/src/demo_mode.py ---
+
+from typing import List, Dict, Any
+from decimal import Decimal
+
+DEMO_DIVISOR = Decimal('4.0')
+
+def _apply_demo_to_holding(holding: Dict[str, Any]) -> Dict[str, Any]:
+    """Applies demo mode transformation to a single holding dictionary."""
+    if not isinstance(holding, dict):
+        return holding
+    
+    demo_holding = holding.copy()
+    
+    # These fields represent real values that should be scaled.
+    fields_to_scale = ['quantity', 'cost_basis', 'market_value', 'total_market_value', 'value']
+    
+    for field in fields_to_scale:
+        if field in demo_holding and demo_holding[field] is not None:
+            try:
+                original_value = Decimal(str(demo_holding[field]))
+                demo_holding[field] = original_value / DEMO_DIVISOR
+            except (TypeError, ValueError):
+                # Ignore fields that are not numeric
+                pass
+                
+    return demo_holding
+
+def process_for_demo_mode(data: Any) -> Any:
+    """
+    Recursively processes a data structure to apply demo mode transformations.
+    This is designed to handle various response types from the API.
+    """
+    if isinstance(data, list):
+        return [_apply_demo_to_holding(item) for item in data]
+    
+    if isinstance(data, dict):
+        # Handle specific, known data structures first
+        
+        # Structure from `calculate_portfolio_summary_metrics`
+        if all(k in data for k in ['total_market_value', 'total_cost_basis', 'total_gain_dollars']):
+            demo_data = data.copy()
+            demo_data['total_market_value'] /= float(DEMO_DIVISOR)
+            demo_data['total_cost_basis'] /= float(DEMO_DIVISOR)
+            demo_data['total_gain_dollars'] /= float(DEMO_DIVISOR)
+            # Percentage gain remains the same, as it's a ratio.
+            demo_data['notes'] = "DEMO MODE: All values are divided by 4."
+            return demo_data
+            
+        # Structure from `prepare_portfolio_allocation_chart_data`
+        if all(k in data for k in ['chartData', 'tableData']):
+            demo_data = data.copy()
+            demo_data['chartData'] = [
+                {**item, 'value': item['value'] / float(DEMO_DIVISOR)}
+                for item in data['chartData']
+            ]
+            demo_data['tableData'] = [
+                {**item, 'value': int(item['value'] / float(DEMO_DIVISOR))}
+                for item in data['tableData']
+            ]
+            # Percentages remain the same.
+            return demo_data
+            
+        # Structure from `portfolio/summary`
+        if 'total_market_value' in data and len(data.keys()) == 1:
+            demo_data = data.copy()
+            demo_data['total_market_value'] /= float(DEMO_DIVISOR)
+            return demo_data
+
+        # Fallback for generic dictionaries (though less likely to be used)
+        return {key: process_for_demo_mode(value) for key, value in data.items()}
+
+    return data
+
+
 --- FILE: projects/trust/src/index.css ---
 
 :root {
@@ -2872,10 +2896,13 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
 import './index.css'
+import { ModeProvider } from './context/ModeContext.jsx'
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <App />
+    <ModeProvider>
+      <App />
+    </ModeProvider>
   </React.StrictMode>,
 )
 
@@ -2902,6 +2929,7 @@ from src import database as db
 from src import analysis
 from src import rules_engine
 from src.market_data import polling_service, market_scheduler
+from src import demo_mode
 
 load_dotenv()
 
@@ -2983,16 +3011,12 @@ class TaxRateSummary(BaseModel):
     combined_rate: str
     notes: str
 
-# --- NEW: Pydantic model for Layered Returns ---
-class LayeredReturnsResponse(BaseModel):
-    gross_return_dollars: float
-    gross_return_percent: float
-    fees_dollars: float
-    after_fees_return_dollars: float
-    after_fees_return_percent: float
-    taxes_dollars: float
-    after_taxes_return_dollars: float
-    after_taxes_return_percent: float
+# --- REVISED: Pydantic model for Portfolio Overall Return ---
+class PortfolioOverallReturnSummary(BaseModel):
+    total_market_value: float
+    total_cost_basis: float
+    total_gain_dollars: float
+    total_gain_percent: float
     notes: str
 
 # --- NEW: Pydantic models for Future Income Streams ---
@@ -3138,22 +3162,31 @@ async def get_investment_cashflow_summary(period: str = "all"):
     return analysis.calculate_investment_cashflow_summary(period)
 
 @app.get("/api/portfolio/summary", tags=["Analysis"])
-async def get_portfolio_summary():
+async def get_portfolio_summary(mode: str = Query("actuals")):
     holdings = db.get_holdings()
     total_market_value = sum(h.get('market_value', 0) for h in holdings if h.get('market_value') is not None)
-    return {"total_market_value": total_market_value}
+    result = {"total_market_value": total_market_value}
+    if mode == 'demo':
+        return demo_mode.process_for_demo_mode(result)
+    return result
 
 @app.get("/api/analysis/cashflow-chart", tags=["Analysis"])
 async def get_cashflow_chart(filters: Dict[str, Any] = Depends(get_transaction_filters)):
     return analysis.prepare_cashflow_chart_data(filters)
 
 @app.get("/api/analysis/portfolio-allocation", tags=["Analysis"], response_model=PortfolioAllocationResponse)
-async def get_portfolio_allocation_data():
-    return analysis.prepare_portfolio_allocation_chart_data()
+async def get_portfolio_allocation_data(mode: str = Query("actuals")):
+    result = analysis.prepare_portfolio_allocation_chart_data()
+    if mode == 'demo':
+        return demo_mode.process_for_demo_mode(result)
+    return result
 
 @app.get("/api/analysis/portfolio-chart", tags=["Analysis"])
-async def get_portfolio_chart(filters: Dict[str, Any] = Depends(get_holding_filters)):
-    return analysis.prepare_portfolio_chart_data(filters)
+async def get_portfolio_chart(filters: Dict[str, Any] = Depends(get_holding_filters), mode: str = Query("actuals")):
+    result = analysis.prepare_portfolio_chart_data(filters)
+    if mode == 'demo':
+        return demo_mode.process_for_demo_mode(result)
+    return result
 
 # --- NEW: Effective Tax Rate Endpoint ---
 @app.get("/api/analysis/effective-tax-rates", response_model=List[TaxRateSummary], tags=["Analysis"])
@@ -3162,14 +3195,16 @@ async def get_effective_tax_rates():
     target_years = [2023, 2024]
     return analysis.calculate_effective_tax_rates_for_years(target_years)
 
-# --- NEW: Layered Returns Endpoint ---
-@app.get("/api/portfolio/layered-returns", response_model=LayeredReturnsResponse, tags=["Analysis"])
-async def get_layered_returns(period: str = "all"):
+# --- REVISED: Portfolio Overall Return Endpoint ---
+@app.get("/api/portfolio/overall-return", response_model=PortfolioOverallReturnSummary, tags=["Analysis"])
+async def get_portfolio_overall_return(mode: str = Query("actuals")):
     """
-    Calculates and returns the layered portfolio returns.
-    NOTE: This is a simplified 'since inception' calculation due to data model limitations.
+    Calculates key portfolio summary metrics based on "since inception" data.
     """
-    return analysis.calculate_layered_portfolio_returns(period)
+    result = analysis.calculate_portfolio_summary_metrics()
+    if mode == 'demo':
+        return demo_mode.process_for_demo_mode(result)
+    return result
 
 # --- Data & Filter Endpoints ---
 @app.get("/api/transactions", tags=["Data"])
@@ -3207,8 +3242,11 @@ async def update_transaction(transaction_id: str, payload: TransactionUpdate):
     return {"message": "Transaction updated successfully", "transaction": tx_obj}
 
 @app.get("/api/holdings", tags=["Data"])
-async def get_filtered_holdings(filters: Dict[str, Any] = Depends(get_holding_filters)):
-    return db.get_holdings(filters)
+async def get_filtered_holdings(filters: Dict[str, Any] = Depends(get_holding_filters), mode: str = Query("actuals")):
+    result = db.get_holdings(filters)
+    if mode == 'demo':
+        return demo_mode.process_for_demo_mode(result)
+    return result
 
 @app.put("/api/holdings/{holding_id}", tags=["Data"])
 async def update_holding(holding_id: str, payload: HoldingUpdate):
@@ -4812,11 +4850,13 @@ import SankeyChart from '../SankeyChart';
 import TimeFilter from './TimeFilter';
 import PieChart from './PieChart';
 import CapitalFlowTable from './CapitalFlowTable';
-import InvestmentSummaryTable from './InvestmentSummaryTable'; // Import the new component
-import TaxRateSummaryTable from './TaxRateSummaryTable'; // Import the new component
+import InvestmentSummaryTable from './InvestmentSummaryTable';
+import TaxRateSummaryTable from './TaxRateSummaryTable';
 import './HomeView.css';
+import { useMode } from '../context/ModeContext';
 
 const NetWorthHero = () => {
+    const { mode } = useMode();
     const [netWorth, setNetWorth] = useState(null);
     const [loading, setLoading] = useState(true);
 
@@ -4824,7 +4864,7 @@ const NetWorthHero = () => {
         const fetchSummary = async () => {
             try {
                 setLoading(true);
-                const response = await fetch('/api/portfolio/summary');
+                const response = await fetch(`/api/portfolio/summary?mode=${mode}`);
                 if (!response.ok) throw new Error('Failed to fetch summary');
                 const data = await response.json();
                 setNetWorth(data.total_market_value);
@@ -4836,7 +4876,7 @@ const NetWorthHero = () => {
             }
         };
         fetchSummary();
-    }, []);
+    }, [mode]);
 
     const formatCurrency = (value) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(value || 0);
 
@@ -4850,6 +4890,7 @@ const NetWorthHero = () => {
 };
 
 const HomeView = ({ navigateTo }) => {
+    const { mode } = useMode();
     const [capitalFlowData, setCapitalFlowData] = useState({ nodes: [], links: [] });
     const [sankeyLoading, setSankeyLoading] = useState(true);
     const [selectedPeriod, setSelectedPeriod] = useState('all');
@@ -4877,7 +4918,7 @@ const HomeView = ({ navigateTo }) => {
         const fetchAllocationData = async () => {
             try {
                 setAllocationLoading(true);
-                const response = await fetch('/api/analysis/portfolio-allocation');
+                const response = await fetch(`/api/analysis/portfolio-allocation?mode=${mode}`);
                 if (!response.ok) throw new Error('Failed to fetch portfolio allocation');
                 setPortfolioAllocation(await response.json());
             } catch (error) {
@@ -4887,7 +4928,7 @@ const HomeView = ({ navigateTo }) => {
             }
         };
         fetchAllocationData();
-    }, []);
+    }, [mode]);
 
     const handleSankeyNodeClick = (node) => {
         const { id } = node;
@@ -5431,10 +5472,10 @@ export default InvestmentSummaryTable;
 
 .metrics-container {
     display: flex;
-    justify-content: space-around;
+    justify-content: center; /* UPDATED */
     align-items: center;
     flex-wrap: wrap;
-    gap: 1rem;
+    gap: 2rem; /* UPDATED */
     padding: 1.5rem 0;
 }
 
@@ -5485,31 +5526,32 @@ export default InvestmentSummaryTable;
 
 import { useState, useEffect } from 'react';
 import './LayeredReturnsSummary.css';
+import { useMode } from '../context/ModeContext';
 
-const MetricDisplay = ({ label, value, note, isPercent = false }) => (
+const MetricDisplay = ({ label, value, isPercent = false }) => (
     <div className="metric-item">
         <span className="metric-label">{label}</span>
         <span className="metric-value">{isPercent ? `${value.toFixed(2)}%` : value.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
-        {note && <span className="metric-note">{note}</span>}
     </div>
 );
 
-const LayeredReturnsSummary = ({ period }) => {
-    const [returns, setReturns] = useState(null);
+const PortfolioGainsSummary = () => {
+    const { mode } = useMode();
+    const [summary, setSummary] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState(null);
 
     useEffect(() => {
-        const fetchReturns = async () => {
+        const fetchSummary = async () => {
             try {
                 setIsLoading(true);
                 setError(null);
-                const response = await fetch(`/api/portfolio/layered-returns?period=${period}`);
+                const response = await fetch(`/api/portfolio/overall-return?mode=${mode}`);
                 if (!response.ok) {
-                    throw new Error('Failed to fetch layered returns data');
+                    throw new Error('Failed to fetch portfolio summary data');
                 }
                 const data = await response.json();
-                setReturns(data);
+                setSummary(data);
             } catch (err) {
                 setError(err.message);
                 console.error(err);
@@ -5518,39 +5560,36 @@ const LayeredReturnsSummary = ({ period }) => {
             }
         };
 
-        fetchReturns();
-    }, [period]);
+        fetchSummary();
+    }, [mode]);
 
     if (isLoading) {
-        return <div className="card"><p>Calculating returns...</p></div>;
+        return <div className="card"><p>Calculating summary...</p></div>;
     }
 
     if (error) {
-        return <div className="card error"><p>Error calculating returns: {error}</p></div>;
+        return <div className="card error"><p>Error calculating summary: {error}</p></div>;
     }
     
-    if (!returns) return null;
+    if (!summary) return null;
 
     return (
         <div className="card layered-returns-card">
-            <h2>Portfolio Return (Approximated)</h2>
+            <h2>Portfolio Gains (Since Inception)</h2>
             <div className="metrics-container">
-                <MetricDisplay label="Gross Return" value={returns.gross_return_percent} isPercent={true} note={`$${returns.gross_return_dollars.toLocaleString()}`} />
+                <MetricDisplay label="Total Assets (Market Value)" value={summary.total_market_value} />
                 <div className="metric-operator">−</div>
-                <MetricDisplay label="Fees (Period)" value={returns.fees_dollars} note={` `} />
+                <MetricDisplay label="Total Basis" value={summary.total_cost_basis} />
                 <div className="metric-operator">=</div>
-                <MetricDisplay label="After Fees" value={returns.after_fees_return_percent} isPercent={true} note={`$${returns.after_fees_return_dollars.toLocaleString()}`} />
-                <div className="metric-operator">−</div>
-                <MetricDisplay label="Taxes (Est. on Yield)" value={returns.taxes_dollars} note={` `} />
-                <div className="metric-operator">=</div>
-                <MetricDisplay label="After-Tax Return" value={returns.after_taxes_return_percent} isPercent={true} note={`$${returns.after_taxes_return_dollars.toLocaleString()}`} />
+                <MetricDisplay label="Total Gains" value={summary.total_gain_dollars} />
+                <MetricDisplay label="Increase" value={summary.total_gain_percent} isPercent={true} />
             </div>
-            <p className="summary-notes"><em>Note: {returns.notes}</em></p>
+            <p className="summary-notes"><em>Note: {summary.notes}</em></p>
         </div>
     );
 };
 
-export default LayeredReturnsSummary;
+export default PortfolioGainsSummary;
 
 
 --- FILE: projects/trust/src/components/MockSankey.jsx ---
@@ -5600,6 +5639,59 @@ const MockSankey = ({ type }) => {
 };
 
 export default MockSankey;
+
+
+--- FILE: projects/trust/src/components/ModeSelector.css ---
+
+.mode-selector {
+    padding: 0.75rem 1.5rem;
+    cursor: pointer;
+    text-align: center;
+    font-weight: bold;
+    border-top: 1px solid var(--border-color);
+    transition: background-color 0.2s ease;
+    margin-top: auto; /* Pushes to the bottom */
+}
+
+.mode-selector.actuals {
+    background-color: #8B0000; /* Dark Red */
+    color: #fff;
+}
+
+.mode-selector.demo {
+    background-color: #FFD700; /* Gold/Yellow */
+    color: #000;
+}
+
+.mode-selector:hover {
+    opacity: 0.9;
+}
+
+
+--- FILE: projects/trust/src/components/ModeSelector.jsx ---
+
+import { useMode } from '../context/ModeContext';
+import './ModeSelector.css';
+
+const ModeSelector = () => {
+    const { mode, setMode } = useMode();
+
+    const toggleMode = () => {
+        setMode(currentMode => (currentMode === 'actuals' ? 'demo' : 'actuals'));
+    };
+
+    return (
+        <div 
+            className={`mode-selector ${mode}`}
+            onClick={toggleMode}
+            title={`Click to switch to ${mode === 'actuals' ? 'Demo' : 'Actuals'} Mode`}
+        >
+            {mode === 'actuals' ? 'LIVE MODE' : 'DEMO MODE (1/4 scale)'}
+        </div>
+    );
+};
+
+export default ModeSelector;
 
 
 --- FILE: projects/trust/src/components/PieChart.jsx ---
@@ -5880,7 +5972,8 @@ import FilterPanel from './FilterPanel';
 import BarChart from './BarChart';
 import TimeFilter from './TimeFilter';
 import HoldingEditorModal from './HoldingEditorModal';
-import LayeredReturnsSummary from './LayeredReturnsSummary';
+import PortfolioGainsSummary from './LayeredReturnsSummary';
+import { useMode } from '../context/ModeContext';
 
 const AllocationTable = ({ tableData, formatCurrency }) => {
     return (
@@ -5937,6 +6030,7 @@ const filterConfig = [
 ];
 
 const PortfolioView = () => {
+    const { mode } = useMode();
     const [holdings, setHoldings] = useState([]);
     const [chartData, setChartData] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -5951,7 +6045,8 @@ const PortfolioView = () => {
         try {
             setLoading(true);
             setActiveFilters(filters);
-            const query = new URLSearchParams(filters).toString();
+            const queryParams = { ...filters, mode };
+            const query = new URLSearchParams(queryParams).toString();
 
             const [holdingsRes, chartRes] = await Promise.all([
                 fetch(`/api/holdings?${query}`),
@@ -5978,7 +6073,7 @@ const PortfolioView = () => {
         const fetchAllocationData = async () => {
             try {
                 setAllocationLoading(true);
-                const response = await fetch('/api/analysis/portfolio-allocation');
+                const response = await fetch(`/api/analysis/portfolio-allocation?mode=${mode}`);
                 if (!response.ok) throw new Error('Failed to fetch portfolio allocation');
                 const data = await response.json();
                 setPortfolioAllocation(data);
@@ -5990,9 +6085,9 @@ const PortfolioView = () => {
             }
         };
         
-        fetchData();
+        fetchData(activeFilters);
         fetchAllocationData();
-    }, []);
+    }, [mode]);
 
     const sortedHoldings = useMemo(() => {
         let sortableItems = [...holdings];
@@ -6066,7 +6161,7 @@ const PortfolioView = () => {
 
     return (
         <>
-            <LayeredReturnsSummary period={activeFilters.period || 'all'} />
+            <PortfolioGainsSummary />
 
             <div className="card">
                 <h2>Asset Allocation Summary</h2>
@@ -6893,6 +6988,7 @@ export default RulesEditor;
 --- FILE: projects/trust/src/components/SideBar.jsx ---
 
 import './SideBar.css';
+import ModeSelector from './ModeSelector';
 
 const NavItem = ({ name, activeView, setActiveView }) => (
     <li
@@ -6929,14 +7025,13 @@ const SideBar = ({ activeView, setActiveView }) => {
                     />
                 ))}
             </ul>
-            <div className="sidebar-footer">
-                <p>v0.0.1</p>
-            </div>
+            <ModeSelector />
         </nav>
     );
 };
 
 export default SideBar;
+
 
 --- FILE: projects/trust/src/components/TaxFactsEditor.css ---
 
@@ -8027,6 +8122,33 @@ const TransactionListView = ({ initialFilters = {} }) => {
 };
 
 export default TransactionListView;
+
+
+--- FILE: projects/trust/src/context/ModeContext.jsx ---
+
+import { createContext, useState, useMemo, useContext } from 'react';
+
+export const ModeContext = createContext();
+
+export const useMode = () => {
+    const context = useContext(ModeContext);
+    if (context === undefined) {
+        throw new Error('useMode must be used within a ModeProvider');
+    }
+    return context;
+};
+
+export const ModeProvider = ({ children }) => {
+    const [mode, setMode] = useState('actuals'); // 'actuals' or 'demo'
+
+    const value = useMemo(() => ({ mode, setMode }), [mode]);
+
+    return (
+        <ModeContext.Provider value={value}>
+            {children}
+        </ModeContext.Provider>
+    );
+};
 
 
 --- FILE: projects/trust/src/importers/__init__.py ---

@@ -1,0 +1,23 @@
+.mode-selector {
+    padding: 0.75rem 1.5rem;
+    cursor: pointer;
+    text-align: center;
+    font-weight: bold;
+    border-top: 1px solid var(--border-color);
+    transition: background-color 0.2s ease;
+    margin-top: auto; /* Pushes to the bottom */
+}
+
+.mode-selector.actuals {
+    background-color: #8B0000; /* Dark Red */
+    color: #fff;
+}
+
+.mode-selector.demo {
+    background-color: #FFD700; /* Gold/Yellow */
+    color: #000;
+}
+
+.mode-selector:hover {
+    opacity: 0.9;
+}

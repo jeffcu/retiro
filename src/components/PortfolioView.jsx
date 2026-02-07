@@ -4,7 +4,8 @@ import FilterPanel from './FilterPanel';
 import BarChart from './BarChart';
 import TimeFilter from './TimeFilter';
 import HoldingEditorModal from './HoldingEditorModal';
-import LayeredReturnsSummary from './LayeredReturnsSummary';
+import PortfolioGainsSummary from './LayeredReturnsSummary';
+import { useMode } from '../context/ModeContext';
 
 const AllocationTable = ({ tableData, formatCurrency }) => {
     return (
@@ -61,6 +62,7 @@ const filterConfig = [
 ];
 
 const PortfolioView = () => {
+    const { mode } = useMode();
     const [holdings, setHoldings] = useState([]);
     const [chartData, setChartData] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -75,7 +77,8 @@ const PortfolioView = () => {
         try {
             setLoading(true);
             setActiveFilters(filters);
-            const query = new URLSearchParams(filters).toString();
+            const queryParams = { ...filters, mode };
+            const query = new URLSearchParams(queryParams).toString();
 
             const [holdingsRes, chartRes] = await Promise.all([
                 fetch(`/api/holdings?${query}`),
@@ -102,7 +105,7 @@ const PortfolioView = () => {
         const fetchAllocationData = async () => {
             try {
                 setAllocationLoading(true);
-                const response = await fetch('/api/analysis/portfolio-allocation');
+                const response = await fetch(`/api/analysis/portfolio-allocation?mode=${mode}`);
                 if (!response.ok) throw new Error('Failed to fetch portfolio allocation');
                 const data = await response.json();
                 setPortfolioAllocation(data);
@@ -114,9 +117,9 @@ const PortfolioView = () => {
             }
         };
         
-        fetchData();
+        fetchData(activeFilters);
         fetchAllocationData();
-    }, []);
+    }, [mode]);
 
     const sortedHoldings = useMemo(() => {
         let sortableItems = [...holdings];
@@ -190,7 +193,7 @@ const PortfolioView = () => {
 
     return (
         <>
-            <LayeredReturnsSummary period={activeFilters.period || 'all'} />
+            <PortfolioGainsSummary />
 
             <div className="card">
                 <h2>Asset Allocation Summary</h2>

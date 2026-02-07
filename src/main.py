@@ -18,6 +18,7 @@ from src import database as db
 from src import analysis
 from src import rules_engine
 from src.market_data import polling_service, market_scheduler
+from src import demo_mode
 
 load_dotenv()
 
@@ -99,16 +100,12 @@ class TaxRateSummary(BaseModel):
     combined_rate: str
     notes: str
 
-# --- NEW: Pydantic model for Layered Returns ---
-class LayeredReturnsResponse(BaseModel):
-    gross_return_dollars: float
-    gross_return_percent: float
-    fees_dollars: float
-    after_fees_return_dollars: float
-    after_fees_return_percent: float
-    taxes_dollars: float
-    after_taxes_return_dollars: float
-    after_taxes_return_percent: float
+# --- REVISED: Pydantic model for Portfolio Overall Return ---
+class PortfolioOverallReturnSummary(BaseModel):
+    total_market_value: float
+    total_cost_basis: float
+    total_gain_dollars: float
+    total_gain_percent: float
     notes: str
 
 # --- NEW: Pydantic models for Future Income Streams ---
@@ -254,22 +251,31 @@ async def get_investment_cashflow_summary(period: str = "all"):
     return analysis.calculate_investment_cashflow_summary(period)
 
 @app.get("/api/portfolio/summary", tags=["Analysis"])
-async def get_portfolio_summary():
+async def get_portfolio_summary(mode: str = Query("actuals")):
     holdings = db.get_holdings()
     total_market_value = sum(h.get('market_value', 0) for h in holdings if h.get('market_value') is not None)
-    return {"total_market_value": total_market_value}
+    result = {"total_market_value": total_market_value}
+    if mode == 'demo':
+        return demo_mode.process_for_demo_mode(result)
+    return result
 
 @app.get("/api/analysis/cashflow-chart", tags=["Analysis"])
 async def get_cashflow_chart(filters: Dict[str, Any] = Depends(get_transaction_filters)):
     return analysis.prepare_cashflow_chart_data(filters)
 
 @app.get("/api/analysis/portfolio-allocation", tags=["Analysis"], response_model=PortfolioAllocationResponse)
-async def get_portfolio_allocation_data():
-    return analysis.prepare_portfolio_allocation_chart_data()
+async def get_portfolio_allocation_data(mode: str = Query("actuals")):
+    result = analysis.prepare_portfolio_allocation_chart_data()
+    if mode == 'demo':
+        return demo_mode.process_for_demo_mode(result)
+    return result
 
 @app.get("/api/analysis/portfolio-chart", tags=["Analysis"])
-async def get_portfolio_chart(filters: Dict[str, Any] = Depends(get_holding_filters)):
-    return analysis.prepare_portfolio_chart_data(filters)
+async def get_portfolio_chart(filters: Dict[str, Any] = Depends(get_holding_filters), mode: str = Query("actuals")):
+    result = analysis.prepare_portfolio_chart_data(filters)
+    if mode == 'demo':
+        return demo_mode.process_for_demo_mode(result)
+    return result
 
 # --- NEW: Effective Tax Rate Endpoint ---
 @app.get("/api/analysis/effective-tax-rates", response_model=List[TaxRateSummary], tags=["Analysis"])
@@ -278,14 +284,16 @@ async def get_effective_tax_rates():
     target_years = [2023, 2024]
     return analysis.calculate_effective_tax_rates_for_years(target_years)
 
-# --- NEW: Layered Returns Endpoint ---
-@app.get("/api/portfolio/layered-returns", response_model=LayeredReturnsResponse, tags=["Analysis"])
-async def get_layered_returns(period: str = "all"):
+# --- REVISED: Portfolio Overall Return Endpoint ---
+@app.get("/api/portfolio/overall-return", response_model=PortfolioOverallReturnSummary, tags=["Analysis"])
+async def get_portfolio_overall_return(mode: str = Query("actuals")):
     """
-    Calculates and returns the layered portfolio returns.
-    NOTE: This is a simplified 'since inception' calculation due to data model limitations.
+    Calculates key portfolio summary metrics based on "since inception" data.
     """
-    return analysis.calculate_layered_portfolio_returns(period)
+    result = analysis.calculate_portfolio_summary_metrics()
+    if mode == 'demo':
+        return demo_mode.process_for_demo_mode(result)
+    return result
 
 # --- Data & Filter Endpoints ---
 @app.get("/api/transactions", tags=["Data"])
@@ -323,8 +331,11 @@ async def update_transaction(transaction_id: str, payload: TransactionUpdate):
     return {"message": "Transaction updated successfully", "transaction": tx_obj}
 
 @app.get("/api/holdings", tags=["Data"])
-async def get_filtered_holdings(filters: Dict[str, Any] = Depends(get_holding_filters)):
-    return db.get_holdings(filters)
+async def get_filtered_holdings(filters: Dict[str, Any] = Depends(get_holding_filters), mode: str = Query("actuals")):
+    result = db.get_holdings(filters)
+    if mode == 'demo':
+        return demo_mode.process_for_demo_mode(result)
+    return result
 
 @app.put("/api/holdings/{holding_id}", tags=["Data"])
 async def update_holding(holding_id: str, payload: HoldingUpdate):

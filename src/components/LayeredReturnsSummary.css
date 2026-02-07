@@ -4,10 +4,10 @@
 
 .metrics-container {
     display: flex;
-    justify-content: space-around;
+    justify-content: center; /* UPDATED */
     align-items: center;
     flex-wrap: wrap;
-    gap: 1rem;
+    gap: 2rem; /* UPDATED */
     padding: 1.5rem 0;
 }
 

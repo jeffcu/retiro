@@ -257,87 +257,32 @@ def calculate_effective_tax_rates_for_years(years: List[int]) -> List[Dict[str, 
         
     return results
 
-# --- NEW: Layered Portfolio Return Calculation ---
-def calculate_layered_portfolio_returns(period: str) -> Dict[str, Any]:
+# --- REVISED: Portfolio Overall Gains Calculation ---
+def calculate_portfolio_summary_metrics() -> Dict[str, Any]:
     """
-    Calculates layered portfolio returns.
-
-    NOTE: This is a highly simplified, "since inception" calculation due to the lack
-    of historical portfolio value snapshots. It should be labeled as an approximation.
-    - Gross Return is based on total market value vs. total cost basis.
-    - Fees are correctly calculated for the given period.
-    - Taxes are estimated based on the effective tax rate applied to investment *yield* for
-      the period, as capital gains data is not available.
+    Calculates key portfolio summary metrics based on "since inception" data.
+    This provides a simple, non-period-specific overview of the portfolio's
+    current standing against its cost basis, as requested by the Captain.
     """
     total_market_value = db.get_total_portfolio_market_value()
     total_cost_basis = db.get_total_portfolio_cost_basis()
 
     if total_cost_basis == 0:
-        return { # Return a zeroed-out state if there's no portfolio
-            "gross_return_dollars": 0,
-            "gross_return_percent": 0,
-            "fees_dollars": 0,
-            "after_fees_return_dollars": 0,
-            "after_fees_return_percent": 0,
-            "taxes_dollars": 0,
-            "after_taxes_return_dollars": 0,
-            "after_taxes_return_percent": 0,
-            "notes": "No portfolio cost basis found. Cannot calculate returns."
+        return {
+            "total_market_value": round(total_market_value, 2),
+            "total_cost_basis": 0,
+            "total_gain_dollars": 0,
+            "total_gain_percent": 0,
+            "notes": "Portfolio cost basis is zero. Cannot calculate gains."
         }
 
-    # 1. Gross Return (Since Inception)
-    gross_return_dollars = total_market_value - total_cost_basis
-    gross_return_percent = (gross_return_dollars / total_cost_basis) * 100
-
-    # 2. Fees (For the Period)
-    fees_dollars = db.get_total_investment_fees_for_period(period)
-
-    # 3. After Fees Return
-    after_fees_return_dollars = gross_return_dollars - fees_dollars
-    after_fees_return_percent = (after_fees_return_dollars / total_cost_basis) * 100
-
-    # 4. Estimated Taxes (For the Period, on YIELD only)
-    year_to_use = None
-    if period.isdigit() and len(period) == 4:
-        year_to_use = int(period)
-    else:
-        # For 'all', '6m', etc., use the latest year with transaction data as a proxy
-        year_to_use = db.get_latest_transaction_year()
-
-    notes = [f"Return calculated since inception (Total Market Value vs Total Cost Basis). Fees and Taxes are for the selected period '{period}'."]
-    taxes_dollars = 0
-
-    if year_to_use:
-        investment_income_for_period = db.get_investment_income_for_period(period)
-        tax_facts = db.get_tax_facts(year_to_use)
-        
-        if tax_facts and tax_facts.get('fed_taxable_income') and tax_facts.get('fed_total_tax'):
-            total_income = (tax_facts.get('fed_taxable_income', 0) or 0) + (tax_facts.get('state_taxable_income', 0) or 0)
-            total_tax = (tax_facts.get('fed_total_tax', 0) or 0) + (tax_facts.get('state_total_tax', 0) or 0)
-            
-            if total_income > 0:
-                effective_tax_rate = total_tax / total_income
-                taxes_dollars = investment_income_for_period * effective_tax_rate
-                notes.append(f"Taxes estimated using {effective_tax_rate:.2%} effective rate from {year_to_use} tax data, applied to period investment yield of ${investment_income_for_period:,.0f}.")
-            else:
-                notes.append(f"Taxable income for {year_to_use} is zero; cannot calculate tax rate.")
-        else:
-            notes.append(f"Tax facts for {year_to_use} are incomplete; taxes could not be estimated.")
-    else:
-        notes.append("Could not determine a tax year; taxes could not be estimated.")
-
-    # 5. After Taxes Return
-    after_taxes_return_dollars = after_fees_return_dollars - taxes_dollars
-    after_taxes_return_percent = (after_taxes_return_dollars / total_cost_basis) * 100
+    total_gain_dollars = total_market_value - total_cost_basis
+    total_gain_percent = (total_gain_dollars / total_cost_basis) * 100 if total_cost_basis else 0
 
     return {
-        "gross_return_dollars": round(gross_return_dollars, 2),
-        "gross_return_percent": round(gross_return_percent, 2),
-        "fees_dollars": round(fees_dollars, 2),
-        "after_fees_return_dollars": round(after_fees_return_dollars, 2),
-        "after_fees_return_percent": round(after_fees_return_percent, 2),
-        "taxes_dollars": round(taxes_dollars, 2),
-        "after_taxes_return_dollars": round(after_taxes_return_dollars, 2),
-        "after_taxes_return_percent": round(after_taxes_return_percent, 2),
-        "notes": " ".join(notes)
+        "total_market_value": round(total_market_value, 2),
+        "total_cost_basis": round(total_cost_basis, 2),
+        "total_gain_dollars": round(total_gain_dollars, 2),
+        "total_gain_percent": round(total_gain_percent, 2),
+        "notes": "Calculated since inception (Total Market Value vs. Total Cost Basis). This is not a time-weighted return."
     }

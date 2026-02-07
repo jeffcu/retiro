@@ -1,4 +1,5 @@
 import './SideBar.css';
+import ModeSelector from './ModeSelector';
 
 const NavItem = ({ name, activeView, setActiveView }) => (
     <li
@@ -35,9 +36,7 @@ const SideBar = ({ activeView, setActiveView }) => {
                     />
                 ))}
             </ul>
-            <div className="sidebar-footer">
-                <p>v0.0.1</p>
-            </div>
+            <ModeSelector />
         </nav>
     );
 };

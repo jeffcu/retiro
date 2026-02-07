@@ -3,11 +3,13 @@ import SankeyChart from '../SankeyChart';
 import TimeFilter from './TimeFilter';
 import PieChart from './PieChart';
 import CapitalFlowTable from './CapitalFlowTable';
-import InvestmentSummaryTable from './InvestmentSummaryTable'; // Import the new component
-import TaxRateSummaryTable from './TaxRateSummaryTable'; // Import the new component
+import InvestmentSummaryTable from './InvestmentSummaryTable';
+import TaxRateSummaryTable from './TaxRateSummaryTable';
 import './HomeView.css';
+import { useMode } from '../context/ModeContext';
 
 const NetWorthHero = () => {
+    const { mode } = useMode();
     const [netWorth, setNetWorth] = useState(null);
     const [loading, setLoading] = useState(true);
 
@@ -15,7 +17,7 @@ const NetWorthHero = () => {
         const fetchSummary = async () => {
             try {
                 setLoading(true);
-                const response = await fetch('/api/portfolio/summary');
+                const response = await fetch(`/api/portfolio/summary?mode=${mode}`);
                 if (!response.ok) throw new Error('Failed to fetch summary');
                 const data = await response.json();
                 setNetWorth(data.total_market_value);
@@ -27,7 +29,7 @@ const NetWorthHero = () => {
             }
         };
         fetchSummary();
-    }, []);
+    }, [mode]);
 
     const formatCurrency = (value) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(value || 0);
 
@@ -41,6 +43,7 @@ const NetWorthHero = () => {
 };
 
 const HomeView = ({ navigateTo }) => {
+    const { mode } = useMode();
     const [capitalFlowData, setCapitalFlowData] = useState({ nodes: [], links: [] });
     const [sankeyLoading, setSankeyLoading] = useState(true);
     const [selectedPeriod, setSelectedPeriod] = useState('all');
@@ -68,7 +71,7 @@ const HomeView = ({ navigateTo }) => {
         const fetchAllocationData = async () => {
             try {
                 setAllocationLoading(true);
-                const response = await fetch('/api/analysis/portfolio-allocation');
+                const response = await fetch(`/api/analysis/portfolio-allocation?mode=${mode}`);
                 if (!response.ok) throw new Error('Failed to fetch portfolio allocation');
                 setPortfolioAllocation(await response.json());
             } catch (error) {
@@ -78,7 +81,7 @@ const HomeView = ({ navigateTo }) => {
             }
         };
         fetchAllocationData();
-    }, []);
+    }, [mode]);
 
     const handleSankeyNodeClick = (node) => {
         const { id } = node;
