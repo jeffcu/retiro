@@ -42,7 +42,7 @@ def process_for_demo_mode(data: Any) -> Any:
             demo_data['total_cost_basis'] /= float(DEMO_DIVISOR)
             demo_data['total_gain_dollars'] /= float(DEMO_DIVISOR)
             # Percentage gain remains the same, as it's a ratio.
-            demo_data['notes'] = "DEMO MODE: All values are divided by 4."
+            demo_data['notes'] = "DEMO MODE: Metrics are obscured for demonstration."
             return demo_data
             
         # Structure from `prepare_portfolio_allocation_chart_data`

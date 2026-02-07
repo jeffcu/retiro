@@ -12,9 +12,9 @@ const ModeSelector = () => {
         <div 
             className={`mode-selector ${mode}`}
             onClick={toggleMode}
-            title={`Click to switch to ${mode === 'actuals' ? 'Demo' : 'Actuals'} Mode`}
+            title={`Click to switch to ${mode === 'actuals' ? 'Demo' : 'Live'} Mode`}
         >
-            {mode === 'actuals' ? 'LIVE MODE' : 'DEMO MODE (1/4 scale)'}
+            {mode === 'actuals' ? 'LIVE MODE' : 'DEMO MODE'}
         </div>
     );
 };

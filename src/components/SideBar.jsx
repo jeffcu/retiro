@@ -1,5 +1,4 @@
 import './SideBar.css';
-import ModeSelector from './ModeSelector';
 
 const NavItem = ({ name, activeView, setActiveView }) => (
     <li
@@ -36,7 +35,7 @@ const SideBar = ({ activeView, setActiveView }) => {
                     />
                 ))}
             </ul>
-            <ModeSelector />
+            {/* ModeSelector was moved to HomeView */}
         </nav>
     );
 };

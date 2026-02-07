@@ -1,3 +1,7 @@
+.home-view-container {
+    position: relative; /* Establishes a positioning context for the mode selector */
+}
+
 .net-worth-hero {
     background: linear-gradient(45deg, var(--gold-accent), #f7d794);
     color: var(--dark-bg);

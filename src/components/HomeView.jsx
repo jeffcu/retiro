@@ -5,6 +5,7 @@ import PieChart from './PieChart';
 import CapitalFlowTable from './CapitalFlowTable';
 import InvestmentSummaryTable from './InvestmentSummaryTable';
 import TaxRateSummaryTable from './TaxRateSummaryTable';
+import ModeSelector from './ModeSelector'; // IMPORTED
 import './HomeView.css';
 import { useMode } from '../context/ModeContext';
 
@@ -105,7 +106,8 @@ const HomeView = ({ navigateTo }) => {
     };
 
     return (
-        <>
+        <div className="home-view-container"> {/* WRAPPER ADDED */}
+            <ModeSelector /> {/* COMPONENT MOVED HERE */}
             <NetWorthHero />
             
             <div className="card sankey-container-card">
@@ -133,7 +135,7 @@ const HomeView = ({ navigateTo }) => {
             <InvestmentSummaryTable period={selectedPeriod} />
 
             <TaxRateSummaryTable />
-        </>
+        </div>
     );
 };
 
