@@ -4,7 +4,7 @@ import FilterPanel from './FilterPanel';
 import BarChart from './BarChart';
 import TimeFilter from './TimeFilter';
 import HoldingEditorModal from './HoldingEditorModal';
-import SankeyChart from '../SankeyChart'; // NEW: Import Sankey Chart
+import LayeredReturnsSummary from './LayeredReturnsSummary';
 
 const AllocationTable = ({ tableData, formatCurrency }) => {
     return (
@@ -70,9 +70,6 @@ const PortfolioView = () => {
     const [editingHolding, setEditingHolding] = useState(null);
     const [portfolioAllocation, setPortfolioAllocation] = useState({ tableData: [] });
     const [allocationLoading, setAllocationLoading] = useState(true);
-    // --- NEW: State for returns sankey ---
-    const [returnsSankey, setReturnsSankey] = useState({ data: null, notes: '' });
-    const [sankeyLoading, setSankeyLoading] = useState(true);
 
     const fetchData = async (filters = activeFilters) => {
         try {
@@ -101,22 +98,6 @@ const PortfolioView = () => {
         }
     };
 
-    // --- NEW: Function to fetch returns sankey data ---
-    const fetchReturnsSankey = async (period = 'all') => {
-        try {
-            setSankeyLoading(true);
-            const response = await fetch(`/api/analysis/portfolio-returns-sankey?period=${period}`);
-            if (!response.ok) throw new Error('Failed to fetch Portfolio Returns data');
-            const sankeyData = await response.json();
-            setReturnsSankey({ data: sankeyData, notes: sankeyData.notes });
-        } catch (error) {
-            console.error(error);
-            setError(prev => prev ? `${prev}\n${error.message}` : error.message);
-        } finally {
-            setSankeyLoading(false);
-        }
-    };
-
     useEffect(() => {
         const fetchAllocationData = async () => {
             try {
@@ -135,7 +116,6 @@ const PortfolioView = () => {
         
         fetchData();
         fetchAllocationData();
-        fetchReturnsSankey(); // Initial fetch for sankey
     }, []);
 
     const sortedHoldings = useMemo(() => {
@@ -184,7 +164,6 @@ const PortfolioView = () => {
     const handlePeriodChange = (period) => {
         const newFilters = { ...activeFilters, period };
         fetchData(newFilters);
-        fetchReturnsSankey(period); // Also refresh sankey data
     };
 
     const handleHoldingSave = () => {
@@ -211,23 +190,7 @@ const PortfolioView = () => {
 
     return (
         <>
-            <div className="card sankey-container-card"> 
-                <div className="chart-header">
-                    <h2>Portfolio Return Waterfall</h2>
-                    <TimeFilter 
-                        selectedPeriod={activeFilters.period || 'all'} 
-                        onPeriodChange={handlePeriodChange} 
-                    />
-                </div>
-                {sankeyLoading ? <p>Loading chart data...</p> : 
-                 returnsSankey.data?.links.length > 0 ? (
-                    <>
-                        <SankeyChart data={returnsSankey.data} />
-                        <p style={{textAlign: 'center', fontSize: '0.8em', color: '#ccc'}}><em>{returnsSankey.notes}</em></p>
-                    </>
-                 ) : 
-                 <p>No returns data to display. This is placeholder data until full return calculations are implemented.</p>}
-            </div>
+            <LayeredReturnsSummary period={activeFilters.period || 'all'} />
 
             <div className="card">
                 <h2>Asset Allocation Summary</h2>
@@ -259,7 +222,10 @@ const PortfolioView = () => {
             <div className="card">
                 <div className="chart-header">
                     <h2>Top Holdings by Market Value</h2>
-                    {/* TimeFilter is now at the top level */}
+                    <TimeFilter 
+                        selectedPeriod={activeFilters.period || 'all'} 
+                        onPeriodChange={handlePeriodChange} 
+                    />
                 </div>
                 {loading ? (
                     <p>Loading chart...</p>

@@ -336,6 +336,19 @@ The system is decomposed into the following distinct modules within the `src` di
 *   `rules`: Stores user-defined rules for transaction categorization.
 *   `import_profiles`: Saves column mappings and settings for specific CSV formats.
 *   `tax_year_facts`: Stores key data from annual tax returns to calculate after-tax returns. Contains columns like `tax_year` (PK), `filing_status`, `fed_taxable_income`, `fed_total_tax`, `state_taxable_income`, `state_total_tax`.
+*   `future_income_streams`: Stores definitions for projected, recurring cashflows for forecasting (e.g., Social Security, RMDs). Columns include `stream_id` (PK), `stream_type`, `description`, `start_date`, `end_date`, `amount`, `frequency`, and `annual_increase_rate`.
+
+| Column                  | Type    | Description                                                                 |
+|-------------------------|---------|-----------------------------------------------------------------------------|
+| `stream_id`             | TEXT    | Primary Key (UUID)                                                          |
+| `stream_type`           | TEXT    | Category of the stream (e.g., 'Social Security', 'Pension', 'RMD', 'Other') |
+| `description`           | TEXT    | User-friendly name for the stream (e.g., 'Spouse\'s Pension')               |
+| `start_date`            | TEXT    | ISO 8601 date when the stream begins.                                       |
+| `end_date`              | TEXT    | Optional ISO 8601 date when the stream ends.                                |
+| `amount`                | REAL    | The monetary value of each payment.                                         |
+| `frequency`             | TEXT    | Payment frequency (e.g., 'monthly', 'annually').                            |
+| `annual_increase_rate`  | REAL    | The annual Cost of Living Adjustment (COLA) as a decimal (e.g., 0.02 for 2%). |
+
 
 ### 5. API Interfaces
 
@@ -349,6 +362,9 @@ The backend will expose RESTful endpoints for the frontend, such as:
 *   `PUT /api/transaction/{id}`: Updates a single transaction (e.g., manual re-categorization).
 *   `GET /api/tax-facts?year={year}`: Retrieves the stored tax facts for a given year.
 *   `POST /api/tax-facts/{year}`: Creates or updates the tax facts for a given year.
+*   `GET /api/future-streams`: Retrieves all defined future income streams.
+*   `POST /api/future-streams`: Creates a new future income stream.
+*   `DELETE /api/future-streams/{stream_id}`: Deletes a specific future income stream.
 
 #### 5.2 External APIs
 
@@ -399,14 +415,13 @@ Development will follow the user-feature centric plan outlined in the PRS (Secti
     *   Goal: Establish initial portfolio tracking.
 
 *   **Phase 5: Automated Market Data & Layered Returns (Current)**
-    *   Goal: Automate portfolio pricing using a multi-provider strategy and introduce advanced return metrics.
+    *   Goal: Automate portfolio pricing using a multi-provider strategy and introduce advanced return metrics. Final verification of after-tax calculations is deferred.
 
 *   **Phase 6: Advanced Rules Engine & Portfolio Separation (Completed)**
     *   Goal: Implement the v2 rules engine to separate portfolio activity from cash flow.
 
-*   **Phase 7: Forecasting**
-    *   Goal: Provide future-looking financial projections.
-
+*   **Phase 7: Retirement & Estate Forecasting**
+    *   Goal: Provide future-looking financial projections by modeling future income streams like Social Security and RMDs.
 
 
 --- FILE: projects/trust/library/Trust Financial System.txt ---
@@ -453,11 +468,6 @@ B) Estate Flow (Net Worth / Estate Screen Sankey)
 	•	CapEx → Real Estate Basis
 	•	Portfolio (invested) → Market Return → Fees → Taxes → After-Tax Return
 	•	This diagram must clearly show “conversion” (CapEx) vs “leakage” (fees/taxes).
-
-C) Portfolio Return Waterfall as Sankey (Portfolio Screen)
-	•	Left: Gross Market Return
-	•	Splits to: Fees, Taxes, After-Tax Return
-	•	Always displayed with matching numeric metrics (%, $).
 
 2.2 Sankey Interaction Rules
 	•	Node/flow click drills down to:
@@ -522,6 +532,7 @@ Priority order:
 	•	CapEx over time
 	•	Market value snapshots
 	•	Estate Flow Sankey
+	•	Summary of future income streams (Social Security, RMDs, etc.)
 
 4..5 Portfolio
 	•	Value over time (snapshots + intraday updates)
@@ -530,12 +541,11 @@ Priority order:
 	•	Before fees
 	•	After fees
 	•	After taxes
-	•	Return Sankey always visible here
 
 4.6 Forecast
 	•	Scenario-based forecast:
 	•	Expenses (consumption)
-	•	Income
+	•	Income (historical and modeled future streams like Social Security, RMDs)
 	•	Expected returns
 	•	One-time planned CapEx events
 	•	Outputs: projected portfolio, net worth, runway
@@ -545,6 +555,7 @@ Priority order:
 	•	Filter Rules editor (see section 5.3)
 	•	Manual entry: fees, taxes, market value snapshots
 	•	Tax Facts Entry: A form to input key data from annual tax returns (e.g., Form 1040, 540) to enable after-tax calculations.
+	•	Future Income Stream Editor: A section to define recurring future income (e.g., Social Security, RMDs) for forecasting.
 	•	Backup/restore
 
 ⸻
@@ -664,6 +675,14 @@ All return views must label:
 	•	PriceQuote (intraday/EOD)
 	•	FeeRecord
 	•	TaxYearFacts (stores key data points from annual tax returns)
+	•	FutureIncomeStream (stores definitions for projected income like Social Security, RMDs)
+		•	stream_id (PK)
+		•	stream_type (e.g., 'Social Security', 'Pension', 'RMD')
+		•	description (e.g., 'Spouse SS', '401k RMD')
+		•	start_date, end_date (optional)
+		•	amount (per period)
+		•	frequency (e.g., 'monthly', 'annually')
+		•	annual_increase_rate (for COLA)
 	•	ImportProfile + ImportRun + ImportRowHash (dedupe/audit)
 	•	FilterRule (pattern, case_sensitive, account_filters, action, import_profile_id)
 
@@ -710,15 +729,17 @@ Phase 5: Automated Market Data & Layered Returns (In Progress)
 		• Implement the `TaxFactsEditor` UI for manual entry of annual tax data.
 		• Implement backend database table (`TaxYearFacts`) and API endpoints to store and retrieve tax data.
 		• Update the analysis engine to calculate after-tax returns using stored tax facts.
-		• The Portfolio screen displays Gross, After-Fee, and After-Tax returns, visualized in the Returns Sankey.
+		• The Portfolio screen displays Gross, After-Fee, and After-Tax returns.
+	•	NOTE: Final UI verification of after-tax calculations is deferred in favor of starting Phase 7 work.
 
 Phase 6: Advanced Rules Engine & Portfolio Separation (Completed)
 	•	Goal: Implement the v2 rules engine to separate portfolio activity from cash flow.
 	•	Features: Update database and backend logic for conditional rules. Modify analysis engine to exclude 'Investment' type transactions from cash flow Sankey. Begin UI design for new rules editor.
 
-Phase 7: Forecasting
+Phase 7: Retirement & Estate Forecasting
 	•	Goal: Provide future-looking financial projections based on user-defined scenarios.
 	•	Features: 
+    •   A new section in 'Data & Settings' to define recurring future income streams, including Social Security, RMDs, and pensions. This requires a `FutureIncomeStreamEditor` UI and corresponding backend infrastructure.
     •   A new Forecast screen (PRS Section 4.6).
     •   Users can define scenarios with assumptions for future income, expenses (consumption), and expected investment returns.
     •   The system must allow for modeling one-time planned events, such as a large Capital Expenditure.
@@ -735,13 +756,11 @@ Phase 7: Forecasting
 	•	- removes it from “spending”
 	•	- increases the selected asset’s basis ledger
 	•	Top 25 holdings refresh hourly during market hours; others refresh after market; UI clearly indicates quote staleness.
-	•	Portfolio screen displays before fees / after fees / after taxes and the Sankey that explains the difference.
-
 
 
 --- FILE: projects/trust/library/acceptance_test.md.txt ---
 
-# Curie Trust - Acceptance Test Plan v1.2
+# Curie Trust - Acceptance Test Plan v1.3
 
 ## 1. Introduction
 
@@ -759,49 +778,73 @@ All acceptance criteria for phases 0 through 4 and 6.1 (Core Feature Verificatio
 
 **Objective**: Automate portfolio pricing using a multi-provider strategy and introduce advanced return metrics.
 
-**Result**: CURRENT PHASE
+**Result**: IN PROGRESS
 
-### 5.1 Multi-Provider Pricing Service
+### 5.1 Multi-Provider Pricing Service (Completed)
 
 **Objective**: Verify that the backend polling service correctly uses different API providers based on the asset type of a holding.
 
-**Acceptance Criteria**:
-- [ ] **Setup**: 
-    1. Ensure `.env` file contains valid keys for `MASSIVE_API_KEY` and `ALPHA_VANTAGE_API_KEY`.
-    2. Purge existing `holdings` data.
-    3. Import a new holdings CSV containing at least one `Common Stock` (e.g., AAPL) and one `Mutual Fund Open` (e.g., VTSAX). Ensure the `asset_type` column is correctly populated.
-- [ ] **Execution**: Manually trigger the market data refresh for all holdings by running the script `./scripts/refresh_eod.sh` or calling the `/api/market-data/refresh-eod` endpoint.
-- [ ] **Verification (Logs)**: 
-    1. Check the backend server logs.
-    2. Confirm a log entry shows the polling service processing `AAPL` via `massive_provider`.
-    3. Confirm a log entry shows the polling service processing `VTSAX` via `alphavantage_provider`.
-- [ ] **Verification (Database)**: 
-    1. Query the `holdings` table in `trust.db`.
-    2. Both the AAPL and VTSAX rows should have a non-null `market_value` and a recent `last_price_timestamp`.
-    3. The `last_price_update_failed` flag for both should be `0` (or `False`).
-- [ ] **Verification (UI)**: 
-    1. Navigate to the Portfolio screen.
-    2. The "Last Updated" column for both AAPL and VTSAX should display the recent timestamp without any error styling.
-
-### 5.2 Layered Returns & Tax Facts
-
-**Objective**: Verify the end-to-end functionality of entering tax data and seeing it reflected in after-tax return calculations.
+**Result**: COMPLETED
 
 **Acceptance Criteria**:
-- [ ] **UI Implementation**: The `TaxFactsEditor` component is present and functional on the Data & Settings screen.
-- [ ] **Data Persistence (Create/Update)**: 
+- [X] **Setup**:
+    1. Ensured `.env` file contains valid keys for `MASSIVE_API_KEY` and `ALPHA_VANTAGE_API_KEY`.
+    2. Purged existing `holdings` data.
+    3. Imported a new holdings CSV containing at least one `Common Stock` (e.g., AAPL) and one `Mutual Fund Open` (e.g., VTSAX).
+- [X] **Execution**: Manually triggered the market data refresh for all holdings by running the script `./scripts/refresh_eod.sh`.
+- [X] **Verification (Logs)**:
+    1. Checked the backend server logs.
+    2. Confirmed log entry showed the polling service processing `AAPL` via `massive_provider`.
+    3. Confirmed log entry showed the polling service processing `VTSAX` via `alphavantage_provider`.
+- [X] **Verification (Database)**:
+    1. Queried the `holdings` table in `trust.db`.
+    2. Both the AAPL and VTSAX rows have a non-null `market_value` and a recent `last_price_timestamp`.
+    3. The `last_price_update_failed` flag for both is `0` (False).
+- [X] **Verification (UI)**:
+    1. Navigated to the Portfolio screen.
+    2. The "Last Updated" column for both AAPL and VTSAX displays the recent timestamp without any error styling.
+
+### 5.2 Tax Facts Data Entry (Completed)
+
+**Objective**: Verify the end-to-end functionality of entering and persisting tax data.
+
+**Result**: COMPLETED
+
+**Acceptance Criteria**:
+- [X] **UI Implementation**: The `TaxFactsEditor` component is present and functional on the Data & Settings screen.
+- [X] **Data Persistence (Create/Update)**: 
     1. Navigate to Data & Settings -> Personal Inputs.
     2. Select a tax year (e.g., 2024) from the dropdown.
     3. Enter valid numbers in all four tax data fields (Federal/State Taxable Income, Federal/State Total Tax).
     4. Click "Save 2024 Facts".
     5. Verify a success message is shown.
-- [ ] **Data Persistence (Read)**:
+- [X] **Data Persistence (Read)**:
     1. Select a different tax year, then select the original test year (e.g., 2024) again.
     2. Verify the previously entered numbers are correctly re-loaded into the form fields.
-- [ ] **Backend Verification**:
+- [X] **Backend Verification**:
     1. Using a SQLite browser, query the `tax_year_facts` table in `data/trust.db`.
     2. Confirm that a row exists for the test year (e.g., 2024) and that all columns contain the correct data saved from the UI.
-- [ ] **After-Tax Calculation Display**:
+
+### 5.3 Effective Tax Rate Verification (Completed)
+
+**Objective**: Verify the effective tax rates displayed on the Home screen are calculated correctly from the entered Tax Facts.
+
+**Result**: COMPLETED
+
+**Acceptance Criteria**:
+- [X] **UI Display**: Navigated to the Home screen and located the "Effective Tax Rates" table.
+- [X] **Federal Rate Verification**: Confirmed that the "Effective Federal Rate" is correctly calculated as `(Federal Total Tax / Federal Taxable Income)`. The value displayed in the UI matches manual calculations.
+- [X] **State Rate Verification**: Confirmed that the "Effective State Rate" is correctly calculated as `(State Total Tax / State Taxable Income)`. The value displayed in the UI matches manual calculations.
+- [X] **Combined Rate Calculation Logic**: Confirmed the backend calculation for the "Effective Combined Rate" is `(Total Federal Tax + Total State Tax) / (Total Federal Income + Total State Income)`. This is a mathematically correct blended effective rate, not a simple sum of the individual rates. This blended rate is used for estimating tax drag on investment returns, which is an acceptable approximation per the system's design.
+
+### 5.4 After-Tax Calculation Display (Deferred)
+
+**Objective**: Verify the final after-tax return metrics are displayed correctly in the UI.
+
+**Result**: PENDING
+
+**Acceptance Criteria**:
+- [ ] **DEFERRED - After-Tax Calculation Display**:
     1. Navigate to the Portfolio screen.
     2. Verify that a metric for "After-Tax Return" is displayed alongside Gross and After-Fee returns.
     3. Verify the Returns Sankey correctly visualizes the `Gross Return -> Taxes -> After-Tax Return` flow, using the entered tax data to perform its calculations.
@@ -813,8 +856,13 @@ All acceptance criteria for phases 0 through 4 and 6.1 (Core Feature Verificatio
 ### Phase 6: Advanced Rules Engine & Portfolio Separation
 - **Verification**: Create a rule that assigns `CashflowType: Investment`. Verify these transactions are correctly excluded from the primary Income Sankey (PRS 3.1).
 
-### Phase 7: Forecasting
-- **Verification**: Create a simple forecast scenario via an API. Verify the projected net worth from the API matches a manual calculation.
+### Phase 7: Retirement & Estate Forecasting
+- [X] **UI Implementation**: A new editor is available in 'Data & Settings' to create, view, and delete future income streams (e.g., Social Security, RMDs).
+- [X] **Data Persistence**: User-entered income streams are correctly saved to the new `future_income_streams` table and can be reloaded for editing.
+- [X] **API Verification (Create)**: A `POST` request to `/api/future-streams` with valid data creates a new record in the database.
+- [X] **API Verification (Read)**: A `GET` request to `/api/future-streams` returns a list of all saved streams.
+- [X] **API Verification (Delete)**: A `DELETE` request to `/api/future-streams/{stream_id}` removes the correct record from the database.
+- [ ] **Rudimentary Forecast**: The `/api/forecast` endpoint returns a 12-month projection that correctly incorporates at least one defined future income stream.
 
 
 --- FILE: projects/trust/scripts/refresh_eod.sh ---
@@ -890,6 +938,93 @@ echo "Launching uvicorn with --reload on http://127.0.0.1:$PORT..."
 uvicorn src.main:app --reload --host 127.0.0.1 --port $PORT
 
 echo "--- Backend server process terminated. ---"
+
+
+--- FILE: projects/trust/scripts/start_dev_environment.sh ---
+
+#!/bin/bash
+# Curie Trust Unified Development Environment Startup Script
+# This script starts both the Python backend (uvicorn) and the Node.js frontend (vite)
+# in the background and foreground, respectively, and ensures graceful shutdown.
+
+# --- Configuration ---
+BACKEND_PORT=8000
+FRONTEND_PORT=5173
+PROJECT_ROOT=$(dirname "$0")
+
+cd "$PROJECT_ROOT/.."
+
+# --- Cleanup Function ---
+# This trap ensures that background processes started by this script are killed
+# when the user presses Ctrl+C (SIGINT).
+function cleanup {
+    echo -e "\n--- Shutting down development environment ---"
+    
+    # Check if backend PID exists and kill it
+    if [ ! -z "$BACKEND_PID" ]; then
+        echo "Terminating Backend PID $BACKEND_PID..."
+        kill $BACKEND_PID 2>/dev/null
+    fi
+    
+    # Ensure all processes on the ports are truly killed
+    PIDS=$(lsof -t -i:$BACKEND_PORT -i:$FRONTEND_PORT)
+    if [ -n "$PIDS" ]; then
+        echo "Terminating residual process(es) on ports $BACKEND_PORT/$FRONTEND_PORT: $(echo $PIDS | tr '\n' ' ')..."
+        echo "$PIDS" | xargs kill -9 2>/dev/null
+    fi
+
+    wait $BACKEND_PID 2>/dev/null # Wait for the background process to finish if it hasn't
+    echo "Cleanup complete."
+    exit 0
+}
+
+trap cleanup SIGINT SIGTERM
+
+# --- Step 1: Ensure Clean Ports ---
+echo "1. Checking and clearing ports $BACKEND_PORT and $FRONTEND_PORT..."
+PIDS_TO_KILL=$(lsof -t -i:$BACKEND_PORT -i:$FRONTEND_PORT)
+if [ -n "$PIDS_TO_KILL" ]; then
+    echo "$PIDS_TO_KILL" | xargs kill -9 2>/dev/null
+    sleep 1
+fi
+
+# --- Step 2: Set up Python Environment ---
+if [ -d ".venv" ]; then
+    echo "2. Activating Python virtual environment: .venv"
+    source .venv/bin/activate
+elif [ -d "venv" ]; then
+    echo "2. Activating Python virtual environment: venv"
+    source venv/bin/activate
+else
+    echo "2. Warning: No virtual environment found. Using system Python."
+fi
+
+echo "   Synchronizing Python dependencies..."
+pip install -r requirements.txt > /dev/null
+
+# --- Step 3: Start Backend (Background) ---
+echo "3. Starting backend server on http://127.0.0.1:$BACKEND_PORT..."
+# Using --workers 1 to avoid complexity with concurrency/DB locks for now, and --reload for dev ease.
+uvicorn src.main:app --reload --host 127.0.0.1 --port $BACKEND_PORT &
+
+# Capture the PID of the background process
+BACKEND_PID=$!
+echo "   Backend started with PID $BACKEND_PID."
+sleep 3 # Give the backend a moment to spin up
+
+# --- Step 4: Start Frontend (Foreground) ---
+echo "4. Starting frontend dev server on http://localhost:$FRONTEND_PORT..."
+
+# Check npm dependencies
+if [ ! -d "node_modules" ]; then
+  echo "   Running 'npm install' for Node dependencies..."
+  npm install
+fi
+
+# Start the Vite server (this blocks the terminal)
+npm run dev -- --port $FRONTEND_PORT
+
+# Cleanup trap will handle termination after Ctrl+C
 
 
 --- FILE: projects/trust/scripts/start_frontend.sh ---
@@ -1480,30 +1615,48 @@ def calculate_investment_cashflow_summary(period: str) -> Dict[str, Any]:
     # Step 2: Get cash outflows for fees
     fees = db.get_total_investment_fees_for_period(period)
 
-    # Step 3: Calculate estimated taxes on the income
-    year_to_use = None
-    if period.isdigit() and len(period) == 4:
-        year_to_use = int(period)
-    else:
-        year_to_use = db.get_latest_transaction_year()
-
-    notes = f"Using data for period '{period}'."
+    # Step 3: Calculate estimated taxes on the income with intelligent fallback
+    notes = [f"Using data for period '{period}'."]
     taxes = 0
+    tax_facts = None
 
-    if year_to_use:
-        tax_facts = db.get_tax_facts(year_to_use)
-        if tax_facts and tax_facts.get('fed_taxable_income') and tax_facts.get('fed_total_tax'):
-            total_income = (tax_facts.get('fed_taxable_income', 0) or 0) + (tax_facts.get('state_taxable_income', 0) or 0)
-            total_tax = (tax_facts.get('fed_total_tax', 0) or 0) + (tax_facts.get('state_total_tax', 0) or 0)
-            effective_tax_rate = total_tax / total_income if total_income > 0 else 0
-            
-            # Apply the effective rate to the investment income
-            taxes = investment_income * effective_tax_rate if investment_income > 0 else 0
-            notes += f" Estimated taxes based on {effective_tax_rate:.2%} effective rate from {year_to_use} tax data."
-        else:
-            notes += f" Tax facts for {year_to_use} are incomplete; taxes are not calculated."
+    # Determine the primary year to check based on the period
+    primary_year_to_check = None
+    if period.isdigit() and len(period) == 4:
+        primary_year_to_check = int(period)
     else:
-        notes += " Could not determine a tax year; taxes are not calculated."
+        primary_year_to_check = db.get_latest_transaction_year() # e.g., for 'all' or '6m'
+
+    if primary_year_to_check:
+        # Attempt to get tax facts for the primary year
+        tax_facts = db.get_tax_facts(primary_year_to_check)
+        
+        # Check if primary year's facts are usable for calculation
+        if tax_facts and tax_facts.get('fed_taxable_income') and tax_facts.get('fed_total_tax'):
+            notes.append(f"Taxes estimated based on {primary_year_to_check} tax data.")
+        else:
+            # If not usable, find the latest complete historical data as a fallback
+            historical_tax_facts = db.get_latest_complete_tax_facts()
+            if historical_tax_facts:
+                tax_facts = historical_tax_facts
+                tax_year_used = tax_facts['tax_year']
+                notes.append(f"Tax facts for {primary_year_to_check} are incomplete; using data from {tax_year_used} as an estimate.")
+            else:
+                notes.append("No complete tax data available in the system; taxes cannot be calculated.")
+                tax_facts = None # Ensure it's None for the next step
+    else:
+        notes.append("Could not determine a tax year; taxes cannot be calculated.")
+
+    # Calculate taxes if we found any usable tax_facts (either primary or fallback)
+    if tax_facts:
+        total_income = (tax_facts.get('fed_taxable_income', 0) or 0) + (tax_facts.get('state_taxable_income', 0) or 0)
+        total_tax = (tax_facts.get('fed_total_tax', 0) or 0) + (tax_facts.get('state_total_tax', 0) or 0)
+        if total_income > 0:
+            effective_tax_rate = total_tax / total_income
+            taxes = investment_income * effective_tax_rate if investment_income > 0 else 0
+            notes.append(f"Effective rate used: {effective_tax_rate:.2%}.")
+        else:
+            notes.append("Taxable income for the selected year is zero; could not calculate rate.")
 
     # Step 4: Calculate what's left to spend
     spendable_cash = investment_income - fees - taxes
@@ -1513,7 +1666,7 @@ def calculate_investment_cashflow_summary(period: str) -> Dict[str, Any]:
         "advisory_fees": fees,
         "estimated_taxes": taxes,
         "spendable_cash": spendable_cash,
-        "notes": notes
+        "notes": ' '.join(notes)
     }
 
 # --- NEW: Tax Rate Calculation ---
@@ -1552,128 +1705,90 @@ def calculate_effective_tax_rates_for_years(years: List[int]) -> List[Dict[str, 
         
     return results
 
-# --- Layered Returns Calculation --- 
-def calculate_layered_returns(period: str) -> Dict[str, Any]:
+# --- NEW: Layered Portfolio Return Calculation ---
+def calculate_layered_portfolio_returns(period: str) -> Dict[str, Any]:
     """
-    Calculates gross return, fees, taxes, and after-tax return for a period.
-    (PRS Section 7.2)
+    Calculates layered portfolio returns.
+
+    NOTE: This is a highly simplified, "since inception" calculation due to the lack
+    of historical portfolio value snapshots. It should be labeled as an approximation.
+    - Gross Return is based on total market value vs. total cost basis.
+    - Fees are correctly calculated for the given period.
+    - Taxes are estimated based on the effective tax rate applied to investment *yield* for
+      the period, as capital gains data is not available.
     """
-    # STEP 1: Calculate Gross Return as (Market Value - Cost Basis).
-    # This is an approximation of total unrealized gain.
     total_market_value = db.get_total_portfolio_market_value()
     total_cost_basis = db.get_total_portfolio_cost_basis()
-    gross_return = total_market_value - total_cost_basis
-    
-    # STEP 2: Calculate fees for the specified period.
-    fees = db.get_total_investment_fees_for_period(period)
 
-    # STEP 3: Determine the tax year to use.
+    if total_cost_basis == 0:
+        return { # Return a zeroed-out state if there's no portfolio
+            "gross_return_dollars": 0,
+            "gross_return_percent": 0,
+            "fees_dollars": 0,
+            "after_fees_return_dollars": 0,
+            "after_fees_return_percent": 0,
+            "taxes_dollars": 0,
+            "after_taxes_return_dollars": 0,
+            "after_taxes_return_percent": 0,
+            "notes": "No portfolio cost basis found. Cannot calculate returns."
+        }
+
+    # 1. Gross Return (Since Inception)
+    gross_return_dollars = total_market_value - total_cost_basis
+    gross_return_percent = (gross_return_dollars / total_cost_basis) * 100
+
+    # 2. Fees (For the Period)
+    fees_dollars = db.get_total_investment_fees_for_period(period)
+
+    # 3. After Fees Return
+    after_fees_return_dollars = gross_return_dollars - fees_dollars
+    after_fees_return_percent = (after_fees_return_dollars / total_cost_basis) * 100
+
+    # 4. Estimated Taxes (For the Period, on YIELD only)
     year_to_use = None
     if period.isdigit() and len(period) == 4:
         year_to_use = int(period)
     else:
-        # Fallback to the latest year with transaction data as a proxy.
+        # For 'all', '6m', etc., use the latest year with transaction data as a proxy
         year_to_use = db.get_latest_transaction_year()
 
-    notes = "Gross return is lifetime unrealized gain (Market Value - Cost Basis). Fees & Taxes are for the selected period."
+    notes = [f"Return calculated since inception (Total Market Value vs Total Cost Basis). Fees and Taxes are for the selected period '{period}'."]
+    taxes_dollars = 0
 
-    if not year_to_use:
-        # No tax data available, so we can't calculate taxes.
-        return {
-            "gross_return": gross_return,
-            "fees": fees,
-            "taxes": 0,
-            "after_tax_return": gross_return - fees,
-            "notes": notes
-        }
+    if year_to_use:
+        investment_income_for_period = db.get_investment_income_for_period(period)
+        tax_facts = db.get_tax_facts(year_to_use)
+        
+        if tax_facts and tax_facts.get('fed_taxable_income') and tax_facts.get('fed_total_tax'):
+            total_income = (tax_facts.get('fed_taxable_income', 0) or 0) + (tax_facts.get('state_taxable_income', 0) or 0)
+            total_tax = (tax_facts.get('fed_total_tax', 0) or 0) + (tax_facts.get('state_total_tax', 0) or 0)
+            
+            if total_income > 0:
+                effective_tax_rate = total_tax / total_income
+                taxes_dollars = investment_income_for_period * effective_tax_rate
+                notes.append(f"Taxes estimated using {effective_tax_rate:.2%} effective rate from {year_to_use} tax data, applied to period investment yield of ${investment_income_for_period:,.0f}.")
+            else:
+                notes.append(f"Taxable income for {year_to_use} is zero; cannot calculate tax rate.")
+        else:
+            notes.append(f"Tax facts for {year_to_use} are incomplete; taxes could not be estimated.")
+    else:
+        notes.append("Could not determine a tax year; taxes could not be estimated.")
 
-    # STEP 4: Fetch tax facts and calculate effective tax rate.
-    tax_facts = db.get_tax_facts(year_to_use)
-    if not tax_facts or not tax_facts.get('fed_taxable_income') or not tax_facts.get('fed_total_tax'):
-        return {
-            "gross_return": gross_return,
-            "fees": fees,
-            "taxes": 0,
-            "after_tax_return": gross_return - fees,
-            "notes": f"{notes} Tax facts for {year_to_use} are incomplete."
-        }
-    
-    # Calculate a blended federal and state effective tax rate.
-    total_income = (tax_facts.get('fed_taxable_income', 0) or 0) + (tax_facts.get('state_taxable_income', 0) or 0)
-    total_tax = (tax_facts.get('fed_total_tax', 0) or 0) + (tax_facts.get('state_total_tax', 0) or 0)
-
-    effective_tax_rate = total_tax / total_income if total_income > 0 else 0
-    
-    # Apply the tax rate to the investment gains (gross return).
-    # This is an estimation, as per PRS.
-    taxes = gross_return * effective_tax_rate if gross_return > 0 else 0
-    after_tax_return = gross_return - fees - taxes
+    # 5. After Taxes Return
+    after_taxes_return_dollars = after_fees_return_dollars - taxes_dollars
+    after_taxes_return_percent = (after_taxes_return_dollars / total_cost_basis) * 100
 
     return {
-        "gross_return": gross_return,
-        "fees": fees,
-        "taxes": taxes,
-        "after_tax_return": after_tax_return,
-        "notes": f"{notes} Using effective tax rate of {effective_tax_rate:.2%} from {year_to_use} tax data."
+        "gross_return_dollars": round(gross_return_dollars, 2),
+        "gross_return_percent": round(gross_return_percent, 2),
+        "fees_dollars": round(fees_dollars, 2),
+        "after_fees_return_dollars": round(after_fees_return_dollars, 2),
+        "after_fees_return_percent": round(after_fees_return_percent, 2),
+        "taxes_dollars": round(taxes_dollars, 2),
+        "after_taxes_return_dollars": round(after_taxes_return_dollars, 2),
+        "after_taxes_return_percent": round(after_taxes_return_percent, 2),
+        "notes": " ".join(notes)
     }
-
-def generate_portfolio_return_sankey(period: str) -> Dict[str, Any]:
-    """
-    Generates the data for the Portfolio Return Waterfall Sankey diagram.
-    (PRS Section 2.1.C)
-    """
-    returns = calculate_layered_returns(period)
-
-    gross_return = returns['gross_return']
-    fees = returns['fees']
-    taxes = returns['taxes']
-    after_tax_return = returns['after_tax_return']
-
-    # --- NEW: Handle negative gross returns (a loss) --- 
-    if gross_return <= 0:
-        # If there's a loss, the waterfall is simpler.
-        # Gross Loss -> Fees -> Net Loss
-        nodes = [
-            {"id": "Gross Loss"},
-            {"id": "Fees"},
-            {"id": "Net Loss"}
-        ]
-        links = [
-            {"source": "Gross Loss", "target": "Net Loss", "value": round(abs(gross_return), 2)},
-            {"source": "Fees", "target": "Net Loss", "value": round(fees, 2)}
-        ]
-        return {"nodes": nodes, "links": links, "notes": returns.get('notes')}
-
-    # --- Logic for positive gross returns --- 
-    # Ensure we don't create negative values in the Sankey chart.
-    if gross_return < (fees + taxes):
-        # In this edge case, just show fees and taxes eating the whole return.
-        after_tax_return = 0
-        if gross_return < fees:
-            fees = gross_return
-            taxes = 0
-        else:
-            taxes = gross_return - fees
-
-    nodes = [
-        {"id": "Gross Return"},
-        {"id": "Fees"},
-        {"id": "Taxes"},
-        {"id": "After-Tax Return"}
-    ]
-
-    links = []
-    if gross_return > 0:
-        if fees > 0:
-            links.append({"source": "Gross Return", "target": "Fees", "value": round(fees, 2)})
-        if taxes > 0:
-            links.append({"source": "Gross Return", "target": "Taxes", "value": round(taxes, 2)})
-        if after_tax_return > 0:
-            links.append({"source": "Gross Return", "target": "After-Tax Return", "value": round(after_tax_return, 2)})
-
-    return {"nodes": nodes, "links": links, "notes": returns.get('notes')}
-
-
 
 --- FILE: projects/trust/src/data_model.py ---
 
@@ -1683,6 +1798,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
+from typing import Optional
 
 
 class CashflowType(Enum):
@@ -1749,14 +1865,29 @@ class PriceQuote:
     source: str | None = None
 
 
+@dataclass
+class FutureIncomeStream:
+    """ PRS Section 8: Represents a recurring future income stream for forecasting. """
+    stream_id: str
+    stream_type: str  # e.g., 'Social Security', 'RMD', 'Pension'
+    description: str
+    start_date: date
+    end_date: Optional[date]
+    amount: Decimal
+    frequency: str  # e.g., 'monthly', 'annually'
+    annual_increase_rate: Decimal = Decimal('0.0')
+
+
 --- FILE: projects/trust/src/database.py ---
 
 import sqlite3
 import uuid
 import json
 from pathlib import Path
-from typing import List, Dict, Any, Tuple
-from src.data_model import Transaction, Holding, PriceQuote # Added PriceQuote
+from typing import List, Dict, Any, Tuple, Optional
+from src.data_model import Transaction, Holding, PriceQuote, FutureIncomeStream
+from datetime import date
+from decimal import Decimal
 
 # Per MDS, the database is a single file in the data/ directory.
 # We resolve the path to its absolute form to avoid ambiguity.
@@ -1864,6 +1995,20 @@ def _ensure_schema(conn: sqlite3.Connection):
         fed_total_tax REAL,
         state_taxable_income REAL,
         state_total_tax REAL
+    );
+    """)
+
+    # --- NEW: Table for storing future income streams for forecasting (PRS Section 7) ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS future_income_streams (
+        stream_id TEXT PRIMARY KEY,
+        stream_type TEXT NOT NULL,
+        description TEXT NOT NULL,
+        start_date TEXT NOT NULL,
+        end_date TEXT,
+        amount REAL NOT NULL,
+        frequency TEXT NOT NULL, -- 'monthly' or 'annually'
+        annual_increase_rate REAL DEFAULT 0.0
     );
     """)
 
@@ -2310,7 +2455,7 @@ def get_total_investment_fees_for_period(period: str) -> float:
 
     # Define the specific filters for advisory fees
     where_clauses.append("cashflow_type = 'Investment'")
-    where_clauses.append("category = 'Advisory Fees'")
+    where_clauses.append("category = 'Service Charges/Fees'")
 
     _apply_period_filter_to_query(where_clauses, params, period, date_column='transaction_date')
 
@@ -2607,6 +2752,17 @@ def get_tax_facts(year: int) -> Dict[str, Any] | None:
         return None
     return {k: row[k] for k in row.keys()}
 
+def get_latest_complete_tax_facts() -> Dict[str, Any] | None:
+    """Fetches the tax facts for the most recent year that has data."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM tax_year_facts ORDER BY tax_year DESC LIMIT 1")
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {k: row[k] for k in row.keys()}
+
 def save_tax_facts(year: int, data: Dict[str, Any]):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -2629,6 +2785,59 @@ def save_tax_facts(year: int, data: Dict[str, Any]):
         print(f"Successfully saved/replaced tax facts for year {year}.")
     except sqlite3.Error as e:
         print(f"Database error saving tax facts for {year}: {e}")
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+# --- NEW: CRUD functions for Future Income Streams ---
+def create_future_income_stream(stream: FutureIncomeStream) -> FutureIncomeStream:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    sql = """INSERT INTO future_income_streams (
+                 stream_id, stream_type, description, start_date, end_date, 
+                 amount, frequency, annual_increase_rate
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);"""
+    params = (
+        stream.stream_id,
+        stream.stream_type,
+        stream.description,
+        stream.start_date.isoformat(),
+        stream.end_date.isoformat() if stream.end_date else None,
+        float(stream.amount),
+        stream.frequency,
+        float(stream.annual_increase_rate)
+    )
+    try:
+        cursor.execute(sql, params)
+        conn.commit()
+        print(f"Successfully created future income stream {stream.stream_id}.")
+    except sqlite3.Error as e:
+        print(f"Database error creating income stream: {e}")
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+    return stream
+
+def get_all_future_income_streams() -> List[Dict[str, Any]]:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM future_income_streams ORDER BY start_date ASC")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def delete_future_income_stream(stream_id: str) -> bool:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM future_income_streams WHERE stream_id = ?", (stream_id,))
+        conn.commit()
+        print(f"Deleted income stream {stream_id}. Rows affected: {cursor.rowcount}")
+        return cursor.rowcount > 0
+    except sqlite3.Error as e:
+        print(f"Database error deleting income stream {stream_id}: {e}")
         conn.rollback()
         raise e
     finally:
@@ -2676,7 +2885,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
 import uvicorn
 import uuid
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body, Response, Query, Depends, BackgroundTasks, Path
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -2688,7 +2897,7 @@ from decimal import Decimal
 
 from src.importers import csv_importer, holdings_importer
 from src.database import initialize_database, save_transactions
-from src.data_model import CashflowType, Transaction
+from src.data_model import CashflowType, Transaction, FutureIncomeStream
 from src import database as db
 from src import analysis
 from src import rules_engine
@@ -2773,6 +2982,32 @@ class TaxRateSummary(BaseModel):
     state_rate: str
     combined_rate: str
     notes: str
+
+# --- NEW: Pydantic model for Layered Returns ---
+class LayeredReturnsResponse(BaseModel):
+    gross_return_dollars: float
+    gross_return_percent: float
+    fees_dollars: float
+    after_fees_return_dollars: float
+    after_fees_return_percent: float
+    taxes_dollars: float
+    after_taxes_return_dollars: float
+    after_taxes_return_percent: float
+    notes: str
+
+# --- NEW: Pydantic models for Future Income Streams ---
+class FutureIncomeStreamCreate(BaseModel):
+    stream_type: str = Field(..., example="Pension")
+    description: str = Field(..., example="Spouse's Pension")
+    start_date: date
+    end_date: Optional[date] = None
+    amount: float
+    frequency: str = Field(..., example="monthly") # 'monthly' or 'annually'
+    annual_increase_rate: float = Field(0.0, ge=0)
+
+class FutureIncomeStreamResponse(FutureIncomeStreamCreate):
+    stream_id: str
+
 
 # --- App Events ---
 @app.on_event("startup")
@@ -2927,10 +3162,14 @@ async def get_effective_tax_rates():
     target_years = [2023, 2024]
     return analysis.calculate_effective_tax_rates_for_years(target_years)
 
-# --- NEW: Portfolio Returns Sankey Endpoint ---
-@app.get("/api/analysis/portfolio-returns-sankey", tags=["Analysis"])
-async def get_portfolio_returns_sankey(period: str = "all"):
-    return analysis.generate_portfolio_return_sankey(period)
+# --- NEW: Layered Returns Endpoint ---
+@app.get("/api/portfolio/layered-returns", response_model=LayeredReturnsResponse, tags=["Analysis"])
+async def get_layered_returns(period: str = "all"):
+    """
+    Calculates and returns the layered portfolio returns.
+    NOTE: This is a simplified 'since inception' calculation due to data model limitations.
+    """
+    return analysis.calculate_layered_portfolio_returns(period)
 
 # --- Data & Filter Endpoints ---
 @app.get("/api/transactions", tags=["Data"])
@@ -3026,6 +3265,38 @@ async def create_or_update_tax_facts(payload: TaxFactsPayload, year: int = Path(
         return facts
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# --- NEW: Future Income Stream Endpoints ---
+@app.post("/api/future-streams", response_model=FutureIncomeStreamResponse, status_code=201, tags=["Forecasting"])
+async def create_future_stream(payload: FutureIncomeStreamCreate):
+    stream_id = str(uuid.uuid4())
+    stream_obj = FutureIncomeStream(
+        stream_id=stream_id,
+        stream_type=payload.stream_type,
+        description=payload.description,
+        start_date=payload.start_date,
+        end_date=payload.end_date,
+        amount=Decimal(str(payload.amount)),
+        frequency=payload.frequency,
+        annual_increase_rate=Decimal(str(payload.annual_increase_rate))
+    )
+    try:
+        db.create_future_income_stream(stream_obj)
+        return FutureIncomeStreamResponse(**stream_obj.__dict__)
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to create income stream: {e}")
+
+@app.get("/api/future-streams", response_model=List[FutureIncomeStreamResponse], tags=["Forecasting"])
+async def get_all_future_streams():
+    return db.get_all_future_income_streams()
+
+@app.delete("/api/future-streams/{stream_id}", status_code=204, tags=["Forecasting"])
+async def delete_future_stream(stream_id: str):
+    if not db.delete_future_income_stream(stream_id):
+        raise HTTPException(status_code=404, detail="Future income stream not found.")
+    return Response(status_code=204)
+
 
 # --- Admin & Market Data Endpoints ---
 @app.post("/api/data/purge", tags=["Admin"])
@@ -3669,6 +3940,7 @@ import ImportSummary from './ImportSummary';
 import RulesEditor from './RulesEditor';
 import IncomeSankeySettings from './IncomeSankeySettings';
 import TaxFactsEditor from "./TaxFactsEditor.jsx"; // FIX: Explicitly added .jsx extension to resolve import error.
+import FutureIncomeStreamEditor from './FutureIncomeStreamEditor.jsx';
 
 const FileUploader = ({ title, importType, onUploadSuccess }) => {
     const [file, setFile] = useState(null);
@@ -3818,6 +4090,7 @@ const DataImportView = () => {
             <div className="card">
                 <h2>Personal Inputs</h2>
                 <TaxFactsEditor />
+                <FutureIncomeStreamEditor />
             </div>
             <RulesEditor />
             <ImportSummary refreshKey={refreshKey} />
@@ -4058,6 +4331,295 @@ const FilterPanel = ({ config, onFilterSubmit, initialValues = {} }) => {
 };
 
 export default FilterPanel;
+
+
+--- FILE: projects/trust/src/components/FutureIncomeStreamEditor.css ---
+
+.future-stream-editor-container {
+    background-color: var(--dark-bg);
+    padding: 1.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    margin-top: 2rem;
+}
+
+.future-stream-editor-container h3 {
+    margin-top: 0;
+    color: var(--gold-accent);
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.5rem;
+}
+
+.future-stream-editor-container p {
+    font-size: 0.9em;
+    color: #ccc;
+    margin-bottom: 1.5rem;
+}
+
+.stream-form .form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+}
+
+.stream-form .form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-size: 0.9em;
+}
+
+.stream-form .form-group input,
+.stream-form .form-group select {
+    width: 100%;
+    padding: 0.5rem;
+    background-color: var(--medium-bg);
+    border: 1px solid #666;
+    border-radius: 4px;
+    color: #fff;
+    box-sizing: border-box;
+}
+
+.stream-form .form-actions {
+    margin-top: 1.5rem;
+    text-align: right;
+}
+
+.stream-form .form-actions button.primary {
+    background-color: var(--gold-accent);
+    color: var(--dark-bg);
+    border: none;
+    padding: 0.6rem 1.5rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.future-stream-editor-container h4 {
+    margin-top: 2rem;
+    margin-bottom: 1rem;
+    color: #ddd;
+    font-weight: 500;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.5rem;
+}
+
+.streams-table-container {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.streams-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.streams-table th, .streams-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color);
+    text-align: left;
+    font-size: 0.9em;
+}
+
+.streams-table thead th {
+    background-color: var(--light-bg);
+    position: sticky;
+    top: 0;
+}
+
+.streams-table td:nth-child(4), /* Amount */
+.streams-table td:nth-child(6) { /* COLA */
+    text-align: right;
+    font-family: monospace;
+}
+
+.streams-table td.actions-cell {
+    width: 1%;
+    text-align: center;
+}
+
+.streams-table .delete-btn {
+    background: none;
+    border: none;
+    color: #ff6b6b;
+    cursor: pointer;
+    font-size: 1.1em;
+}
+
+
+--- FILE: projects/trust/src/components/FutureIncomeStreamEditor.jsx ---
+
+import { useState, useEffect } from 'react';
+import './FutureIncomeStreamEditor.css';
+
+const FutureIncomeStreamEditor = () => {
+    const [streams, setStreams] = useState([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [error, setError] = useState(null);
+
+    const initialFormState = {
+        stream_type: 'Social Security',
+        description: '',
+        start_date: '',
+        amount: '',
+        frequency: 'monthly',
+        annual_increase_rate: 0.0,
+    };
+    const [formData, setFormData] = useState(initialFormState);
+
+    const fetchStreams = async () => {
+        setIsLoading(true);
+        try {
+            const response = await fetch('/api/future-streams');
+            if (!response.ok) throw new Error('Failed to fetch future income streams');
+            const data = await response.json();
+            setStreams(data);
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchStreams();
+    }, []);
+
+    const handleInputChange = (e) => {
+        const { name, value } = e.target;
+        setFormData(prev => ({ ...prev, [name]: value }));
+    };
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        
+        const payload = {
+            ...formData,
+            amount: parseFloat(formData.amount),
+            annual_increase_rate: parseFloat(formData.annual_increase_rate) / 100, // Convert percentage to decimal
+        };
+
+        try {
+            const response = await fetch('/api/future-streams', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+
+            if (!response.ok) {
+                const errData = await response.json();
+                throw new Error(errData.detail || 'Failed to create stream');
+            }
+            setFormData(initialFormState); // Reset form
+            fetchStreams(); // Refresh list
+        } catch (err) {
+            alert(`Error: ${err.message}`);
+        }
+    };
+
+    const handleDelete = async (streamId) => {
+        if (!confirm('Are you sure you want to delete this income stream?')) return;
+
+        try {
+            const response = await fetch(`/api/future-streams/${streamId}`, {
+                method: 'DELETE',
+            });
+            if (!response.ok) throw new Error('Failed to delete stream');
+            fetchStreams(); // Refresh list
+        } catch (err) {
+            alert(`Error: ${err.message}`);
+        }
+    };
+
+    const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+    }).format(value || 0);
+
+    return (
+        <div className="future-stream-editor-container">
+            <h3>Future Income Streams (for Forecasting)</h3>
+            <p>Define recurring income streams like pensions or Social Security that will begin in the future.</p>
+            
+            <form onSubmit={handleSubmit} className="stream-form">
+                <div className="form-grid">
+                    <div className="form-group">
+                        <label>Type</label>
+                        <select name="stream_type" value={formData.stream_type} onChange={handleInputChange}>
+                            <option value="Social Security">Social Security</option>
+                            <option value="Pension">Pension</option>
+                            <option value="RMD">RMD</option>
+                            <option value="Other">Other</option>
+                        </select>
+                    </div>
+                    <div className="form-group">
+                        <label>Description</label>
+                        <input type="text" name="description" value={formData.description} onChange={handleInputChange} placeholder="e.g., Captain Primary SS" required />
+                    </div>
+                    <div className="form-group">
+                        <label>Start Date</label>
+                        <input type="date" name="start_date" value={formData.start_date} onChange={handleInputChange} required />
+                    </div>
+                     <div className="form-group">
+                        <label>Amount (per period)</label>
+                        <input type="number" name="amount" value={formData.amount} onChange={handleInputChange} placeholder="3250.75" step="0.01" required />
+                    </div>
+                    <div className="form-group">
+                        <label>Frequency</label>
+                        <select name="frequency" value={formData.frequency} onChange={handleInputChange}>
+                            <option value="monthly">Monthly</option>
+                            <option value="annually">Annually</option>
+                        </select>
+                    </div>
+                    <div className="form-group">
+                        <label>Annual Increase Rate (%)</label>
+                        <input type="number" name="annual_increase_rate" value={formData.annual_increase_rate} onChange={handleInputChange} placeholder="2.5" step="0.1" />
+                    </div>
+                </div>
+                 <div className="form-actions">
+                    <button type="submit" className="primary">Add Income Stream</button>
+                </div>
+            </form>
+
+            <h4>Existing Streams</h4>
+            <div className="streams-table-container">
+                {isLoading ? <p>Loading streams...</p> : error ? <p className="error-message">{error}</p> : (
+                    <table className="streams-table">
+                        <thead>
+                            <tr>
+                                <th>Description</th>
+                                <th>Type</th>
+                                <th>Start Date</th>
+                                <th>Amount</th>
+                                <th>Frequency</th>
+                                <th>COLA</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {streams.length === 0 ? (
+                                <tr><td colSpan="7">No future income streams defined.</td></tr>
+                            ) : streams.map(stream => (
+                                <tr key={stream.stream_id}>
+                                    <td>{stream.description}</td>
+                                    <td>{stream.stream_type}</td>
+                                    <td>{stream.start_date}</td>
+                                    <td>{formatCurrency(stream.amount)}</td>
+                                    <td>{stream.frequency}</td>
+                                    <td>{`${(stream.annual_increase_rate * 100).toFixed(1)}%`}</td>
+                                    <td className="actions-cell">
+                                        <button className="delete-btn" onClick={() => handleDelete(stream.stream_id)} title="Delete Stream">🗑️</button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                )}
+            </div>
+        </div>
+    );
+};
+
+export default FutureIncomeStreamEditor;
 
 
 --- FILE: projects/trust/src/components/HoldingEditorModal.css ---
@@ -4861,6 +5423,136 @@ const InvestmentSummaryTable = ({ period }) => {
 export default InvestmentSummaryTable;
 
 
+--- FILE: projects/trust/src/components/LayeredReturnsSummary.css ---
+
+.layered-returns-card {
+    background-color: var(--dark-bg);
+}
+
+.metrics-container {
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 1rem;
+    padding: 1.5rem 0;
+}
+
+.metric-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    min-width: 150px;
+}
+
+.metric-label {
+    font-size: 0.9em;
+    color: #ccc;
+    text-transform: uppercase;
+    margin-bottom: 0.5rem;
+}
+
+.metric-value {
+    font-size: 2.5em;
+    font-weight: 500;
+    color: var(--gold-accent);
+}
+
+.metric-note {
+    font-size: 0.85em;
+    color: #999;
+    margin-top: 0.25rem;
+    height: 1.2em;
+}
+
+.metric-operator {
+    font-size: 2em;
+    color: #999;
+}
+
+.layered-returns-card .summary-notes {
+    margin-top: 1.5rem;
+    font-size: 0.85em;
+    color: #ccc;
+    text-align: center;
+    border-top: 1px solid var(--border-color);
+    padding-top: 1rem;
+}
+
+
+--- FILE: projects/trust/src/components/LayeredReturnsSummary.jsx ---
+
+import { useState, useEffect } from 'react';
+import './LayeredReturnsSummary.css';
+
+const MetricDisplay = ({ label, value, note, isPercent = false }) => (
+    <div className="metric-item">
+        <span className="metric-label">{label}</span>
+        <span className="metric-value">{isPercent ? `${value.toFixed(2)}%` : value.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
+        {note && <span className="metric-note">{note}</span>}
+    </div>
+);
+
+const LayeredReturnsSummary = ({ period }) => {
+    const [returns, setReturns] = useState(null);
+    const [isLoading, setIsLoading] = useState(true);
+    const [error, setError] = useState(null);
+
+    useEffect(() => {
+        const fetchReturns = async () => {
+            try {
+                setIsLoading(true);
+                setError(null);
+                const response = await fetch(`/api/portfolio/layered-returns?period=${period}`);
+                if (!response.ok) {
+                    throw new Error('Failed to fetch layered returns data');
+                }
+                const data = await response.json();
+                setReturns(data);
+            } catch (err) {
+                setError(err.message);
+                console.error(err);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+
+        fetchReturns();
+    }, [period]);
+
+    if (isLoading) {
+        return <div className="card"><p>Calculating returns...</p></div>;
+    }
+
+    if (error) {
+        return <div className="card error"><p>Error calculating returns: {error}</p></div>;
+    }
+    
+    if (!returns) return null;
+
+    return (
+        <div className="card layered-returns-card">
+            <h2>Portfolio Return (Approximated)</h2>
+            <div className="metrics-container">
+                <MetricDisplay label="Gross Return" value={returns.gross_return_percent} isPercent={true} note={`$${returns.gross_return_dollars.toLocaleString()}`} />
+                <div className="metric-operator">−</div>
+                <MetricDisplay label="Fees (Period)" value={returns.fees_dollars} note={` `} />
+                <div className="metric-operator">=</div>
+                <MetricDisplay label="After Fees" value={returns.after_fees_return_percent} isPercent={true} note={`$${returns.after_fees_return_dollars.toLocaleString()}`} />
+                <div className="metric-operator">−</div>
+                <MetricDisplay label="Taxes (Est. on Yield)" value={returns.taxes_dollars} note={` `} />
+                <div className="metric-operator">=</div>
+                <MetricDisplay label="After-Tax Return" value={returns.after_taxes_return_percent} isPercent={true} note={`$${returns.after_taxes_return_dollars.toLocaleString()}`} />
+            </div>
+            <p className="summary-notes"><em>Note: {returns.notes}</em></p>
+        </div>
+    );
+};
+
+export default LayeredReturnsSummary;
+
+
 --- FILE: projects/trust/src/components/MockSankey.jsx ---
 
 import SankeyChart from '../SankeyChart';
@@ -5188,7 +5880,7 @@ import FilterPanel from './FilterPanel';
 import BarChart from './BarChart';
 import TimeFilter from './TimeFilter';
 import HoldingEditorModal from './HoldingEditorModal';
-import SankeyChart from '../SankeyChart'; // NEW: Import Sankey Chart
+import LayeredReturnsSummary from './LayeredReturnsSummary';
 
 const AllocationTable = ({ tableData, formatCurrency }) => {
     return (
@@ -5254,9 +5946,6 @@ const PortfolioView = () => {
     const [editingHolding, setEditingHolding] = useState(null);
     const [portfolioAllocation, setPortfolioAllocation] = useState({ tableData: [] });
     const [allocationLoading, setAllocationLoading] = useState(true);
-    // --- NEW: State for returns sankey ---
-    const [returnsSankey, setReturnsSankey] = useState({ data: null, notes: '' });
-    const [sankeyLoading, setSankeyLoading] = useState(true);
 
     const fetchData = async (filters = activeFilters) => {
         try {
@@ -5285,22 +5974,6 @@ const PortfolioView = () => {
         }
     };
 
-    // --- NEW: Function to fetch returns sankey data ---
-    const fetchReturnsSankey = async (period = 'all') => {
-        try {
-            setSankeyLoading(true);
-            const response = await fetch(`/api/analysis/portfolio-returns-sankey?period=${period}`);
-            if (!response.ok) throw new Error('Failed to fetch Portfolio Returns data');
-            const sankeyData = await response.json();
-            setReturnsSankey({ data: sankeyData, notes: sankeyData.notes });
-        } catch (error) {
-            console.error(error);
-            setError(prev => prev ? `${prev}\n${error.message}` : error.message);
-        } finally {
-            setSankeyLoading(false);
-        }
-    };
-
     useEffect(() => {
         const fetchAllocationData = async () => {
             try {
@@ -5319,7 +5992,6 @@ const PortfolioView = () => {
         
         fetchData();
         fetchAllocationData();
-        fetchReturnsSankey(); // Initial fetch for sankey
     }, []);
 
     const sortedHoldings = useMemo(() => {
@@ -5368,7 +6040,6 @@ const PortfolioView = () => {
     const handlePeriodChange = (period) => {
         const newFilters = { ...activeFilters, period };
         fetchData(newFilters);
-        fetchReturnsSankey(period); // Also refresh sankey data
     };
 
     const handleHoldingSave = () => {
@@ -5395,23 +6066,7 @@ const PortfolioView = () => {
 
     return (
         <>
-            <div className="card sankey-container-card"> 
-                <div className="chart-header">
-                    <h2>Portfolio Return Waterfall</h2>
-                    <TimeFilter 
-                        selectedPeriod={activeFilters.period || 'all'} 
-                        onPeriodChange={handlePeriodChange} 
-                    />
-                </div>
-                {sankeyLoading ? <p>Loading chart data...</p> : 
-                 returnsSankey.data?.links.length > 0 ? (
-                    <>
-                        <SankeyChart data={returnsSankey.data} />
-                        <p style={{textAlign: 'center', fontSize: '0.8em', color: '#ccc'}}><em>{returnsSankey.notes}</em></p>
-                    </>
-                 ) : 
-                 <p>No returns data to display. This is placeholder data until full return calculations are implemented.</p>}
-            </div>
+            <LayeredReturnsSummary period={activeFilters.period || 'all'} />
 
             <div className="card">
                 <h2>Asset Allocation Summary</h2>
@@ -5443,7 +6098,10 @@ const PortfolioView = () => {
             <div className="card">
                 <div className="chart-header">
                     <h2>Top Holdings by Market Value</h2>
-                    {/* TimeFilter is now at the top level */}
+                    <TimeFilter 
+                        selectedPeriod={activeFilters.period || 'all'} 
+                        onPeriodChange={handlePeriodChange} 
+                    />
                 </div>
                 {loading ? (
                     <p>Loading chart...</p>

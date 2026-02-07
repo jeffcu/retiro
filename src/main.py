@@ -1,7 +1,7 @@
 import uvicorn
 import uuid
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body, Response, Query, Depends, BackgroundTasks, Path
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -13,7 +13,7 @@ from decimal import Decimal
 
 from src.importers import csv_importer, holdings_importer
 from src.database import initialize_database, save_transactions
-from src.data_model import CashflowType, Transaction
+from src.data_model import CashflowType, Transaction, FutureIncomeStream
 from src import database as db
 from src import analysis
 from src import rules_engine
@@ -98,6 +98,32 @@ class TaxRateSummary(BaseModel):
     state_rate: str
     combined_rate: str
     notes: str
+
+# --- NEW: Pydantic model for Layered Returns ---
+class LayeredReturnsResponse(BaseModel):
+    gross_return_dollars: float
+    gross_return_percent: float
+    fees_dollars: float
+    after_fees_return_dollars: float
+    after_fees_return_percent: float
+    taxes_dollars: float
+    after_taxes_return_dollars: float
+    after_taxes_return_percent: float
+    notes: str
+
+# --- NEW: Pydantic models for Future Income Streams ---
+class FutureIncomeStreamCreate(BaseModel):
+    stream_type: str = Field(..., example="Pension")
+    description: str = Field(..., example="Spouse's Pension")
+    start_date: date
+    end_date: Optional[date] = None
+    amount: float
+    frequency: str = Field(..., example="monthly") # 'monthly' or 'annually'
+    annual_increase_rate: float = Field(0.0, ge=0)
+
+class FutureIncomeStreamResponse(FutureIncomeStreamCreate):
+    stream_id: str
+
 
 # --- App Events ---
 @app.on_event("startup")
@@ -252,10 +278,14 @@ async def get_effective_tax_rates():
     target_years = [2023, 2024]
     return analysis.calculate_effective_tax_rates_for_years(target_years)
 
-# --- NEW: Portfolio Returns Sankey Endpoint ---
-@app.get("/api/analysis/portfolio-returns-sankey", tags=["Analysis"])
-async def get_portfolio_returns_sankey(period: str = "all"):
-    return analysis.generate_portfolio_return_sankey(period)
+# --- NEW: Layered Returns Endpoint ---
+@app.get("/api/portfolio/layered-returns", response_model=LayeredReturnsResponse, tags=["Analysis"])
+async def get_layered_returns(period: str = "all"):
+    """
+    Calculates and returns the layered portfolio returns.
+    NOTE: This is a simplified 'since inception' calculation due to data model limitations.
+    """
+    return analysis.calculate_layered_portfolio_returns(period)
 
 # --- Data & Filter Endpoints ---
 @app.get("/api/transactions", tags=["Data"])
@@ -351,6 +381,38 @@ async def create_or_update_tax_facts(payload: TaxFactsPayload, year: int = Path(
         return facts
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# --- NEW: Future Income Stream Endpoints ---
+@app.post("/api/future-streams", response_model=FutureIncomeStreamResponse, status_code=201, tags=["Forecasting"])
+async def create_future_stream(payload: FutureIncomeStreamCreate):
+    stream_id = str(uuid.uuid4())
+    stream_obj = FutureIncomeStream(
+        stream_id=stream_id,
+        stream_type=payload.stream_type,
+        description=payload.description,
+        start_date=payload.start_date,
+        end_date=payload.end_date,
+        amount=Decimal(str(payload.amount)),
+        frequency=payload.frequency,
+        annual_increase_rate=Decimal(str(payload.annual_increase_rate))
+    )
+    try:
+        db.create_future_income_stream(stream_obj)
+        return FutureIncomeStreamResponse(**stream_obj.__dict__)
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to create income stream: {e}")
+
+@app.get("/api/future-streams", response_model=List[FutureIncomeStreamResponse], tags=["Forecasting"])
+async def get_all_future_streams():
+    return db.get_all_future_income_streams()
+
+@app.delete("/api/future-streams/{stream_id}", status_code=204, tags=["Forecasting"])
+async def delete_future_stream(stream_id: str):
+    if not db.delete_future_income_stream(stream_id):
+        raise HTTPException(status_code=404, detail="Future income stream not found.")
+    return Response(status_code=204)
+
 
 # --- Admin & Market Data Endpoints ---
 @app.post("/api/data/purge", tags=["Admin"])

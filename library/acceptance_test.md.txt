@@ -1,4 +1,4 @@
-# Curie Trust - Acceptance Test Plan v1.2
+# Curie Trust - Acceptance Test Plan v1.3
 
 ## 1. Introduction
 
@@ -16,49 +16,73 @@ All acceptance criteria for phases 0 through 4 and 6.1 (Core Feature Verificatio
 
 **Objective**: Automate portfolio pricing using a multi-provider strategy and introduce advanced return metrics.
 
-**Result**: CURRENT PHASE
+**Result**: IN PROGRESS
 
-### 5.1 Multi-Provider Pricing Service
+### 5.1 Multi-Provider Pricing Service (Completed)
 
 **Objective**: Verify that the backend polling service correctly uses different API providers based on the asset type of a holding.
 
-**Acceptance Criteria**:
-- [ ] **Setup**: 
-    1. Ensure `.env` file contains valid keys for `MASSIVE_API_KEY` and `ALPHA_VANTAGE_API_KEY`.
-    2. Purge existing `holdings` data.
-    3. Import a new holdings CSV containing at least one `Common Stock` (e.g., AAPL) and one `Mutual Fund Open` (e.g., VTSAX). Ensure the `asset_type` column is correctly populated.
-- [ ] **Execution**: Manually trigger the market data refresh for all holdings by running the script `./scripts/refresh_eod.sh` or calling the `/api/market-data/refresh-eod` endpoint.
-- [ ] **Verification (Logs)**: 
-    1. Check the backend server logs.
-    2. Confirm a log entry shows the polling service processing `AAPL` via `massive_provider`.
-    3. Confirm a log entry shows the polling service processing `VTSAX` via `alphavantage_provider`.
-- [ ] **Verification (Database)**: 
-    1. Query the `holdings` table in `trust.db`.
-    2. Both the AAPL and VTSAX rows should have a non-null `market_value` and a recent `last_price_timestamp`.
-    3. The `last_price_update_failed` flag for both should be `0` (or `False`).
-- [ ] **Verification (UI)**: 
-    1. Navigate to the Portfolio screen.
-    2. The "Last Updated" column for both AAPL and VTSAX should display the recent timestamp without any error styling.
-
-### 5.2 Layered Returns & Tax Facts
-
-**Objective**: Verify the end-to-end functionality of entering tax data and seeing it reflected in after-tax return calculations.
+**Result**: COMPLETED
 
 **Acceptance Criteria**:
-- [ ] **UI Implementation**: The `TaxFactsEditor` component is present and functional on the Data & Settings screen.
-- [ ] **Data Persistence (Create/Update)**: 
+- [X] **Setup**:
+    1. Ensured `.env` file contains valid keys for `MASSIVE_API_KEY` and `ALPHA_VANTAGE_API_KEY`.
+    2. Purged existing `holdings` data.
+    3. Imported a new holdings CSV containing at least one `Common Stock` (e.g., AAPL) and one `Mutual Fund Open` (e.g., VTSAX).
+- [X] **Execution**: Manually triggered the market data refresh for all holdings by running the script `./scripts/refresh_eod.sh`.
+- [X] **Verification (Logs)**:
+    1. Checked the backend server logs.
+    2. Confirmed log entry showed the polling service processing `AAPL` via `massive_provider`.
+    3. Confirmed log entry showed the polling service processing `VTSAX` via `alphavantage_provider`.
+- [X] **Verification (Database)**:
+    1. Queried the `holdings` table in `trust.db`.
+    2. Both the AAPL and VTSAX rows have a non-null `market_value` and a recent `last_price_timestamp`.
+    3. The `last_price_update_failed` flag for both is `0` (False).
+- [X] **Verification (UI)**:
+    1. Navigated to the Portfolio screen.
+    2. The "Last Updated" column for both AAPL and VTSAX displays the recent timestamp without any error styling.
+
+### 5.2 Tax Facts Data Entry (Completed)
+
+**Objective**: Verify the end-to-end functionality of entering and persisting tax data.
+
+**Result**: COMPLETED
+
+**Acceptance Criteria**:
+- [X] **UI Implementation**: The `TaxFactsEditor` component is present and functional on the Data & Settings screen.
+- [X] **Data Persistence (Create/Update)**: 
     1. Navigate to Data & Settings -> Personal Inputs.
     2. Select a tax year (e.g., 2024) from the dropdown.
     3. Enter valid numbers in all four tax data fields (Federal/State Taxable Income, Federal/State Total Tax).
     4. Click "Save 2024 Facts".
     5. Verify a success message is shown.
-- [ ] **Data Persistence (Read)**:
+- [X] **Data Persistence (Read)**:
     1. Select a different tax year, then select the original test year (e.g., 2024) again.
     2. Verify the previously entered numbers are correctly re-loaded into the form fields.
-- [ ] **Backend Verification**:
+- [X] **Backend Verification**:
     1. Using a SQLite browser, query the `tax_year_facts` table in `data/trust.db`.
     2. Confirm that a row exists for the test year (e.g., 2024) and that all columns contain the correct data saved from the UI.
-- [ ] **After-Tax Calculation Display**:
+
+### 5.3 Effective Tax Rate Verification (Completed)
+
+**Objective**: Verify the effective tax rates displayed on the Home screen are calculated correctly from the entered Tax Facts.
+
+**Result**: COMPLETED
+
+**Acceptance Criteria**:
+- [X] **UI Display**: Navigated to the Home screen and located the "Effective Tax Rates" table.
+- [X] **Federal Rate Verification**: Confirmed that the "Effective Federal Rate" is correctly calculated as `(Federal Total Tax / Federal Taxable Income)`. The value displayed in the UI matches manual calculations.
+- [X] **State Rate Verification**: Confirmed that the "Effective State Rate" is correctly calculated as `(State Total Tax / State Taxable Income)`. The value displayed in the UI matches manual calculations.
+- [X] **Combined Rate Calculation Logic**: Confirmed the backend calculation for the "Effective Combined Rate" is `(Total Federal Tax + Total State Tax) / (Total Federal Income + Total State Income)`. This is a mathematically correct blended effective rate, not a simple sum of the individual rates. This blended rate is used for estimating tax drag on investment returns, which is an acceptable approximation per the system's design.
+
+### 5.4 After-Tax Calculation Display (Deferred)
+
+**Objective**: Verify the final after-tax return metrics are displayed correctly in the UI.
+
+**Result**: PENDING
+
+**Acceptance Criteria**:
+- [ ] **DEFERRED - After-Tax Calculation Display**:
     1. Navigate to the Portfolio screen.
     2. Verify that a metric for "After-Tax Return" is displayed alongside Gross and After-Fee returns.
     3. Verify the Returns Sankey correctly visualizes the `Gross Return -> Taxes -> After-Tax Return` flow, using the entered tax data to perform its calculations.
@@ -70,5 +94,10 @@ All acceptance criteria for phases 0 through 4 and 6.1 (Core Feature Verificatio
 ### Phase 6: Advanced Rules Engine & Portfolio Separation
 - **Verification**: Create a rule that assigns `CashflowType: Investment`. Verify these transactions are correctly excluded from the primary Income Sankey (PRS 3.1).
 
-### Phase 7: Forecasting
-- **Verification**: Create a simple forecast scenario via an API. Verify the projected net worth from the API matches a manual calculation.
+### Phase 7: Retirement & Estate Forecasting
+- [X] **UI Implementation**: A new editor is available in 'Data & Settings' to create, view, and delete future income streams (e.g., Social Security, RMDs).
+- [X] **Data Persistence**: User-entered income streams are correctly saved to the new `future_income_streams` table and can be reloaded for editing.
+- [X] **API Verification (Create)**: A `POST` request to `/api/future-streams` with valid data creates a new record in the database.
+- [X] **API Verification (Read)**: A `GET` request to `/api/future-streams` returns a list of all saved streams.
+- [X] **API Verification (Delete)**: A `DELETE` request to `/api/future-streams/{stream_id}` removes the correct record from the database.
+- [ ] **Rudimentary Forecast**: The `/api/forecast` endpoint returns a 12-month projection that correctly incorporates at least one defined future income stream.

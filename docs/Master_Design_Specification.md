@@ -58,6 +58,19 @@ The system is decomposed into the following distinct modules within the `src` di
 *   `rules`: Stores user-defined rules for transaction categorization.
 *   `import_profiles`: Saves column mappings and settings for specific CSV formats.
 *   `tax_year_facts`: Stores key data from annual tax returns to calculate after-tax returns. Contains columns like `tax_year` (PK), `filing_status`, `fed_taxable_income`, `fed_total_tax`, `state_taxable_income`, `state_total_tax`.
+*   `future_income_streams`: Stores definitions for projected, recurring cashflows for forecasting (e.g., Social Security, RMDs). Columns include `stream_id` (PK), `stream_type`, `description`, `start_date`, `end_date`, `amount`, `frequency`, and `annual_increase_rate`.
+
+| Column                  | Type    | Description                                                                 |
+|-------------------------|---------|-----------------------------------------------------------------------------|
+| `stream_id`             | TEXT    | Primary Key (UUID)                                                          |
+| `stream_type`           | TEXT    | Category of the stream (e.g., 'Social Security', 'Pension', 'RMD', 'Other') |
+| `description`           | TEXT    | User-friendly name for the stream (e.g., 'Spouse\'s Pension')               |
+| `start_date`            | TEXT    | ISO 8601 date when the stream begins.                                       |
+| `end_date`              | TEXT    | Optional ISO 8601 date when the stream ends.                                |
+| `amount`                | REAL    | The monetary value of each payment.                                         |
+| `frequency`             | TEXT    | Payment frequency (e.g., 'monthly', 'annually').                            |
+| `annual_increase_rate`  | REAL    | The annual Cost of Living Adjustment (COLA) as a decimal (e.g., 0.02 for 2%). |
+
 
 ### 5. API Interfaces
 
@@ -71,6 +84,9 @@ The backend will expose RESTful endpoints for the frontend, such as:
 *   `PUT /api/transaction/{id}`: Updates a single transaction (e.g., manual re-categorization).
 *   `GET /api/tax-facts?year={year}`: Retrieves the stored tax facts for a given year.
 *   `POST /api/tax-facts/{year}`: Creates or updates the tax facts for a given year.
+*   `GET /api/future-streams`: Retrieves all defined future income streams.
+*   `POST /api/future-streams`: Creates a new future income stream.
+*   `DELETE /api/future-streams/{stream_id}`: Deletes a specific future income stream.
 
 #### 5.2 External APIs
 
@@ -121,11 +137,10 @@ Development will follow the user-feature centric plan outlined in the PRS (Secti
     *   Goal: Establish initial portfolio tracking.
 
 *   **Phase 5: Automated Market Data & Layered Returns (Current)**
-    *   Goal: Automate portfolio pricing using a multi-provider strategy and introduce advanced return metrics.
+    *   Goal: Automate portfolio pricing using a multi-provider strategy and introduce advanced return metrics. Final verification of after-tax calculations is deferred.
 
 *   **Phase 6: Advanced Rules Engine & Portfolio Separation (Completed)**
     *   Goal: Implement the v2 rules engine to separate portfolio activity from cash flow.
 
-*   **Phase 7: Forecasting**
-    *   Goal: Provide future-looking financial projections.
-
+*   **Phase 7: Retirement & Estate Forecasting**
+    *   Goal: Provide future-looking financial projections by modeling future income streams like Social Security and RMDs.

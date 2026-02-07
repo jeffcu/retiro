@@ -2,8 +2,10 @@ import sqlite3
 import uuid
 import json
 from pathlib import Path
-from typing import List, Dict, Any, Tuple
-from src.data_model import Transaction, Holding, PriceQuote # Added PriceQuote
+from typing import List, Dict, Any, Tuple, Optional
+from src.data_model import Transaction, Holding, PriceQuote, FutureIncomeStream
+from datetime import date
+from decimal import Decimal
 
 # Per MDS, the database is a single file in the data/ directory.
 # We resolve the path to its absolute form to avoid ambiguity.
@@ -111,6 +113,20 @@ def _ensure_schema(conn: sqlite3.Connection):
         fed_total_tax REAL,
         state_taxable_income REAL,
         state_total_tax REAL
+    );
+    """)
+
+    # --- NEW: Table for storing future income streams for forecasting (PRS Section 7) ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS future_income_streams (
+        stream_id TEXT PRIMARY KEY,
+        stream_type TEXT NOT NULL,
+        description TEXT NOT NULL,
+        start_date TEXT NOT NULL,
+        end_date TEXT,
+        amount REAL NOT NULL,
+        frequency TEXT NOT NULL, -- 'monthly' or 'annually'
+        annual_increase_rate REAL DEFAULT 0.0
     );
     """)
 
@@ -557,7 +573,7 @@ def get_total_investment_fees_for_period(period: str) -> float:
 
     # Define the specific filters for advisory fees
     where_clauses.append("cashflow_type = 'Investment'")
-    where_clauses.append("category = 'Advisory Fees'")
+    where_clauses.append("category = 'Service Charges/Fees'")
 
     _apply_period_filter_to_query(where_clauses, params, period, date_column='transaction_date')
 
@@ -854,6 +870,20 @@ def get_tax_facts(year: int) -> Dict[str, Any] | None:
         return None
     return {k: row[k] for k in row.keys()}
 
+def get_latest_complete_tax_facts() -> Dict[str, Any] | None:
+    """Fetches the tax facts for the most recent year that has usable data for rate calculation."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    # --- FIX: The query now ensures that the data is valid for calculation. ---
+    cursor.execute("""SELECT * FROM tax_year_facts 
+                     WHERE fed_taxable_income > 0 AND fed_total_tax > 0
+                     ORDER BY tax_year DESC LIMIT 1""")
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {k: row[k] for k in row.keys()}
+
 def save_tax_facts(year: int, data: Dict[str, Any]):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -876,6 +906,59 @@ def save_tax_facts(year: int, data: Dict[str, Any]):
         print(f"Successfully saved/replaced tax facts for year {year}.")
     except sqlite3.Error as e:
         print(f"Database error saving tax facts for {year}: {e}")
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+# --- NEW: CRUD functions for Future Income Streams ---
+def create_future_income_stream(stream: FutureIncomeStream) -> FutureIncomeStream:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    sql = """INSERT INTO future_income_streams (
+                 stream_id, stream_type, description, start_date, end_date, 
+                 amount, frequency, annual_increase_rate
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);"""
+    params = (
+        stream.stream_id,
+        stream.stream_type,
+        stream.description,
+        stream.start_date.isoformat(),
+        stream.end_date.isoformat() if stream.end_date else None,
+        float(stream.amount),
+        stream.frequency,
+        float(stream.annual_increase_rate)
+    )
+    try:
+        cursor.execute(sql, params)
+        conn.commit()
+        print(f"Successfully created future income stream {stream.stream_id}.")
+    except sqlite3.Error as e:
+        print(f"Database error creating income stream: {e}")
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+    return stream
+
+def get_all_future_income_streams() -> List[Dict[str, Any]]:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM future_income_streams ORDER BY start_date ASC")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def delete_future_income_stream(stream_id: str) -> bool:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM future_income_streams WHERE stream_id = ?", (stream_id,))
+        conn.commit()
+        print(f"Deleted income stream {stream_id}. Rows affected: {cursor.rowcount}")
+        return cursor.rowcount > 0
+    except sqlite3.Error as e:
+        print(f"Database error deleting income stream {stream_id}: {e}")
         conn.rollback()
         raise e
     finally:

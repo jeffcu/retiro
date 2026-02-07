@@ -167,30 +167,48 @@ def calculate_investment_cashflow_summary(period: str) -> Dict[str, Any]:
     # Step 2: Get cash outflows for fees
     fees = db.get_total_investment_fees_for_period(period)
 
-    # Step 3: Calculate estimated taxes on the income
-    year_to_use = None
-    if period.isdigit() and len(period) == 4:
-        year_to_use = int(period)
-    else:
-        year_to_use = db.get_latest_transaction_year()
-
-    notes = f"Using data for period '{period}'."
+    # Step 3: Calculate estimated taxes on the income with intelligent fallback
+    notes = [f"Using data for period '{period}'."]
     taxes = 0
+    tax_facts = None
 
-    if year_to_use:
-        tax_facts = db.get_tax_facts(year_to_use)
-        if tax_facts and tax_facts.get('fed_taxable_income') and tax_facts.get('fed_total_tax'):
-            total_income = (tax_facts.get('fed_taxable_income', 0) or 0) + (tax_facts.get('state_taxable_income', 0) or 0)
-            total_tax = (tax_facts.get('fed_total_tax', 0) or 0) + (tax_facts.get('state_total_tax', 0) or 0)
-            effective_tax_rate = total_tax / total_income if total_income > 0 else 0
-            
-            # Apply the effective rate to the investment income
-            taxes = investment_income * effective_tax_rate if investment_income > 0 else 0
-            notes += f" Estimated taxes based on {effective_tax_rate:.2%} effective rate from {year_to_use} tax data."
-        else:
-            notes += f" Tax facts for {year_to_use} are incomplete; taxes are not calculated."
+    # Determine the primary year to check based on the period
+    primary_year_to_check = None
+    if period.isdigit() and len(period) == 4:
+        primary_year_to_check = int(period)
     else:
-        notes += " Could not determine a tax year; taxes are not calculated."
+        primary_year_to_check = db.get_latest_transaction_year() # e.g., for 'all' or '6m'
+
+    if primary_year_to_check:
+        # Attempt to get tax facts for the primary year
+        tax_facts = db.get_tax_facts(primary_year_to_check)
+        
+        # Check if primary year's facts are usable for calculation
+        if tax_facts and tax_facts.get('fed_taxable_income') and tax_facts.get('fed_total_tax'):
+            notes.append(f"Taxes estimated based on {primary_year_to_check} tax data.")
+        else:
+            # If not usable, find the latest complete historical data as a fallback
+            historical_tax_facts = db.get_latest_complete_tax_facts()
+            if historical_tax_facts:
+                tax_facts = historical_tax_facts
+                tax_year_used = tax_facts['tax_year']
+                notes.append(f"Tax facts for {primary_year_to_check} are incomplete; using data from {tax_year_used} as an estimate.")
+            else:
+                notes.append("No complete tax data available in the system; taxes cannot be calculated.")
+                tax_facts = None # Ensure it's None for the next step
+    else:
+        notes.append("Could not determine a tax year; taxes cannot be calculated.")
+
+    # Calculate taxes if we found any usable tax_facts (either primary or fallback)
+    if tax_facts:
+        total_income = (tax_facts.get('fed_taxable_income', 0) or 0) + (tax_facts.get('state_taxable_income', 0) or 0)
+        total_tax = (tax_facts.get('fed_total_tax', 0) or 0) + (tax_facts.get('state_total_tax', 0) or 0)
+        if total_income > 0:
+            effective_tax_rate = total_tax / total_income
+            taxes = investment_income * effective_tax_rate if investment_income > 0 else 0
+            notes.append(f"Effective rate used: {effective_tax_rate:.2%}.")
+        else:
+            notes.append("Taxable income for the selected year is zero; could not calculate rate.")
 
     # Step 4: Calculate what's left to spend
     spendable_cash = investment_income - fees - taxes
@@ -200,7 +218,7 @@ def calculate_investment_cashflow_summary(period: str) -> Dict[str, Any]:
         "advisory_fees": fees,
         "estimated_taxes": taxes,
         "spendable_cash": spendable_cash,
-        "notes": notes
+        "notes": ' '.join(notes)
     }
 
 # --- NEW: Tax Rate Calculation ---
@@ -239,124 +257,87 @@ def calculate_effective_tax_rates_for_years(years: List[int]) -> List[Dict[str, 
         
     return results
 
-# --- Layered Returns Calculation --- 
-def calculate_layered_returns(period: str) -> Dict[str, Any]:
+# --- NEW: Layered Portfolio Return Calculation ---
+def calculate_layered_portfolio_returns(period: str) -> Dict[str, Any]:
     """
-    Calculates gross return, fees, taxes, and after-tax return for a period.
-    (PRS Section 7.2)
+    Calculates layered portfolio returns.
+
+    NOTE: This is a highly simplified, "since inception" calculation due to the lack
+    of historical portfolio value snapshots. It should be labeled as an approximation.
+    - Gross Return is based on total market value vs. total cost basis.
+    - Fees are correctly calculated for the given period.
+    - Taxes are estimated based on the effective tax rate applied to investment *yield* for
+      the period, as capital gains data is not available.
     """
-    # STEP 1: Calculate Gross Return as (Market Value - Cost Basis).
-    # This is an approximation of total unrealized gain.
     total_market_value = db.get_total_portfolio_market_value()
     total_cost_basis = db.get_total_portfolio_cost_basis()
-    gross_return = total_market_value - total_cost_basis
-    
-    # STEP 2: Calculate fees for the specified period.
-    fees = db.get_total_investment_fees_for_period(period)
 
-    # STEP 3: Determine the tax year to use.
+    if total_cost_basis == 0:
+        return { # Return a zeroed-out state if there's no portfolio
+            "gross_return_dollars": 0,
+            "gross_return_percent": 0,
+            "fees_dollars": 0,
+            "after_fees_return_dollars": 0,
+            "after_fees_return_percent": 0,
+            "taxes_dollars": 0,
+            "after_taxes_return_dollars": 0,
+            "after_taxes_return_percent": 0,
+            "notes": "No portfolio cost basis found. Cannot calculate returns."
+        }
+
+    # 1. Gross Return (Since Inception)
+    gross_return_dollars = total_market_value - total_cost_basis
+    gross_return_percent = (gross_return_dollars / total_cost_basis) * 100
+
+    # 2. Fees (For the Period)
+    fees_dollars = db.get_total_investment_fees_for_period(period)
+
+    # 3. After Fees Return
+    after_fees_return_dollars = gross_return_dollars - fees_dollars
+    after_fees_return_percent = (after_fees_return_dollars / total_cost_basis) * 100
+
+    # 4. Estimated Taxes (For the Period, on YIELD only)
     year_to_use = None
     if period.isdigit() and len(period) == 4:
         year_to_use = int(period)
     else:
-        # Fallback to the latest year with transaction data as a proxy.
+        # For 'all', '6m', etc., use the latest year with transaction data as a proxy
         year_to_use = db.get_latest_transaction_year()
 
-    notes = "Gross return is lifetime unrealized gain (Market Value - Cost Basis). Fees & Taxes are for the selected period."
+    notes = [f"Return calculated since inception (Total Market Value vs Total Cost Basis). Fees and Taxes are for the selected period '{period}'."]
+    taxes_dollars = 0
 
-    if not year_to_use:
-        # No tax data available, so we can't calculate taxes.
-        return {
-            "gross_return": gross_return,
-            "fees": fees,
-            "taxes": 0,
-            "after_tax_return": gross_return - fees,
-            "notes": notes
-        }
+    if year_to_use:
+        investment_income_for_period = db.get_investment_income_for_period(period)
+        tax_facts = db.get_tax_facts(year_to_use)
+        
+        if tax_facts and tax_facts.get('fed_taxable_income') and tax_facts.get('fed_total_tax'):
+            total_income = (tax_facts.get('fed_taxable_income', 0) or 0) + (tax_facts.get('state_taxable_income', 0) or 0)
+            total_tax = (tax_facts.get('fed_total_tax', 0) or 0) + (tax_facts.get('state_total_tax', 0) or 0)
+            
+            if total_income > 0:
+                effective_tax_rate = total_tax / total_income
+                taxes_dollars = investment_income_for_period * effective_tax_rate
+                notes.append(f"Taxes estimated using {effective_tax_rate:.2%} effective rate from {year_to_use} tax data, applied to period investment yield of ${investment_income_for_period:,.0f}.")
+            else:
+                notes.append(f"Taxable income for {year_to_use} is zero; cannot calculate tax rate.")
+        else:
+            notes.append(f"Tax facts for {year_to_use} are incomplete; taxes could not be estimated.")
+    else:
+        notes.append("Could not determine a tax year; taxes could not be estimated.")
 
-    # STEP 4: Fetch tax facts and calculate effective tax rate.
-    tax_facts = db.get_tax_facts(year_to_use)
-    if not tax_facts or not tax_facts.get('fed_taxable_income') or not tax_facts.get('fed_total_tax'):
-        return {
-            "gross_return": gross_return,
-            "fees": fees,
-            "taxes": 0,
-            "after_tax_return": gross_return - fees,
-            "notes": f"{notes} Tax facts for {year_to_use} are incomplete."
-        }
-    
-    # Calculate a blended federal and state effective tax rate.
-    total_income = (tax_facts.get('fed_taxable_income', 0) or 0) + (tax_facts.get('state_taxable_income', 0) or 0)
-    total_tax = (tax_facts.get('fed_total_tax', 0) or 0) + (tax_facts.get('state_total_tax', 0) or 0)
-
-    effective_tax_rate = total_tax / total_income if total_income > 0 else 0
-    
-    # Apply the tax rate to the investment gains (gross return).
-    # This is an estimation, as per PRS.
-    taxes = gross_return * effective_tax_rate if gross_return > 0 else 0
-    after_tax_return = gross_return - fees - taxes
+    # 5. After Taxes Return
+    after_taxes_return_dollars = after_fees_return_dollars - taxes_dollars
+    after_taxes_return_percent = (after_taxes_return_dollars / total_cost_basis) * 100
 
     return {
-        "gross_return": gross_return,
-        "fees": fees,
-        "taxes": taxes,
-        "after_tax_return": after_tax_return,
-        "notes": f"{notes} Using effective tax rate of {effective_tax_rate:.2%} from {year_to_use} tax data."
+        "gross_return_dollars": round(gross_return_dollars, 2),
+        "gross_return_percent": round(gross_return_percent, 2),
+        "fees_dollars": round(fees_dollars, 2),
+        "after_fees_return_dollars": round(after_fees_return_dollars, 2),
+        "after_fees_return_percent": round(after_fees_return_percent, 2),
+        "taxes_dollars": round(taxes_dollars, 2),
+        "after_taxes_return_dollars": round(after_taxes_return_dollars, 2),
+        "after_taxes_return_percent": round(after_taxes_return_percent, 2),
+        "notes": " ".join(notes)
     }
-
-def generate_portfolio_return_sankey(period: str) -> Dict[str, Any]:
-    """
-    Generates the data for the Portfolio Return Waterfall Sankey diagram.
-    (PRS Section 2.1.C)
-    """
-    returns = calculate_layered_returns(period)
-
-    gross_return = returns['gross_return']
-    fees = returns['fees']
-    taxes = returns['taxes']
-    after_tax_return = returns['after_tax_return']
-
-    # --- NEW: Handle negative gross returns (a loss) --- 
-    if gross_return <= 0:
-        # If there's a loss, the waterfall is simpler.
-        # Gross Loss -> Fees -> Net Loss
-        nodes = [
-            {"id": "Gross Loss"},
-            {"id": "Fees"},
-            {"id": "Net Loss"}
-        ]
-        links = [
-            {"source": "Gross Loss", "target": "Net Loss", "value": round(abs(gross_return), 2)},
-            {"source": "Fees", "target": "Net Loss", "value": round(fees, 2)}
-        ]
-        return {"nodes": nodes, "links": links, "notes": returns.get('notes')}
-
-    # --- Logic for positive gross returns --- 
-    # Ensure we don't create negative values in the Sankey chart.
-    if gross_return < (fees + taxes):
-        # In this edge case, just show fees and taxes eating the whole return.
-        after_tax_return = 0
-        if gross_return < fees:
-            fees = gross_return
-            taxes = 0
-        else:
-            taxes = gross_return - fees
-
-    nodes = [
-        {"id": "Gross Return"},
-        {"id": "Fees"},
-        {"id": "Taxes"},
-        {"id": "After-Tax Return"}
-    ]
-
-    links = []
-    if gross_return > 0:
-        if fees > 0:
-            links.append({"source": "Gross Return", "target": "Fees", "value": round(fees, 2)})
-        if taxes > 0:
-            links.append({"source": "Gross Return", "target": "Taxes", "value": round(taxes, 2)})
-        if after_tax_return > 0:
-            links.append({"source": "Gross Return", "target": "After-Tax Return", "value": round(after_tax_return, 2)})
-
-    return {"nodes": nodes, "links": links, "notes": returns.get('notes')}
-

@@ -4,6 +4,7 @@ import ImportSummary from './ImportSummary';
 import RulesEditor from './RulesEditor';
 import IncomeSankeySettings from './IncomeSankeySettings';
 import TaxFactsEditor from "./TaxFactsEditor.jsx"; // FIX: Explicitly added .jsx extension to resolve import error.
+import FutureIncomeStreamEditor from './FutureIncomeStreamEditor.jsx';
 
 const FileUploader = ({ title, importType, onUploadSuccess }) => {
     const [file, setFile] = useState(null);
@@ -153,6 +154,7 @@ const DataImportView = () => {
             <div className="card">
                 <h2>Personal Inputs</h2>
                 <TaxFactsEditor />
+                <FutureIncomeStreamEditor />
             </div>
             <RulesEditor />
             <ImportSummary refreshKey={refreshKey} />

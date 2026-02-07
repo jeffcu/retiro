@@ -1,0 +1,109 @@
+.future-stream-editor-container {
+    background-color: var(--dark-bg);
+    padding: 1.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    margin-top: 2rem;
+}
+
+.future-stream-editor-container h3 {
+    margin-top: 0;
+    color: var(--gold-accent);
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.5rem;
+}
+
+.future-stream-editor-container p {
+    font-size: 0.9em;
+    color: #ccc;
+    margin-bottom: 1.5rem;
+}
+
+.stream-form .form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+}
+
+.stream-form .form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-size: 0.9em;
+}
+
+.stream-form .form-group input,
+.stream-form .form-group select {
+    width: 100%;
+    padding: 0.5rem;
+    background-color: var(--medium-bg);
+    border: 1px solid #666;
+    border-radius: 4px;
+    color: #fff;
+    box-sizing: border-box;
+}
+
+.stream-form .form-actions {
+    margin-top: 1.5rem;
+    text-align: right;
+}
+
+.stream-form .form-actions button.primary {
+    background-color: var(--gold-accent);
+    color: var(--dark-bg);
+    border: none;
+    padding: 0.6rem 1.5rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.future-stream-editor-container h4 {
+    margin-top: 2rem;
+    margin-bottom: 1rem;
+    color: #ddd;
+    font-weight: 500;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.5rem;
+}
+
+.streams-table-container {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.streams-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.streams-table th, .streams-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color);
+    text-align: left;
+    font-size: 0.9em;
+}
+
+.streams-table thead th {
+    background-color: var(--light-bg);
+    position: sticky;
+    top: 0;
+}
+
+.streams-table td:nth-child(4), /* Amount */
+.streams-table td:nth-child(6) { /* COLA */
+    text-align: right;
+    font-family: monospace;
+}
+
+.streams-table td.actions-cell {
+    width: 1%;
+    text-align: center;
+}
+
+.streams-table .delete-btn {
+    background: none;
+    border: none;
+    color: #ff6b6b;
+    cursor: pointer;
+    font-size: 1.1em;
+}

@@ -41,11 +41,6 @@ B) Estate Flow (Net Worth / Estate Screen Sankey)
 	•	Portfolio (invested) → Market Return → Fees → Taxes → After-Tax Return
 	•	This diagram must clearly show “conversion” (CapEx) vs “leakage” (fees/taxes).
 
-C) Portfolio Return Waterfall as Sankey (Portfolio Screen)
-	•	Left: Gross Market Return
-	•	Splits to: Fees, Taxes, After-Tax Return
-	•	Always displayed with matching numeric metrics (%, $).
-
 2.2 Sankey Interaction Rules
 	•	Node/flow click drills down to:
 	•	Categories → merchants → transactions
@@ -109,6 +104,7 @@ Priority order:
 	•	CapEx over time
 	•	Market value snapshots
 	•	Estate Flow Sankey
+	•	Summary of future income streams (Social Security, RMDs, etc.)
 
 4..5 Portfolio
 	•	Value over time (snapshots + intraday updates)
@@ -117,12 +113,11 @@ Priority order:
 	•	Before fees
 	•	After fees
 	•	After taxes
-	•	Return Sankey always visible here
 
 4.6 Forecast
 	•	Scenario-based forecast:
 	•	Expenses (consumption)
-	•	Income
+	•	Income (historical and modeled future streams like Social Security, RMDs)
 	•	Expected returns
 	•	One-time planned CapEx events
 	•	Outputs: projected portfolio, net worth, runway
@@ -132,6 +127,7 @@ Priority order:
 	•	Filter Rules editor (see section 5.3)
 	•	Manual entry: fees, taxes, market value snapshots
 	•	Tax Facts Entry: A form to input key data from annual tax returns (e.g., Form 1040, 540) to enable after-tax calculations.
+	•	Future Income Stream Editor: A section to define recurring future income (e.g., Social Security, RMDs) for forecasting.
 	•	Backup/restore
 
 ⸻
@@ -251,6 +247,14 @@ All return views must label:
 	•	PriceQuote (intraday/EOD)
 	•	FeeRecord
 	•	TaxYearFacts (stores key data points from annual tax returns)
+	•	FutureIncomeStream (stores definitions for projected income like Social Security, RMDs)
+		•	stream_id (PK)
+		•	stream_type (e.g., 'Social Security', 'Pension', 'RMD')
+		•	description (e.g., 'Spouse SS', '401k RMD')
+		•	start_date, end_date (optional)
+		•	amount (per period)
+		•	frequency (e.g., 'monthly', 'annually')
+		•	annual_increase_rate (for COLA)
 	•	ImportProfile + ImportRun + ImportRowHash (dedupe/audit)
 	•	FilterRule (pattern, case_sensitive, account_filters, action, import_profile_id)
 
@@ -297,15 +301,17 @@ Phase 5: Automated Market Data & Layered Returns (In Progress)
 		• Implement the `TaxFactsEditor` UI for manual entry of annual tax data.
 		• Implement backend database table (`TaxYearFacts`) and API endpoints to store and retrieve tax data.
 		• Update the analysis engine to calculate after-tax returns using stored tax facts.
-		• The Portfolio screen displays Gross, After-Fee, and After-Tax returns, visualized in the Returns Sankey.
+		• The Portfolio screen displays Gross, After-Fee, and After-Tax returns.
+	•	NOTE: Final UI verification of after-tax calculations is deferred in favor of starting Phase 7 work.
 
 Phase 6: Advanced Rules Engine & Portfolio Separation (Completed)
 	•	Goal: Implement the v2 rules engine to separate portfolio activity from cash flow.
 	•	Features: Update database and backend logic for conditional rules. Modify analysis engine to exclude 'Investment' type transactions from cash flow Sankey. Begin UI design for new rules editor.
 
-Phase 7: Forecasting
+Phase 7: Retirement & Estate Forecasting
 	•	Goal: Provide future-looking financial projections based on user-defined scenarios.
 	•	Features: 
+    •   A new section in 'Data & Settings' to define recurring future income streams, including Social Security, RMDs, and pensions. This requires a `FutureIncomeStreamEditor` UI and corresponding backend infrastructure.
     •   A new Forecast screen (PRS Section 4.6).
     •   Users can define scenarios with assumptions for future income, expenses (consumption), and expected investment returns.
     •   The system must allow for modeling one-time planned events, such as a large Capital Expenditure.
@@ -322,5 +328,3 @@ Phase 7: Forecasting
 	•	- removes it from “spending”
 	•	- increases the selected asset’s basis ledger
 	•	Top 25 holdings refresh hourly during market hours; others refresh after market; UI clearly indicates quote staleness.
-	•	Portfolio screen displays before fees / after fees / after taxes and the Sankey that explains the difference.
-

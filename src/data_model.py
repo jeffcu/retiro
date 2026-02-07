@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
+from typing import Optional
 
 
 class CashflowType(Enum):
@@ -68,3 +69,16 @@ class PriceQuote:
     price: Decimal
     quote_timestamp: datetime
     source: str | None = None
+
+
+@dataclass
+class FutureIncomeStream:
+    """ PRS Section 8: Represents a recurring future income stream for forecasting. """
+    stream_id: str
+    stream_type: str  # e.g., 'Social Security', 'RMD', 'Pension'
+    description: str
+    start_date: date
+    end_date: Optional[date]
+    amount: Decimal
+    frequency: str  # e.g., 'monthly', 'annually'
+    annual_increase_rate: Decimal = Decimal('0.0')
