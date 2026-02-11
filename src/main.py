@@ -13,7 +13,7 @@ from decimal import Decimal
 
 from src.importers import csv_importer, holdings_importer
 from src.database import initialize_database, save_transactions
-from src.data_model import CashflowType, Transaction, FutureIncomeStream
+from src.data_model import CashflowType, Transaction, FutureIncomeStream, Property
 from src import database as db
 from src import analysis
 from src import rules_engine
@@ -106,6 +106,8 @@ class PortfolioOverallReturnSummary(BaseModel):
     total_cost_basis: float
     total_gain_dollars: float
     total_gain_percent: float
+    total_real_estate_equity: float # NEW
+    total_net_worth: float # NEW
     notes: str
 
 # --- NEW: Pydantic models for Layered Returns --- 
@@ -165,6 +167,20 @@ class PortfolioSnapshotCreate(BaseModel):
 
 class PortfolioSnapshotResponse(PortfolioSnapshotCreate):
     snapshot_id: str
+
+# --- NEW: Pydantic models for Properties ---
+class PropertyCreate(BaseModel):
+    name: str
+    purchase_price: float
+    mortgage_balance: float
+    current_value: float
+    appreciation_rate: float
+    is_primary: bool
+
+class PropertyResponse(PropertyCreate):
+    property_id: str
+    equity: float
+
 
 # --- App Events ---
 @app.on_event("startup")
@@ -298,7 +314,16 @@ async def get_investment_cashflow_summary(period: str = "all"):
 async def get_portfolio_summary(mode: str = Query("actuals")):
     holdings = db.get_holdings()
     total_market_value = sum(h.get('market_value', 0) for h in holdings if h.get('market_value') is not None)
-    result = {"total_market_value": total_market_value}
+    
+    # Calculate Real Estate Equity
+    total_re_equity = db.get_total_real_estate_equity()
+    
+    result = {
+        "total_market_value": total_market_value,
+        "total_real_estate_equity": total_re_equity,
+        "total_net_worth": total_market_value + total_re_equity
+    }
+    
     if mode == 'demo':
         return demo_mode.process_for_demo_mode(result)
     return result
@@ -487,6 +512,64 @@ async def delete_future_stream(stream_id: str):
     if not db.delete_future_income_stream(stream_id):
         raise HTTPException(status_code=404, detail="Future income stream not found.")
     return Response(status_code=204)
+
+# --- NEW: Properties (Real Estate) Endpoints ---
+@app.get("/api/properties", response_model=List[PropertyResponse], tags=["Real Estate"])
+async def get_all_properties(mode: str = Query("actuals")):
+    properties = db.get_all_properties()
+    # Calculate equity on the fly for display
+    results = []
+    for p in properties:
+        p['equity'] = p['current_value'] - p['mortgage_balance']
+        results.append(p)
+    
+    if mode == 'demo':
+        return demo_mode.process_for_demo_mode(results)
+    return results
+
+@app.post("/api/properties", response_model=PropertyResponse, status_code=201, tags=["Real Estate"])
+async def create_property(payload: PropertyCreate):
+    # Check limit: "Principal Residence first, with up to five additional properties"
+    existing = db.get_all_properties()
+    if len(existing) >= 6:
+        raise HTTPException(status_code=400, detail="Maximum property limit (6) reached.")
+    
+    # Enforce Principal Residence logic? Or just allow user to manage via flags.
+    # Requirement says "Principal Residence should be first". We'll rely on frontend/sorting.
+    
+    prop_id = str(uuid.uuid4())
+    prop_obj = Property(
+        property_id=prop_id,
+        name=payload.name,
+        purchase_price=Decimal(str(payload.purchase_price)),
+        mortgage_balance=Decimal(str(payload.mortgage_balance)),
+        current_value=Decimal(str(payload.current_value)),
+        appreciation_rate=Decimal(str(payload.appreciation_rate)),
+        is_primary=payload.is_primary
+    )
+    try:
+        db.create_property(prop_obj)
+        response_dict = prop_obj.__dict__.copy()
+        response_dict['equity'] = float(prop_obj.current_value - prop_obj.mortgage_balance)
+        return response_dict
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/properties/{property_id}", status_code=204, tags=["Real Estate"])
+async def update_property(property_id: str, payload: PropertyCreate):
+    try:
+        db.update_property(property_id, payload.dict())
+        return Response(status_code=204)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/properties/{property_id}", status_code=204, tags=["Real Estate"])
+async def delete_property(property_id: str):
+    if not db.delete_property(property_id):
+        raise HTTPException(status_code=404, detail="Property not found.")
+    return Response(status_code=204)
+
 
 # --- NEW: Portfolio Settings & Snapshots Endpoints ---
 @app.get("/api/settings/portfolio-inception-date", response_model=Optional[date], tags=["Settings"])

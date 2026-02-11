@@ -277,7 +277,7 @@ export default defineConfig({
 --- FILE: projects/trust/docs/Master_Design_Specification.md ---
 
 # Curie Trust Financial Control Center
-## Master Design Specification (MDS) v1.1
+## Master Design Specification (MDS) v1.2
 
 ---
 
@@ -286,7 +286,7 @@ export default defineConfig({
 This document outlines the technical architecture for the Curie Trust Financial Control Center, a local-first desktop application designed for comprehensive financial tracking, analysis, and forecasting. The system ingests data from various financial institutions, normalizes it against an internal model, enriches it with market data via external APIs, and presents insights through a Sankey-forward user interface.
 
 The prime directive is to answer three core questions with high clarity:
-1.  What is our latest net worth?
+1.  What is our latest net worth (Liquid + Real Estate)?
 2.  Where did our income go?
 3.  What is our investment rate of return (gross, after fees, after taxes)?
 
@@ -313,7 +313,7 @@ graph TD
 
 The system is decomposed into the following distinct modules within the `src` directory:
 
-*   `src/data_model.py`: Defines the core Python data structures (`Transaction`, `Holding`, etc.) using dataclasses and Enums.
+*   `src/data_model.py`: Defines the core Python data structures (`Transaction`, `Holding`, `Property`, etc.) using dataclasses and Enums.
 *   `src/database.py`: Manages all interaction with the SQLite database, including schema creation, CRUD operations, and transaction management.
 *   `src/importers/`: A package for data ingestion. Contains parsers for different CSV formats and the logic for mapping, normalization, and deduplication.
 *   `src/rules_engine.py`: Handles the logic for automatically categorizing transactions based on user-defined rules (e.g., merchant regex matching).
@@ -330,25 +330,14 @@ The system is decomposed into the following distinct modules within the `src` di
 **Key Tables:**
 *   `transactions`: Stores all financial events (income, expense, transfer, capex).
 *   `accounts`: Represents financial accounts (e.g., checking, credit card).
-*   `assets`: Represents major assets, primarily for tracking basis (e.g., 'Main Residence').
+*   `assets`: Represents major abstract assets (legacy/future use).
+*   `properties`: Stores Real Estate assets. Columns: `property_id` (PK), `name`, `purchase_price`, `mortgage_balance`, `current_value`, `appreciation_rate`, `is_primary`.
 *   `holdings`: Stores portfolio positions (e.g., 100 shares of AAPL in Account X). Includes a `last_price_update_failed` flag for UI error reporting.
 *   `price_history`: Caches historical and intraday price quotes for securities.
 *   `rules`: Stores user-defined rules for transaction categorization.
 *   `import_profiles`: Saves column mappings and settings for specific CSV formats.
 *   `tax_year_facts`: Stores key data from annual tax returns to calculate after-tax returns. Contains columns like `tax_year` (PK), `filing_status`, `fed_taxable_income`, `fed_total_tax`, `state_taxable_income`, `state_total_tax`.
-*   `future_income_streams`: Stores definitions for projected, recurring cashflows for forecasting (e.g., Social Security, RMDs). Columns include `stream_id` (PK), `stream_type`, `description`, `start_date`, `end_date`, `amount`, `frequency`, and `annual_increase_rate`.
-
-| Column                  | Type    | Description                                                                 |
-|-------------------------|---------|-----------------------------------------------------------------------------|
-| `stream_id`             | TEXT    | Primary Key (UUID)                                                          |
-| `stream_type`           | TEXT    | Category of the stream (e.g., 'Social Security', 'Pension', 'RMD', 'Other') |
-| `description`           | TEXT    | User-friendly name for the stream (e.g., 'Spouse\'s Pension')               |
-| `start_date`            | TEXT    | ISO 8601 date when the stream begins.                                       |
-| `end_date`              | TEXT    | Optional ISO 8601 date when the stream ends.                                |
-| `amount`                | REAL    | The monetary value of each payment.                                         |
-| `frequency`             | TEXT    | Payment frequency (e.g., 'monthly', 'annually').                            |
-| `annual_increase_rate`  | REAL    | The annual Cost of Living Adjustment (COLA) as a decimal (e.g., 0.02 for 2%). |
-
+*   `future_income_streams`: Stores definitions for projected, recurring cashflows for forecasting (e.g., Social Security, RMDs).
 
 ### 5. API Interfaces
 
@@ -358,33 +347,13 @@ The backend will expose RESTful endpoints for the frontend, such as:
 *   `GET /api/net-worth`: Returns the latest calculated net worth.
 *   `GET /api/sankey/income?period=YTD`: Returns data formatted for the Income->Uses Sankey.
 *   `POST /api/import/csv`: Accepts a CSV file for ingestion.
-*   `GET /api/transactions?category=Travel`: Retrieves transactions based on filters.
-*   `PUT /api/transaction/{id}`: Updates a single transaction (e.g., manual re-categorization).
-*   `GET /api/tax-facts?year={year}`: Retrieves the stored tax facts for a given year.
-*   `POST /api/tax-facts/{year}`: Creates or updates the tax facts for a given year.
-*   `GET /api/future-streams`: Retrieves all defined future income streams.
-*   `POST /api/future-streams`: Creates a new future income stream.
-*   `DELETE /api/future-streams/{stream_id}`: Deletes a specific future income stream.
+*   `GET /api/properties`: Retrieves real estate records.
+*   `POST /api/properties`: Adds a new property.
+*   `PUT /api/properties/{id}`: Updates a property.
 
 #### 5.2 External APIs
 
 The system employs a multi-provider strategy for market data, orchestrated by the `polling_service`.
-
-**Provider 1: Massive API**
-*   **Usage:** Primary provider for assets of type `Common Stock`.
-*   **Authentication:** API Key (`MASSIVE_API_KEY`).
-*   **Module:** `src/market_data/massive_provider.py`
-
-**Provider 2: Alphavantage**
-*   **Usage:** Primary provider for assets of type `Mutual Fund - Open-end` and `Mutual Fund - Closed-end`.
-*   **Authentication:** API Key (`ALPHA_VANTAGE_API_KEY`).
-*   **Module:** `src/market_data/alphavantage_provider.py`
-
-**Implementation Details:**
-*   The `polling_service` determines which provider to use based on the `asset_type` of a holding.
-*   To respect all provider rate limits, the service will enforce a 12-second delay between individual API calls, regardless of the provider used.
-*   The polling algorithm from PRS Section 6.3 is implemented in the `polling_service` and orchestrated by the `market_scheduler`.
-*   All API responses are cached in the `price_history` table. The `holdings` table is updated with the latest price and a status flag indicating success or failure of the last attempt.
 
 ### 6. Security
 
@@ -399,29 +368,8 @@ As a local-first application, the primary security concerns are key management a
 
 Development will follow the user-feature centric plan outlined in the PRS (Section 10).
 
-*   **Phase 0: The Walking Skeleton (Completed)**
-    *   Goal: Prove the end-to-end data pipeline is viable.
-
-*   **Phase 1: The Dynamic Sankey (Completed)**
-    *   Goal: Visualize real, user-imported data in the primary Sankey chart.
-
-*   **Phase 2: Interactive Drill-Downs & Rules Management (Completed)**
-    *   Goal: Allow users to inspect their data and manage categorization.
-
-*   **Phase 3: Introducing Capital Expenditures (CapEx) (Completed)**
-    *   Goal: Differentiate consumption expenses from asset-building expenses.
-
-*   **Phase 4: The Portfolio View (Completed)**
-    *   Goal: Establish initial portfolio tracking.
-
-*   **Phase 5: Automated Market Data & Layered Returns (Current)**
-    *   Goal: Automate portfolio pricing using a multi-provider strategy and introduce advanced return metrics. Final verification of after-tax calculations is deferred.
-
-*   **Phase 6: Advanced Rules Engine & Portfolio Separation (Completed)**
-    *   Goal: Implement the v2 rules engine to separate portfolio activity from cash flow.
-
-*   **Phase 7: Retirement & Estate Forecasting**
-    *   Goal: Provide future-looking financial projections by modeling future income streams like Social Security and RMDs.
+*   **Phase 0-6:** Completed (Core pipeline, Sankey, Portfolio, Returns).
+*   **Phase 7:** Retirement & Estate Forecasting (In Progress). Includes Real Estate logic integration.
 
 
 --- FILE: projects/trust/library/Trust Financial System.txt ---
@@ -760,7 +708,7 @@ Phase 7: Retirement & Estate Forecasting
 
 --- FILE: projects/trust/library/acceptance_test.md.txt ---
 
-# Curie Trust - Acceptance Test Plan v1.3
+# Curie Trust - Acceptance Test Plan v1.4
 
 ## 1. Introduction
 
@@ -768,101 +716,41 @@ This document outlines the acceptance criteria and testing strategy for each pha
 
 ---
 
-## 2. Phase 0-4: Core Functionality (Completed)
+## 2. Phase 0-6: Core Functionality (Completed)
 
-All acceptance criteria for phases 0 through 4 and 6.1 (Core Feature Verification) have been met and are considered stable.
-
----
-
-## 3. Phase 5: Automated Market Data & Layered Returns
-
-**Objective**: Automate portfolio pricing using a multi-provider strategy and introduce advanced return metrics.
-
-**Result**: COMPLETED
-
-### 5.1 Multi-Provider Pricing Service (Completed)
-
-**Objective**: Verify that the backend polling service correctly uses different API providers based on the asset type of a holding.
-
-**Result**: COMPLETED
-
-**Acceptance Criteria**:
-- [X] **Setup**:
-    1. Ensured `.env` file contains valid keys for `MASSIVE_API_KEY` and `ALPHA_VANTAGE_API_KEY`.
-    2. Purged existing `holdings` data.
-    3. Imported a new holdings CSV containing at least one `Common Stock` (e.g., AAPL) and one `Mutual Fund Open` (e.g., VTSAX).
-- [X] **Execution**: Manually triggered the market data refresh for all holdings by running the script `./scripts/refresh_eod.sh`.
-- [X] **Verification (Logs)**:
-    1. Checked the backend server logs.
-    2. Confirmed log entry showed the polling service processing `AAPL` via `massive_provider`.
-    3. Confirmed log entry showed the polling service processing `VTSAX` via `alphavantage_provider`.
-- [X] **Verification (Database)**:
-    1. Queried the `holdings` table in `trust.db`.
-    2. Both the AAPL and VTSAX rows have a non-null `market_value` and a recent `last_price_timestamp`.
-    3. The `last_price_update_failed` flag for both is `0` (False).
-- [X] **Verification (UI)**:
-    1. Navigated to the Portfolio screen.
-    2. The "Last Updated" column for both AAPL and VTSAX displays the recent timestamp without any error styling.
-
-### 5.2 Tax Facts Data Entry (Completed)
-
-**Objective**: Verify the end-to-end functionality of entering and persisting tax data.
-
-**Result**: COMPLETED
-
-**Acceptance Criteria**:
-- [X] **UI Implementation**: The `TaxFactsEditor` component is present and functional on the Data & Settings screen.
-- [X] **Data Persistence (Create/Update)**: 
-    1. Navigate to Data & Settings -> Personal Inputs.
-    2. Select a tax year (e.g., 2024) from the dropdown.
-    3. Enter valid numbers in all four tax data fields (Federal/State Taxable Income, Federal/State Total Tax).
-    4. Click "Save 2024 Facts".
-    5. Verify a success message is shown.
-- [X] **Data Persistence (Read)**:
-    1. Select a different tax year, then select the original test year (e.g., 2024) again.
-    2. Verify the previously entered numbers are correctly re-loaded into the form fields.
-- [X] **Backend Verification**:
-    1. Using a SQLite browser, query the `tax_year_facts` table in `data/trust.db`.
-    2. Confirm that a row exists for the test year (e.g., 2024) and that all columns contain the correct data saved from the UI.
-
-### 5.3 Effective Tax Rate Verification (Completed)
-
-**Objective**: Verify the effective tax rates displayed on the Home screen are calculated correctly from the entered Tax Facts.
-
-**Result**: COMPLETED
-
-**Acceptance Criteria**:
-- [X] **UI Display**: Navigated to the Home screen and located the "Effective Tax Rates" table.
-- [X] **Federal Rate Verification**: Confirmed that the "Effective Federal Rate" is correctly calculated as `(Federal Total Tax / Federal Taxable Income)`. The value displayed in the UI matches manual calculations.
-- [X] **State Rate Verification**: Confirmed that the "Effective State Rate" is correctly calculated as `(State Total Tax / State Taxable Income)`. The value displayed in the UI matches manual calculations.
-- [X] **Combined Rate Calculation Logic**: Confirmed the backend calculation for the "Effective Combined Rate" is `(Total Federal Tax + Total State Tax) / (Total Federal Income + Total State Income)`. This is a mathematically correct blended effective rate, not a simple sum of the individual rates. This blended rate is used for estimating tax drag on investment returns, which is an acceptable approximation per the system's design.
-
-### 5.4 After-Tax Calculation Display (Completed)
-
-**Objective**: Verify the final after-tax return metrics are displayed correctly in the UI.
-
-**Result**: COMPLETED
-
-**Acceptance Criteria**:
-- [X] **After-Tax Calculation Display**:
-    1. Navigate to the Portfolio screen.
-    2. Verified that a new component, "Layered Returns (Since Inception)", displays metrics for Gross Return, Total Leakage, and After-Tax Return.
-    3. Verified the Returns Sankey correctly visualizes the `Gross Return` -> `Fees` -> `Taxes` -> `After-Tax Return` flow, using entered tax data and total investment fees to perform its calculations.
+All acceptance criteria for phases 0 through 6 are considered stable.
 
 ---
 
-## 4. Future Phases (High-Level Plan)
+## 3. Phase 7: Retirement & Estate Forecasting
 
-### Phase 6: Advanced Rules Engine & Portfolio Separation
-- **Verification**: Create a rule that assigns `CashflowType: Investment`. Verify these transactions are correctly excluded from the primary Income Sankey (PRS 3.1).
+**Objective**: Provide comprehensive net worth tracking (including Real Estate) and future-looking financial projections.
 
-### Phase 7: Retirement & Estate Forecasting
-- [X] **UI Implementation**: A new editor is available in 'Data & Settings' to create, view, and delete future income streams (e.g., Social Security, RMDs).
-- [X] **Data Persistence**: User-entered income streams are correctly saved to the new `future_income_streams` table and can be reloaded for editing.
-- [X] **API Verification (Create)**: A `POST` request to `/api/future-streams` with valid data creates a new record in the database.
-- [X] **API Verification (Read)**: A `GET` request to `/api/future-streams` returns a list of all saved streams.
-- [X] **API Verification (Delete)**: A `DELETE` request to `/api/future-streams/{stream_id}` removes the correct record from the database.
-- [ ] **Rudimentary Forecast**: The `/api/forecast` endpoint returns a 12-month projection that correctly incorporates at least one defined future income stream.
+### 7.1 Real Estate Data Management
+
+**Objective**: Verify the creation, update, and display of property assets.
+
+**Acceptance Criteria**:
+- [ ] **Create Property**: User can add a "Principal Residence" with Purchase Price, Mortgage, Current Value, and Appreciation Rate. It appears in the list.
+- [ ] **Limit Check**: Verify logic allows adding additional properties.
+- [ ] **Update Property**: Edit the "Current Value Estimate" of an existing property. The change is persisted.
+- [ ] **Equity Calculation**: Verify that Equity is calculated as `Current Value - Mortgage Balance`.
+
+### 7.2 Total Net Worth Hero
+
+**Objective**: Verify the Home Screen Hero correctly aggregates Portfolio and Real Estate data.
+
+**Acceptance Criteria**:
+- [ ] **Display**: The Hero section now shows two values: "Liquid Portfolio" and "Total Net Worth (Inc. Real Estate)".
+- [ ] **Calculation**: 
+    - Liquid Portfolio = Total Market Value of Holdings.
+    - Total Net Worth = Liquid Portfolio + Sum(Property Equity).
+- [ ] **Verification**: Manually sum the portfolio value and property equity to ensure the displayed total is correct.
+
+### 7.3 Future Income Streams (Completed)
+
+**Acceptance Criteria**:
+- [X] **CRUD**: User can create, read, and delete future income streams (Social Security, RMDs).
 
 
 --- FILE: projects/trust/scripts/refresh_eod.sh ---
@@ -1289,7 +1177,8 @@ import PortfolioView from './components/PortfolioView';
 import DataImportView from './components/DataImportView';
 import PlaceholderView from './components/PlaceholderView';
 import TransactionListView from './components/TransactionListView';
-import ErrorBoundary from './components/ErrorBoundary'; // ADDED: Diagnostic component
+import RealEstateView from './components/RealEstateView'; // IMPORTED
+import ErrorBoundary from './components/ErrorBoundary'; 
 import './App.css';
 
 function App() {
@@ -1313,11 +1202,10 @@ function App() {
       case 'Data & Settings':
         return <DataImportView />;
       case 'Cashflow':
-        // Using a key forces React to remount the component when params change,
-        // ensuring a fresh state for the new drill-down view.
         return <TransactionListView key={JSON.stringify(params)} initialFilters={params} />;
-      case 'Projects/Tags':
       case 'Real Estate':
+        return <RealEstateView />; // ACTIVATED
+      case 'Projects/Tags':
       case 'Forecast':
         return <PlaceholderView viewName={name} />;
       default:
@@ -1330,7 +1218,7 @@ function App() {
       <SideBar activeView={currentView.name} setActiveView={setActiveView} />
       <main className="main-content">
         <h1>{currentView.name}</h1>
-        <ErrorBoundary> {/* WRAPPED: Catches rendering errors */}
+        <ErrorBoundary>
           {renderView()}
         </ErrorBoundary>
       </main>
@@ -1957,6 +1845,18 @@ class Holding:
 
 
 @dataclass
+class Property:
+    """ Represents a Real Estate asset. """
+    property_id: str
+    name: str
+    purchase_price: Decimal
+    mortgage_balance: Decimal
+    current_value: Decimal
+    appreciation_rate: Decimal  # e.g. 0.03 for 3%
+    is_primary: bool = False
+
+
+@dataclass
 class PriceQuote:
     """ Represents a single price point fetched from an external API. """
     quote_id: str
@@ -1986,7 +1886,7 @@ import uuid
 import json
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional
-from src.data_model import Transaction, Holding, PriceQuote, FutureIncomeStream
+from src.data_model import Transaction, Holding, PriceQuote, FutureIncomeStream, Property
 from datetime import date
 from decimal import Decimal
 
@@ -2046,6 +1946,19 @@ def _ensure_schema(conn: sqlite3.Connection):
         last_price REAL,
         last_price_timestamp TEXT,
         UNIQUE(account_id, symbol)
+    );
+    """)
+
+    # --- NEW: Properties Table for Real Estate ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS properties (
+        property_id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        purchase_price REAL NOT NULL,
+        mortgage_balance REAL NOT NULL,
+        current_value REAL NOT NULL,
+        appreciation_rate REAL NOT NULL,
+        is_primary INTEGER DEFAULT 0
     );
     """)
 
@@ -2817,7 +2730,7 @@ def set_account_visibility(settings: Dict[str, bool]):
     finally:
         conn.close()
 
-SAFE_TO_PURGE = ["transactions", "holdings"]
+SAFE_TO_PURGE = ["transactions", "holdings", "properties"]
 
 def purge_table_data(target_table: str) -> dict:
     if target_table not in SAFE_TO_PURGE:
@@ -3067,6 +2980,90 @@ def delete_portfolio_snapshot(snapshot_id: str) -> bool:
     conn.close()
     return deleted_count > 0
 
+# --- NEW: CRUD Functions for Real Estate Properties ---
+def get_all_properties() -> List[Dict[str, Any]]:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    # Sort by primary first, then by name
+    cursor.execute("SELECT * FROM properties ORDER BY is_primary DESC, name ASC")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def create_property(prop: Property) -> Property:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    sql = """INSERT INTO properties (
+                 property_id, name, purchase_price, mortgage_balance, 
+                 current_value, appreciation_rate, is_primary
+             ) VALUES (?, ?, ?, ?, ?, ?, ?);"""
+    params = (
+        prop.property_id,
+        prop.name,
+        float(prop.purchase_price),
+        float(prop.mortgage_balance),
+        float(prop.current_value),
+        float(prop.appreciation_rate),
+        1 if prop.is_primary else 0
+    )
+    try:
+        cursor.execute(sql, params)
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+    return prop
+
+def update_property(property_id: str, updates: Dict[str, Any]):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    allowed_fields = ['name', 'purchase_price', 'mortgage_balance', 'current_value', 'appreciation_rate', 'is_primary']
+    set_clauses, params = [], []
+    for field, value in updates.items():
+        if field not in allowed_fields:
+            continue
+        set_clauses.append(f"{field} = ?")
+        params.append(value)
+    
+    if not set_clauses:
+        return
+
+    sql = f"UPDATE properties SET {', '.join(set_clauses)} WHERE property_id = ?"
+    params.append(property_id)
+    try:
+        cursor.execute(sql, tuple(params))
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def delete_property(property_id: str) -> bool:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM properties WHERE property_id = ?", (property_id,))
+    deleted_count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return deleted_count > 0
+
+def get_total_real_estate_equity() -> float:
+    """Calculates sum(current_value) - sum(mortgage_balance) for all properties."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT SUM(current_value) as total_val, SUM(mortgage_balance) as total_debt FROM properties")
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        val = row['total_val'] or 0.0
+        debt = row['total_debt'] or 0.0
+        return val - debt
+    return 0.0
+
 
 --- FILE: projects/trust/src/demo_mode.py ---
 
@@ -3199,7 +3196,7 @@ from decimal import Decimal
 
 from src.importers import csv_importer, holdings_importer
 from src.database import initialize_database, save_transactions
-from src.data_model import CashflowType, Transaction, FutureIncomeStream
+from src.data_model import CashflowType, Transaction, FutureIncomeStream, Property
 from src import database as db
 from src import analysis
 from src import rules_engine
@@ -3292,6 +3289,8 @@ class PortfolioOverallReturnSummary(BaseModel):
     total_cost_basis: float
     total_gain_dollars: float
     total_gain_percent: float
+    total_real_estate_equity: float # NEW
+    total_net_worth: float # NEW
     notes: str
 
 # --- NEW: Pydantic models for Layered Returns --- 
@@ -3351,6 +3350,20 @@ class PortfolioSnapshotCreate(BaseModel):
 
 class PortfolioSnapshotResponse(PortfolioSnapshotCreate):
     snapshot_id: str
+
+# --- NEW: Pydantic models for Properties ---
+class PropertyCreate(BaseModel):
+    name: str
+    purchase_price: float
+    mortgage_balance: float
+    current_value: float
+    appreciation_rate: float
+    is_primary: bool
+
+class PropertyResponse(PropertyCreate):
+    property_id: str
+    equity: float
+
 
 # --- App Events ---
 @app.on_event("startup")
@@ -3484,7 +3497,16 @@ async def get_investment_cashflow_summary(period: str = "all"):
 async def get_portfolio_summary(mode: str = Query("actuals")):
     holdings = db.get_holdings()
     total_market_value = sum(h.get('market_value', 0) for h in holdings if h.get('market_value') is not None)
-    result = {"total_market_value": total_market_value}
+    
+    # Calculate Real Estate Equity
+    total_re_equity = db.get_total_real_estate_equity()
+    
+    result = {
+        "total_market_value": total_market_value,
+        "total_real_estate_equity": total_re_equity,
+        "total_net_worth": total_market_value + total_re_equity
+    }
+    
     if mode == 'demo':
         return demo_mode.process_for_demo_mode(result)
     return result
@@ -3673,6 +3695,64 @@ async def delete_future_stream(stream_id: str):
     if not db.delete_future_income_stream(stream_id):
         raise HTTPException(status_code=404, detail="Future income stream not found.")
     return Response(status_code=204)
+
+# --- NEW: Properties (Real Estate) Endpoints ---
+@app.get("/api/properties", response_model=List[PropertyResponse], tags=["Real Estate"])
+async def get_all_properties(mode: str = Query("actuals")):
+    properties = db.get_all_properties()
+    # Calculate equity on the fly for display
+    results = []
+    for p in properties:
+        p['equity'] = p['current_value'] - p['mortgage_balance']
+        results.append(p)
+    
+    if mode == 'demo':
+        return demo_mode.process_for_demo_mode(results)
+    return results
+
+@app.post("/api/properties", response_model=PropertyResponse, status_code=201, tags=["Real Estate"])
+async def create_property(payload: PropertyCreate):
+    # Check limit: "Principal Residence first, with up to five additional properties"
+    existing = db.get_all_properties()
+    if len(existing) >= 6:
+        raise HTTPException(status_code=400, detail="Maximum property limit (6) reached.")
+    
+    # Enforce Principal Residence logic? Or just allow user to manage via flags.
+    # Requirement says "Principal Residence should be first". We'll rely on frontend/sorting.
+    
+    prop_id = str(uuid.uuid4())
+    prop_obj = Property(
+        property_id=prop_id,
+        name=payload.name,
+        purchase_price=Decimal(str(payload.purchase_price)),
+        mortgage_balance=Decimal(str(payload.mortgage_balance)),
+        current_value=Decimal(str(payload.current_value)),
+        appreciation_rate=Decimal(str(payload.appreciation_rate)),
+        is_primary=payload.is_primary
+    )
+    try:
+        db.create_property(prop_obj)
+        response_dict = prop_obj.__dict__.copy()
+        response_dict['equity'] = float(prop_obj.current_value - prop_obj.mortgage_balance)
+        return response_dict
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/properties/{property_id}", status_code=204, tags=["Real Estate"])
+async def update_property(property_id: str, payload: PropertyCreate):
+    try:
+        db.update_property(property_id, payload.dict())
+        return Response(status_code=204)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/properties/{property_id}", status_code=204, tags=["Real Estate"])
+async def delete_property(property_id: str):
+    if not db.delete_property(property_id):
+        raise HTTPException(status_code=404, detail="Property not found.")
+    return Response(status_code=204)
+
 
 # --- NEW: Portfolio Settings & Snapshots Endpoints ---
 @app.get("/api/settings/portfolio-inception-date", response_model=Optional[date], tags=["Settings"])
@@ -5216,17 +5296,38 @@ export default HoldingEditorModal;
 --- FILE: projects/trust/src/components/HomeView.css ---
 
 .home-view-container {
-    position: relative; /* Establishes a positioning context for the mode selector */
+    position: relative;
 }
 
+/* Updated NetWorthHero styles for split layout */
 .net-worth-hero {
     background: linear-gradient(45deg, var(--gold-accent), #f7d794);
     color: var(--dark-bg);
     border: none;
     border-radius: 8px;
-    padding: 1.5rem 2rem;
+    padding: 0; /* Remove padding to allow inner grid to handle spacing */
     margin-bottom: 2rem;
     text-align: left;
+    overflow: hidden; /* Ensure rounded corners clip children */
+}
+
+.hero-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+}
+
+.hero-section {
+    padding: 1.5rem 2rem;
+}
+
+/* The left side (Liquid) keeps the gold background */
+.hero-section.liquid {
+    border-right: 1px solid rgba(0,0,0,0.1);
+}
+
+/* The right side (Total) gets a slightly darker treatment for contrast, or just relies on the gradient */
+.hero-section.total {
+    background-color: rgba(255,255,255,0.15);
 }
 
 .net-worth-hero h2 {
@@ -5236,6 +5337,9 @@ export default HoldingEditorModal;
     font-weight: 500;
     opacity: 0.8;
     color: var(--dark-bg);
+    font-size: 1.1em;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
 
 .net-worth-hero .value {
@@ -5243,6 +5347,7 @@ export default HoldingEditorModal;
     font-weight: bold;
     color: var(--dark-bg);
     margin: 0.5rem 0;
+    line-height: 1.1;
 }
 
 .net-worth-hero .timestamp {
@@ -5257,14 +5362,12 @@ export default HoldingEditorModal;
     display: flex;
     justify-content: space-between;
     align-items: center;
-    /* This replaces the default border on the h2 for a cleaner look */
     border-bottom: 1px solid var(--border-color);
     padding-bottom: 1rem;
     margin-bottom: 1rem;
 }
 
 .sankey-header h2 {
-    /* Remove the default h2 border as the parent now has one */
     border-bottom: none;
     padding-bottom: 0;
     margin: 0;
@@ -5290,15 +5393,14 @@ import SankeyChart from '../SankeyChart';
 import TimeFilter from './TimeFilter';
 import PieChart from './PieChart';
 import CapitalFlowTable from './CapitalFlowTable';
-import InvestmentSummaryTable from './InvestmentSummaryTable';
 import TaxRateSummaryTable from './TaxRateSummaryTable';
-import ModeSelector from './ModeSelector'; // IMPORTED
+import ModeSelector from './ModeSelector';
 import './HomeView.css';
 import { useMode } from '../context/ModeContext';
 
 const NetWorthHero = () => {
     const { mode } = useMode();
-    const [netWorth, setNetWorth] = useState(null);
+    const [data, setData] = useState({ liquid: 0, total: 0 });
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
@@ -5307,11 +5409,15 @@ const NetWorthHero = () => {
                 setLoading(true);
                 const response = await fetch(`/api/portfolio/summary?mode=${mode}`);
                 if (!response.ok) throw new Error('Failed to fetch summary');
-                const data = await response.json();
-                setNetWorth(data.total_market_value);
+                const result = await response.json();
+                // 'total_net_worth' includes RE equity + portfolio market value
+                setData({
+                    liquid: result.total_market_value,
+                    total: result.total_net_worth
+                });
             } catch (error) {
                 console.error('Error fetching net worth:', error);
-                setNetWorth(0);
+                setData({ liquid: 0, total: 0 });
             } finally {
                 setLoading(false);
             }
@@ -5323,9 +5429,18 @@ const NetWorthHero = () => {
 
     return (
         <div className="net-worth-hero">
-            <h2>Latest Net Worth</h2>
-            <p className="value">{loading ? 'Calculating...' : formatCurrency(netWorth)}</p>
-            <p className="timestamp">As of latest holdings import</p>
+            <div className="hero-grid">
+                <div className="hero-section liquid">
+                    <h2>Liquid Portfolio</h2>
+                    <p className="value">{loading ? '...' : formatCurrency(data.liquid)}</p>
+                    <p className="timestamp">Investments & Holdings</p>
+                </div>
+                <div className="hero-section total">
+                    <h2>Total Net Worth (Inc. Real Estate)</h2>
+                    <p className="value">{loading ? '...' : formatCurrency(data.total)}</p>
+                    <p className="timestamp">Including Property Equity</p>
+                </div>
+            </div>
         </div>
     );
 };
@@ -5383,9 +5498,6 @@ const HomeView = ({ navigateTo }) => {
         } else if (id === 'Portfolio Yield') {
             filters.cashflow_type = 'Investment';
         } else {
-            // Assume any other clickable node is an expense category or income category
-            // We'll need a way to differentiate. For now, assume expense.
-            // A better approach would be to get the node's type from the backend.
             filters.category = id;
         }
 
@@ -5393,8 +5505,8 @@ const HomeView = ({ navigateTo }) => {
     };
 
     return (
-        <div className="home-view-container"> {/* WRAPPER ADDED */}
-            <ModeSelector /> {/* COMPONENT MOVED HERE */}
+        <div className="home-view-container">
+            <ModeSelector /> 
             <NetWorthHero />
             
             <div className="card sankey-container-card">
@@ -5419,8 +5531,6 @@ const HomeView = ({ navigateTo }) => {
                     <p>No holdings data with asset types found.</p>}
             </div>
             
-            <InvestmentSummaryTable period={selectedPeriod} />
-
             <TaxRateSummaryTable />
         </div>
     );
@@ -6673,8 +6783,6 @@ import FilterPanel from './FilterPanel';
 import BarChart from './BarChart';
 import TimeFilter from './TimeFilter';
 import HoldingEditorModal from './HoldingEditorModal';
-import LayeredReturnsSummary from './LayeredReturnsSummary';
-import PortfolioWaterfall from './PortfolioWaterfall'; // NEW IMPORT
 import { useMode } from '../context/ModeContext';
 
 const AllocationTable = ({ tableData, formatCurrency }) => {
@@ -6863,10 +6971,6 @@ const PortfolioView = () => {
 
     return (
         <>
-            <PortfolioWaterfall />
-
-            <LayeredReturnsSummary />
-
             <div className="card">
                 <h2>Asset Allocation Summary</h2>
                 {allocationLoading ? (
@@ -7006,7 +7110,6 @@ const PortfolioView = () => {
 };
 
 export default PortfolioView;
-
 
 --- FILE: projects/trust/src/components/PortfolioWaterfall.css ---
 
@@ -7169,6 +7272,413 @@ const PortfolioWaterfall = () => {
 };
 
 export default PortfolioWaterfall;
+
+
+--- FILE: projects/trust/src/components/RealEstateView.css ---
+
+.real-estate-view-container {
+    /* Inherits main content styles */
+}
+
+.property-form-card {
+    background-color: var(--light-bg);
+    padding: 1.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    margin-bottom: 2rem;
+}
+
+.property-form-card h3 {
+    margin-top: 0;
+    color: var(--text-color);
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.5rem;
+}
+
+.property-form {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.form-group label {
+    margin-bottom: 0.5rem;
+    font-size: 0.9em;
+    color: #ccc;
+}
+
+.form-group input {
+    padding: 0.5rem;
+    background-color: var(--medium-bg);
+    border: 1px solid #666;
+    border-radius: 4px;
+    color: #fff;
+}
+
+.form-actions {
+    grid-column: 1 / -1;
+    display: flex;
+    justify-content: flex-end;
+    gap: 1rem;
+    margin-top: 1rem;
+}
+
+.form-actions button {
+    padding: 0.6rem 1.2rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+    border: none;
+}
+
+.btn-primary {
+    background-color: var(--gold-accent);
+    color: var(--dark-bg);
+}
+
+.btn-secondary {
+    background-color: #555;
+    color: #fff;
+}
+
+.property-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 1.5rem;
+}
+
+.property-card {
+    background-color: var(--dark-bg);
+    padding: 1.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    position: relative;
+}
+
+.property-card.primary {
+    border: 1px solid var(--gold-accent);
+}
+
+.property-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid #444;
+    padding-bottom: 0.5rem;
+}
+
+.property-header h3 {
+    margin: 0;
+    color: var(--text-color);
+}
+
+.primary-badge {
+    background-color: var(--gold-accent);
+    color: var(--dark-bg);
+    font-size: 0.7em;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: bold;
+    text-transform: uppercase;
+}
+
+.property-details {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+    font-size: 0.9em;
+}
+
+.detail-item {
+    display: flex;
+    flex-direction: column;
+}
+
+.detail-item label {
+    color: #999;
+    font-size: 0.8em;
+}
+
+.detail-item span {
+    font-weight: 500;
+}
+
+.equity-highlight {
+    grid-column: 1 / -1;
+    margin-top: 1rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid #444;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.equity-highlight label {
+    color: var(--gold-accent);
+}
+
+.equity-highlight span {
+    font-size: 1.2em;
+    font-weight: bold;
+    color: var(--gold-accent);
+}
+
+.card-actions {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    display: flex;
+    gap: 0.5rem;
+}
+
+.action-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 1.1em;
+    color: #888;
+    transition: color 0.2s;
+}
+
+.action-btn:hover {
+    color: #fff;
+}
+
+.delete-btn:hover {
+    color: #ff6b6b;
+}
+
+
+--- FILE: projects/trust/src/components/RealEstateView.jsx ---
+
+import { useState, useEffect } from 'react';
+import './RealEstateView.css';
+import { useMode } from '../context/ModeContext';
+
+const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+}).format(value || 0);
+
+const PropertyCard = ({ property, onEdit, onDelete }) => (
+    <div className={`property-card ${property.is_primary ? 'primary' : ''}`}>
+        <div className="property-header">
+            <h3>
+                {property.name} 
+                {property.is_primary && <span className="primary-badge">Primary</span>}
+            </h3>
+            <div className="card-actions">
+                <button className="action-btn" onClick={() => onEdit(property)} title="Edit">✎</button>
+                <button className="action-btn delete-btn" onClick={() => onDelete(property.property_id)} title="Delete">🗑️</button>
+            </div>
+        </div>
+        <div className="property-details">
+            <div className="detail-item">
+                <label>Current Value</label>
+                <span>{formatCurrency(property.current_value)}</span>
+            </div>
+            <div className="detail-item">
+                <label>Mortgage Balance</label>
+                <span>{formatCurrency(property.mortgage_balance)}</span>
+            </div>
+            <div className="detail-item">
+                <label>Purchase Price</label>
+                <span>{formatCurrency(property.purchase_price)}</span>
+            </div>
+            <div className="detail-item">
+                <label>Appreciation Rate</label>
+                <span>{(property.appreciation_rate * 100).toFixed(2)}%</span>
+            </div>
+            <div className="equity-highlight">
+                <label>Equity</label>
+                <span>{formatCurrency(property.current_value - property.mortgage_balance)}</span>
+            </div>
+        </div>
+    </div>
+);
+
+const RealEstateView = () => {
+    const { mode } = useMode();
+    const [properties, setProperties] = useState([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [error, setError] = useState(null);
+    const [showForm, setShowForm] = useState(false);
+    const [editingId, setEditingId] = useState(null);
+
+    const initialForm = {
+        name: '',
+        purchase_price: '',
+        mortgage_balance: '',
+        current_value: '',
+        appreciation_rate: 0.03,
+        is_primary: false
+    };
+    const [formData, setFormData] = useState(initialForm);
+
+    const fetchProperties = async () => {
+        setIsLoading(true);
+        try {
+            const response = await fetch(`/api/properties?mode=${mode}`);
+            if (!response.ok) throw new Error('Failed to fetch properties');
+            const data = await response.json();
+            setProperties(data);
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchProperties();
+    }, [mode]);
+
+    const handleInputChange = (e) => {
+        const { name, value, type, checked } = e.target;
+        setFormData(prev => ({
+            ...prev,
+            [name]: type === 'checkbox' ? checked : value
+        }));
+    };
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        const payload = {
+            ...formData,
+            purchase_price: parseFloat(formData.purchase_price),
+            mortgage_balance: parseFloat(formData.mortgage_balance),
+            current_value: parseFloat(formData.current_value),
+            appreciation_rate: parseFloat(formData.appreciation_rate) // expects decimal if entering directly, but form might be %
+        };
+
+        try {
+            let response;
+            if (editingId) {
+                response = await fetch(`/api/properties/${editingId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+            } else {
+                response = await fetch('/api/properties', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+            }
+
+            if (!response.ok) {
+                const errData = await response.json();
+                throw new Error(errData.detail || 'Operation failed');
+            }
+
+            setShowForm(false);
+            setEditingId(null);
+            setFormData(initialForm);
+            fetchProperties();
+        } catch (err) {
+            alert(`Error: ${err.message}`);
+        }
+    };
+
+    const handleEdit = (prop) => {
+        setFormData({
+            name: prop.name,
+            purchase_price: prop.purchase_price,
+            mortgage_balance: prop.mortgage_balance,
+            current_value: prop.current_value,
+            appreciation_rate: prop.appreciation_rate,
+            is_primary: prop.is_primary
+        });
+        setEditingId(prop.property_id);
+        setShowForm(true);
+    };
+
+    const handleDelete = async (id) => {
+        if (!confirm('Delete this property?')) return;
+        try {
+            const response = await fetch(`/api/properties/${id}`, { method: 'DELETE' });
+            if (!response.ok) throw new Error('Failed to delete');
+            fetchProperties();
+        } catch (err) {
+            alert(err.message);
+        }
+    };
+
+    const startNewProperty = () => {
+        if (properties.length >= 6) {
+            alert("Maximum property limit (6) reached.");
+            return;
+        }
+        setFormData(initialForm);
+        setEditingId(null);
+        setShowForm(true);
+    };
+
+    return (
+        <div className="real-estate-view-container">
+            {showForm && (
+                <div className="property-form-card">
+                    <h3>{editingId ? 'Edit Property' : 'Add Property'}</h3>
+                    <form onSubmit={handleSubmit} className="property-form">
+                        <div className="form-group">
+                            <label>Property Name</label>
+                            <input type="text" name="name" value={formData.name} onChange={handleInputChange} placeholder="e.g. Principal Residence" required />
+                        </div>
+                         <div className="form-group">
+                            <label>Purchase Price</label>
+                            <input type="number" name="purchase_price" value={formData.purchase_price} onChange={handleInputChange} step="0.01" required />
+                        </div>
+                        <div className="form-group">
+                            <label>Current Value Estimate</label>
+                            <input type="number" name="current_value" value={formData.current_value} onChange={handleInputChange} step="0.01" required />
+                        </div>
+                        <div className="form-group">
+                            <label>Mortgage Balance</label>
+                            <input type="number" name="mortgage_balance" value={formData.mortgage_balance} onChange={handleInputChange} step="0.01" required />
+                        </div>
+                         <div className="form-group">
+                            <label>Annual Appreciation Rate (decimal, e.g. 0.03 for 3%)</label>
+                            <input type="number" name="appreciation_rate" value={formData.appreciation_rate} onChange={handleInputChange} step="0.001" required />
+                        </div>
+                        <div className="form-group" style={{flexDirection: 'row', alignItems: 'center', marginTop: '1.5rem'}}>
+                            <input type="checkbox" name="is_primary" checked={formData.is_primary} onChange={handleInputChange} style={{width: 'auto', marginRight: '0.5rem'}} />
+                            <label style={{margin: 0, color: '#fff'}}>Principal Residence</label>
+                        </div>
+                        <div className="form-actions">
+                             <button type="button" className="btn-secondary" onClick={() => setShowForm(false)}>Cancel</button>
+                             <button type="submit" className="btn-primary">Save Property</button>
+                        </div>
+                    </form>
+                </div>
+            )}
+
+            {!showForm && properties.length < 6 && (
+                <button className="btn-primary" onClick={startNewProperty} style={{marginBottom: '1rem'}}>+ Add Property</button>
+            )}
+
+            {isLoading ? <p>Loading real estate data...</p> : error ? <p>Error: {error}</p> : (
+                <div className="property-list">
+                    {properties.length === 0 ? <p>No properties tracked yet.</p> : 
+                        properties.map(p => (
+                            <PropertyCard key={p.property_id} property={p} onEdit={handleEdit} onDelete={handleDelete} />
+                        ))
+                    }
+                </div>
+            )}
+        </div>
+    );
+};
+
+export default RealEstateView;
 
 
 --- FILE: projects/trust/src/components/RuleCreator.css ---

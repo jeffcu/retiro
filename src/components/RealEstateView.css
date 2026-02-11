@@ -1,0 +1,177 @@
+.real-estate-view-container {
+    /* Inherits main content styles */
+}
+
+.property-form-card {
+    background-color: var(--light-bg);
+    padding: 1.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    margin-bottom: 2rem;
+}
+
+.property-form-card h3 {
+    margin-top: 0;
+    color: var(--text-color);
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.5rem;
+}
+
+.property-form {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.form-group label {
+    margin-bottom: 0.5rem;
+    font-size: 0.9em;
+    color: #ccc;
+}
+
+.form-group input {
+    padding: 0.5rem;
+    background-color: var(--medium-bg);
+    border: 1px solid #666;
+    border-radius: 4px;
+    color: #fff;
+}
+
+.form-actions {
+    grid-column: 1 / -1;
+    display: flex;
+    justify-content: flex-end;
+    gap: 1rem;
+    margin-top: 1rem;
+}
+
+.form-actions button {
+    padding: 0.6rem 1.2rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+    border: none;
+}
+
+.btn-primary {
+    background-color: var(--gold-accent);
+    color: var(--dark-bg);
+}
+
+.btn-secondary {
+    background-color: #555;
+    color: #fff;
+}
+
+.property-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 1.5rem;
+}
+
+.property-card {
+    background-color: var(--dark-bg);
+    padding: 1.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    position: relative;
+}
+
+.property-card.primary {
+    border: 1px solid var(--gold-accent);
+}
+
+.property-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid #444;
+    padding-bottom: 0.5rem;
+}
+
+.property-header h3 {
+    margin: 0;
+    color: var(--text-color);
+}
+
+.primary-badge {
+    background-color: var(--gold-accent);
+    color: var(--dark-bg);
+    font-size: 0.7em;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: bold;
+    text-transform: uppercase;
+}
+
+.property-details {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+    font-size: 0.9em;
+}
+
+.detail-item {
+    display: flex;
+    flex-direction: column;
+}
+
+.detail-item label {
+    color: #999;
+    font-size: 0.8em;
+}
+
+.detail-item span {
+    font-weight: 500;
+}
+
+.equity-highlight {
+    grid-column: 1 / -1;
+    margin-top: 1rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid #444;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.equity-highlight label {
+    color: var(--gold-accent);
+}
+
+.equity-highlight span {
+    font-size: 1.2em;
+    font-weight: bold;
+    color: var(--gold-accent);
+}
+
+.card-actions {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    display: flex;
+    gap: 0.5rem;
+}
+
+.action-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 1.1em;
+    color: #888;
+    transition: color 0.2s;
+}
+
+.action-btn:hover {
+    color: #fff;
+}
+
+.delete-btn:hover {
+    color: #ff6b6b;
+}

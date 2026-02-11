@@ -5,7 +5,8 @@ import PortfolioView from './components/PortfolioView';
 import DataImportView from './components/DataImportView';
 import PlaceholderView from './components/PlaceholderView';
 import TransactionListView from './components/TransactionListView';
-import ErrorBoundary from './components/ErrorBoundary'; // ADDED: Diagnostic component
+import RealEstateView from './components/RealEstateView'; // IMPORTED
+import ErrorBoundary from './components/ErrorBoundary'; 
 import './App.css';
 
 function App() {
@@ -29,11 +30,10 @@ function App() {
       case 'Data & Settings':
         return <DataImportView />;
       case 'Cashflow':
-        // Using a key forces React to remount the component when params change,
-        // ensuring a fresh state for the new drill-down view.
         return <TransactionListView key={JSON.stringify(params)} initialFilters={params} />;
-      case 'Projects/Tags':
       case 'Real Estate':
+        return <RealEstateView />; // ACTIVATED
+      case 'Projects/Tags':
       case 'Forecast':
         return <PlaceholderView viewName={name} />;
       default:
@@ -46,7 +46,7 @@ function App() {
       <SideBar activeView={currentView.name} setActiveView={setActiveView} />
       <main className="main-content">
         <h1>{currentView.name}</h1>
-        <ErrorBoundary> {/* WRAPPED: Catches rendering errors */}
+        <ErrorBoundary>
           {renderView()}
         </ErrorBoundary>
       </main>

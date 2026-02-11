@@ -4,13 +4,13 @@ import TimeFilter from './TimeFilter';
 import PieChart from './PieChart';
 import CapitalFlowTable from './CapitalFlowTable';
 import TaxRateSummaryTable from './TaxRateSummaryTable';
-import ModeSelector from './ModeSelector'; // IMPORTED
+import ModeSelector from './ModeSelector';
 import './HomeView.css';
 import { useMode } from '../context/ModeContext';
 
 const NetWorthHero = () => {
     const { mode } = useMode();
-    const [netWorth, setNetWorth] = useState(null);
+    const [data, setData] = useState({ liquid: 0, total: 0 });
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
@@ -19,11 +19,15 @@ const NetWorthHero = () => {
                 setLoading(true);
                 const response = await fetch(`/api/portfolio/summary?mode=${mode}`);
                 if (!response.ok) throw new Error('Failed to fetch summary');
-                const data = await response.json();
-                setNetWorth(data.total_market_value);
+                const result = await response.json();
+                // 'total_net_worth' includes RE equity + portfolio market value
+                setData({
+                    liquid: result.total_market_value,
+                    total: result.total_net_worth
+                });
             } catch (error) {
                 console.error('Error fetching net worth:', error);
-                setNetWorth(0);
+                setData({ liquid: 0, total: 0 });
             } finally {
                 setLoading(false);
             }
@@ -35,9 +39,18 @@ const NetWorthHero = () => {
 
     return (
         <div className="net-worth-hero">
-            <h2>Latest Net Worth</h2>
-            <p className="value">{loading ? 'Calculating...' : formatCurrency(netWorth)}</p>
-            <p className="timestamp">As of latest holdings import</p>
+            <div className="hero-grid">
+                <div className="hero-section liquid">
+                    <h2>Liquid Portfolio</h2>
+                    <p className="value">{loading ? '...' : formatCurrency(data.liquid)}</p>
+                    <p className="timestamp">Investments & Holdings</p>
+                </div>
+                <div className="hero-section total">
+                    <h2>Total Net Worth (Inc. Real Estate)</h2>
+                    <p className="value">{loading ? '...' : formatCurrency(data.total)}</p>
+                    <p className="timestamp">Including Property Equity</p>
+                </div>
+            </div>
         </div>
     );
 };
@@ -95,9 +108,6 @@ const HomeView = ({ navigateTo }) => {
         } else if (id === 'Portfolio Yield') {
             filters.cashflow_type = 'Investment';
         } else {
-            // Assume any other clickable node is an expense category or income category
-            // We'll need a way to differentiate. For now, assume expense.
-            // A better approach would be to get the node's type from the backend.
             filters.category = id;
         }
 
@@ -105,8 +115,8 @@ const HomeView = ({ navigateTo }) => {
     };
 
     return (
-        <div className="home-view-container"> {/* WRAPPER ADDED */}
-            <ModeSelector /> {/* COMPONENT MOVED HERE */}
+        <div className="home-view-container">
+            <ModeSelector /> 
             <NetWorthHero />
             
             <div className="card sankey-container-card">
@@ -131,8 +141,6 @@ const HomeView = ({ navigateTo }) => {
                     <p>No holdings data with asset types found.</p>}
             </div>
             
-            {/* Removed InvestmentSummaryTable due to unreliable data sensors */}
-
             <TaxRateSummaryTable />
         </div>
     );

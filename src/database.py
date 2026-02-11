@@ -3,7 +3,7 @@ import uuid
 import json
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional
-from src.data_model import Transaction, Holding, PriceQuote, FutureIncomeStream
+from src.data_model import Transaction, Holding, PriceQuote, FutureIncomeStream, Property
 from datetime import date
 from decimal import Decimal
 
@@ -63,6 +63,19 @@ def _ensure_schema(conn: sqlite3.Connection):
         last_price REAL,
         last_price_timestamp TEXT,
         UNIQUE(account_id, symbol)
+    );
+    """)
+
+    # --- NEW: Properties Table for Real Estate ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS properties (
+        property_id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        purchase_price REAL NOT NULL,
+        mortgage_balance REAL NOT NULL,
+        current_value REAL NOT NULL,
+        appreciation_rate REAL NOT NULL,
+        is_primary INTEGER DEFAULT 0
     );
     """)
 
@@ -834,7 +847,7 @@ def set_account_visibility(settings: Dict[str, bool]):
     finally:
         conn.close()
 
-SAFE_TO_PURGE = ["transactions", "holdings"]
+SAFE_TO_PURGE = ["transactions", "holdings", "properties"]
 
 def purge_table_data(target_table: str) -> dict:
     if target_table not in SAFE_TO_PURGE:
@@ -1083,3 +1096,87 @@ def delete_portfolio_snapshot(snapshot_id: str) -> bool:
     conn.commit()
     conn.close()
     return deleted_count > 0
+
+# --- NEW: CRUD Functions for Real Estate Properties ---
+def get_all_properties() -> List[Dict[str, Any]]:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    # Sort by primary first, then by name
+    cursor.execute("SELECT * FROM properties ORDER BY is_primary DESC, name ASC")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def create_property(prop: Property) -> Property:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    sql = """INSERT INTO properties (
+                 property_id, name, purchase_price, mortgage_balance, 
+                 current_value, appreciation_rate, is_primary
+             ) VALUES (?, ?, ?, ?, ?, ?, ?);"""
+    params = (
+        prop.property_id,
+        prop.name,
+        float(prop.purchase_price),
+        float(prop.mortgage_balance),
+        float(prop.current_value),
+        float(prop.appreciation_rate),
+        1 if prop.is_primary else 0
+    )
+    try:
+        cursor.execute(sql, params)
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+    return prop
+
+def update_property(property_id: str, updates: Dict[str, Any]):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    allowed_fields = ['name', 'purchase_price', 'mortgage_balance', 'current_value', 'appreciation_rate', 'is_primary']
+    set_clauses, params = [], []
+    for field, value in updates.items():
+        if field not in allowed_fields:
+            continue
+        set_clauses.append(f"{field} = ?")
+        params.append(value)
+    
+    if not set_clauses:
+        return
+
+    sql = f"UPDATE properties SET {', '.join(set_clauses)} WHERE property_id = ?"
+    params.append(property_id)
+    try:
+        cursor.execute(sql, tuple(params))
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def delete_property(property_id: str) -> bool:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM properties WHERE property_id = ?", (property_id,))
+    deleted_count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return deleted_count > 0
+
+def get_total_real_estate_equity() -> float:
+    """Calculates sum(current_value) - sum(mortgage_balance) for all properties."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT SUM(current_value) as total_val, SUM(mortgage_balance) as total_debt FROM properties")
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        val = row['total_val'] or 0.0
+        debt = row['total_debt'] or 0.0
+        return val - debt
+    return 0.0

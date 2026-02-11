@@ -62,6 +62,18 @@ class Holding:
 
 
 @dataclass
+class Property:
+    """ Represents a Real Estate asset. """
+    property_id: str
+    name: str
+    purchase_price: Decimal
+    mortgage_balance: Decimal
+    current_value: Decimal
+    appreciation_rate: Decimal  # e.g. 0.03 for 3%
+    is_primary: bool = False
+
+
+@dataclass
 class PriceQuote:
     """ Represents a single price point fetched from an external API. """
     quote_id: str
