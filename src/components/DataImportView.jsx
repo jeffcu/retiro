@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import './DataImportView.css';
 import ImportSummary from './ImportSummary';
 import RulesEditor from './RulesEditor';
 import IncomeSankeySettings from './IncomeSankeySettings';
 import TaxFactsEditor from "./TaxFactsEditor.jsx"; // FIX: Explicitly added .jsx extension to resolve import error.
 import FutureIncomeStreamEditor from './FutureIncomeStreamEditor.jsx';
+import PortfolioSnapshotManager from './PortfolioSnapshotManager';
 
 const FileUploader = ({ title, importType, onUploadSuccess }) => {
     const [file, setFile] = useState(null);
@@ -133,6 +134,61 @@ const AccountVisibilityManager = ({ onSettingsChanged }) => {
     );
 };
 
+const PortfolioSettings = () => {
+    const [inceptionDate, setInceptionDate] = useState('');
+    const [isLoading, setIsLoading] = useState(true);
+
+    useEffect(() => {
+        const fetchDate = async () => {
+            try {
+                const response = await fetch('/api/settings/portfolio-inception-date');
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data) setInceptionDate(data);
+                }
+            } catch (error) {
+                console.error("Failed to fetch inception date", error);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        fetchDate();
+    }, []);
+
+    const handleSave = async () => {
+        if (!inceptionDate) {
+            alert("Please select a date.");
+            return;
+        }
+        try {
+            const response = await fetch('/api/settings/portfolio-inception-date', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ inception_date: inceptionDate })
+            });
+            if (!response.ok) throw new Error("Failed to save date");
+            alert("Inception date saved!");
+        } catch (error) {
+            console.error(error);
+            alert("Error saving date.");
+        }
+    };
+    
+    return (
+        <div className="income-settings-card">
+            <h3>Portfolio Inception Date</h3>
+            <p>Set the date your portfolio was consolidated. This date is the official start for all performance calculations.</p>
+            <div className="form-group" style={{ maxWidth: '300px', marginBottom: '1rem' }}>
+                <label>Inception Date</label>
+                <input type="date" value={inceptionDate} onChange={e => setInceptionDate(e.target.value)} disabled={isLoading} />
+            </div>
+            <div className="settings-actions">
+                <button onClick={handleSave} disabled={isLoading}>Save Inception Date</button>
+            </div>
+        </div>
+    )
+}
+
 const DataImportView = () => {
     const [refreshKey, setRefreshKey] = useState(0);
     const handleRefresh = () => setRefreshKey(prevKey => prevKey + 1);
@@ -146,16 +202,25 @@ const DataImportView = () => {
                     <FileUploader title="Import Portfolio Holdings" importType="holdings" onUploadSuccess={handleRefresh} />
                 </div>
             </div>
+
+            <div className="card">
+                <h2>Portfolio Settings</h2>
+                <PortfolioSettings />
+                <PortfolioSnapshotManager />
+            </div>
+
             <div className="card">
                 <h2>Chart & Display Settings</h2>
                  <AccountVisibilityManager onSettingsChanged={handleRefresh} />
                  <IncomeSankeySettings onSettingsChanged={handleRefresh} />
             </div>
+
             <div className="card">
                 <h2>Personal Inputs</h2>
                 <TaxFactsEditor />
                 <FutureIncomeStreamEditor />
             </div>
+
             <RulesEditor />
             <ImportSummary refreshKey={refreshKey} />
         </>

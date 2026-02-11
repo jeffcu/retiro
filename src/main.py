@@ -108,6 +108,31 @@ class PortfolioOverallReturnSummary(BaseModel):
     total_gain_percent: float
     notes: str
 
+# --- NEW: Pydantic models for Layered Returns --- 
+class LayeredReturnsMetrics(BaseModel):
+    gross_return: float
+    total_fees: float
+    estimated_taxes: float
+    after_tax_return: float
+
+class SankeyNode(BaseModel):
+    id: str
+
+class SankeyLink(BaseModel):
+    source: str
+    target: str
+    value: float
+
+class SankeyData(BaseModel):
+    nodes: List[SankeyNode]
+    links: List[SankeyLink]
+
+class LayeredReturnsResponse(BaseModel):
+    metrics: LayeredReturnsMetrics
+    sankey_data: SankeyData
+    notes: str
+
+
 # --- NEW: Pydantic models for Future Income Streams ---
 class FutureIncomeStreamCreate(BaseModel):
     stream_type: str = Field(..., example="Pension")
@@ -121,6 +146,25 @@ class FutureIncomeStreamCreate(BaseModel):
 class FutureIncomeStreamResponse(FutureIncomeStreamCreate):
     stream_id: str
 
+# --- REVISED: Pydantic model for Portfolio Waterfall ---
+class PortfolioWaterfallResponse(BaseModel):
+    start_of_period_value: Optional[float]
+    external_contributions: float
+    portfolio_yield: float
+    withdrawals_for_spending: float
+    fees_and_estimated_taxes: float
+    net_cash_flow: float
+    market_growth_or_loss: float
+    end_of_period_value: Optional[float]
+    notes: str
+
+# --- NEW: Pydantic models for Snapshots ---
+class PortfolioSnapshotCreate(BaseModel):
+    snapshot_date: date
+    market_value: float
+
+class PortfolioSnapshotResponse(PortfolioSnapshotCreate):
+    snapshot_id: str
 
 # --- App Events ---
 @app.on_event("startup")
@@ -295,6 +339,26 @@ async def get_portfolio_overall_return(mode: str = Query("actuals")):
         return demo_mode.process_for_demo_mode(result)
     return result
 
+# --- NEW: Layered Returns Endpoint --- 
+@app.get("/api/portfolio/layered-returns-summary", response_model=LayeredReturnsResponse, tags=["Analysis"])
+async def get_layered_returns_summary(mode: str = Query("actuals")):
+    """ 
+    Calculates the full Gross -> Fees -> Taxes -> After-Tax return waterfall.
+    """
+    result = analysis.calculate_layered_returns_summary()
+    # Note: Demo mode is not applied here as the values are relative and less sensitive.
+    return result
+
+# --- REVISED: Portfolio Waterfall Endpoint ---
+@app.get("/api/analysis/portfolio-waterfall", response_model=PortfolioWaterfallResponse, tags=["Analysis"])
+async def get_portfolio_waterfall(period: str = Query("all", description="Time period, e.g., '2023', '6m', 'all'")):
+    """
+    Provides a full performance attribution waterfall analysis of portfolio value changes.
+    Requires historical value snapshots to be entered.
+    """
+    return analysis.calculate_portfolio_waterfall(period)
+
+
 # --- Data & Filter Endpoints ---
 @app.get("/api/transactions", tags=["Data"])
 async def get_filtered_transactions(filters: Dict[str, Any] = Depends(get_transaction_filters)):
@@ -422,6 +486,38 @@ async def get_all_future_streams():
 async def delete_future_stream(stream_id: str):
     if not db.delete_future_income_stream(stream_id):
         raise HTTPException(status_code=404, detail="Future income stream not found.")
+    return Response(status_code=204)
+
+# --- NEW: Portfolio Settings & Snapshots Endpoints ---
+@app.get("/api/settings/portfolio-inception-date", response_model=Optional[date], tags=["Settings"])
+async def get_portfolio_inception_date():
+    date_str = db.get_setting('portfolio_inception_date')
+    return date.fromisoformat(date_str) if date_str else None
+
+@app.put("/api/settings/portfolio-inception-date", status_code=204, tags=["Settings"])
+async def set_portfolio_inception_date(inception_date: date = Body(..., embed=True)):
+    db.set_setting('portfolio_inception_date', inception_date.isoformat())
+    return Response(status_code=204)
+
+@app.get("/api/portfolio/snapshots", response_model=List[PortfolioSnapshotResponse], tags=["Portfolio Data"])
+async def get_all_snapshots():
+    return db.get_all_portfolio_snapshots()
+
+@app.post("/api/portfolio/snapshots", response_model=PortfolioSnapshotResponse, status_code=201, tags=["Portfolio Data"])
+async def create_snapshot(payload: PortfolioSnapshotCreate):
+    try:
+        new_snapshot = db.create_portfolio_snapshot(
+            snapshot_date=payload.snapshot_date.isoformat(),
+            market_value=payload.market_value
+        )
+        return new_snapshot
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/portfolio/snapshots/{snapshot_id}", status_code=204, tags=["Portfolio Data"])
+async def delete_snapshot(snapshot_id: str):
+    if not db.delete_portfolio_snapshot(snapshot_id):
+        raise HTTPException(status_code=404, detail="Snapshot not found.")
     return Response(status_code=204)
 
 

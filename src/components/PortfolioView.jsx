@@ -4,7 +4,6 @@ import FilterPanel from './FilterPanel';
 import BarChart from './BarChart';
 import TimeFilter from './TimeFilter';
 import HoldingEditorModal from './HoldingEditorModal';
-import PortfolioGainsSummary from './LayeredReturnsSummary';
 import { useMode } from '../context/ModeContext';
 
 const AllocationTable = ({ tableData, formatCurrency }) => {
@@ -193,8 +192,6 @@ const PortfolioView = () => {
 
     return (
         <>
-            <PortfolioGainsSummary />
-
             <div className="card">
                 <h2>Asset Allocation Summary</h2>
                 {allocationLoading ? (

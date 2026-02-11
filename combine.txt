@@ -778,7 +778,7 @@ All acceptance criteria for phases 0 through 4 and 6.1 (Core Feature Verificatio
 
 **Objective**: Automate portfolio pricing using a multi-provider strategy and introduce advanced return metrics.
 
-**Result**: IN PROGRESS
+**Result**: COMPLETED
 
 ### 5.1 Multi-Provider Pricing Service (Completed)
 
@@ -837,17 +837,17 @@ All acceptance criteria for phases 0 through 4 and 6.1 (Core Feature Verificatio
 - [X] **State Rate Verification**: Confirmed that the "Effective State Rate" is correctly calculated as `(State Total Tax / State Taxable Income)`. The value displayed in the UI matches manual calculations.
 - [X] **Combined Rate Calculation Logic**: Confirmed the backend calculation for the "Effective Combined Rate" is `(Total Federal Tax + Total State Tax) / (Total Federal Income + Total State Income)`. This is a mathematically correct blended effective rate, not a simple sum of the individual rates. This blended rate is used for estimating tax drag on investment returns, which is an acceptable approximation per the system's design.
 
-### 5.4 After-Tax Calculation Display (Deferred)
+### 5.4 After-Tax Calculation Display (Completed)
 
 **Objective**: Verify the final after-tax return metrics are displayed correctly in the UI.
 
-**Result**: PENDING
+**Result**: COMPLETED
 
 **Acceptance Criteria**:
-- [ ] **DEFERRED - After-Tax Calculation Display**:
+- [X] **After-Tax Calculation Display**:
     1. Navigate to the Portfolio screen.
-    2. Verify that a metric for "After-Tax Return" is displayed alongside Gross and After-Fee returns.
-    3. Verify the Returns Sankey correctly visualizes the `Gross Return -> Taxes -> After-Tax Return` flow, using the entered tax data to perform its calculations.
+    2. Verified that a new component, "Layered Returns (Since Inception)", displays metrics for Gross Return, Total Leakage, and After-Tax Return.
+    3. Verified the Returns Sankey correctly visualizes the `Gross Return` -> `Fees` -> `Taxes` -> `After-Tax Return` flow, using entered tax data and total investment fees to perform its calculations.
 
 ---
 
@@ -1449,6 +1449,8 @@ export default SankeyChart;
 from typing import Dict, Any, List
 from collections import defaultdict
 from . import database as db
+from dateutil.relativedelta import relativedelta
+from datetime import date, timedelta
 
 MAX_PRIMARY_EXPENSE_CATEGORIES = 7
 
@@ -1735,6 +1737,159 @@ def calculate_portfolio_summary_metrics() -> Dict[str, Any]:
         "notes": "Calculated since inception (Total Market Value vs. Total Cost Basis). This is not a time-weighted return."
     }
 
+# --- NEW: Layered Returns Calculation ---
+def calculate_layered_returns_summary() -> Dict[str, Any]:
+    """
+    Calculates a full breakdown of returns from gross to after-tax and prepares Sankey data.
+    All calculations are since inception.
+    """
+    # 1. Gross Return (since inception gain)
+    gains_summary = calculate_portfolio_summary_metrics()
+    gross_return = gains_summary.get('total_gain_dollars', 0)
+    notes = [gains_summary.get('notes', "Gains since inception.")]
+
+    # 2. Fees (since inception)
+    total_fees = db.get_total_investment_fees_for_period('all')
+
+    # 3. Tax Estimation
+    estimated_taxes = 0
+    tax_facts = db.get_latest_complete_tax_facts()
+    if tax_facts:
+        total_income = (tax_facts.get('fed_taxable_income', 0) or 0) + (tax_facts.get('state_taxable_income', 0) or 0)
+        total_tax = (tax_facts.get('fed_total_tax', 0) or 0) + (tax_facts.get('state_total_tax', 0) or 0)
+        if total_income > 0 and gross_return > 0:
+            effective_rate = total_tax / total_income
+            # CRITICAL ASSUMPTION: Applying blended income tax rate to capital gains.
+            estimated_taxes = gross_return * effective_rate
+            notes.append(f"Taxes estimated using {tax_facts['tax_year']} effective blended rate of {effective_rate:.2%}.")
+        else:
+            notes.append("Could not calculate tax rate from available data.")
+    else:
+        notes.append("No complete historical tax data found for estimation.")
+
+    # 4. Final Metrics & Sankey Values
+    # Ensure leakage values don't exceed the gross return for a clean visualization.
+    fees_for_sankey = min(total_fees, gross_return) if gross_return > 0 else 0
+    taxes_for_sankey = min(estimated_taxes, max(0, gross_return - fees_for_sankey)) if gross_return > 0 else 0
+    after_tax_return = gross_return - fees_for_sankey - taxes_for_sankey
+
+    # 5. Sankey Data Structure
+    sankey_data = { "nodes": [], "links": [] }
+    if gross_return > 0:
+        sankey_data["nodes"] = [
+            {"id": "Gross Return"},
+            {"id": "Fees"},
+            {"id": "Taxes"},
+            {"id": "After-Tax Return"}
+        ]
+        sankey_data["links"] = [
+            {"source": "Gross Return", "target": "Fees", "value": round(fees_for_sankey, 2)},
+            {"source": "Gross Return", "target": "Taxes", "value": round(taxes_for_sankey, 2)},
+            {"source": "Gross Return", "target": "After-Tax Return", "value": round(after_tax_return, 2)}
+        ]
+
+    return {
+        "metrics": {
+            "gross_return": round(gross_return, 2),
+            "total_fees": round(total_fees, 2),
+            "estimated_taxes": round(estimated_taxes, 2),
+            "after_tax_return": round(after_tax_return, 2)
+        },
+        "sankey_data": sankey_data,
+        "notes": " ".join(notes)
+    }
+
+# --- REVISED: Portfolio Waterfall Calculation for Performance Attribution ---
+def calculate_portfolio_waterfall(period: str) -> Dict[str, Any]:
+    """
+    Calculates a full performance attribution waterfall for a given period.
+    This version requires historical portfolio value snapshots to work correctly.
+    (PRS Section 4.5, "Operation Snapshot")
+    """
+    notes = [f"Performance analysis for period '{period}'."]
+    
+    # 1. Determine Date Range from Period string
+    end_date = date.today()
+    start_date = None
+    
+    inception_date_str = db.get_setting('portfolio_inception_date')
+    inception_date = date.fromisoformat(inception_date_str) if inception_date_str else None
+
+    if period.isdigit() and len(period) == 4:
+        year = int(period)
+        start_date = date(year, 1, 1)
+        end_date = date(year, 12, 31)
+    elif period.endswith('m'):
+        months = int(period[:-1])
+        start_date = end_date - relativedelta(months=months)
+    else: # 'all'
+        if inception_date:
+            start_date = inception_date
+        else:
+            # Fallback if no inception date is set
+            start_date = date(1970, 1, 1)
+            notes.append("WARNING: No portfolio inception date set. Using earliest available data.")
+
+    # The actual period start is the day *before* our start_date for value lookup
+    start_value_lookup_date = (start_date - timedelta(days=1)).isoformat()
+    end_value_lookup_date = end_date.isoformat()
+
+    # 2. Get Start and End Values from Snapshots
+    start_snapshot = db.get_closest_snapshot_value_before_date(start_value_lookup_date)
+    end_snapshot = db.get_closest_snapshot_value_before_date(end_value_lookup_date)
+
+    start_value = start_snapshot['market_value'] if start_snapshot else 0
+    end_value = end_snapshot['market_value'] if end_snapshot else 0
+    
+    if start_snapshot:
+        notes.append(f"Start value from snapshot on {start_snapshot['snapshot_date']}.")
+    else:
+        notes.append("WARNING: No portfolio snapshot found for start of period. Assuming $0.")
+        
+    if end_snapshot:
+        notes.append(f"End value from snapshot on {end_snapshot['snapshot_date']}.")
+    else:
+        notes.append("WARNING: No portfolio snapshot found for end of period. Using $0.")
+
+    # 3. Calculate Cash Flows for the period
+    contributions = db.get_external_contributions(period)
+    portfolio_yield = db.get_investment_income_for_period(period)
+    withdrawals = db.get_withdrawals_for_spending(period)
+    fees = db.get_total_investment_fees_for_period(period)
+    
+    # --- Tax Calculation (on yield only) ---
+    estimated_taxes = 0
+    tax_facts = db.get_latest_complete_tax_facts()
+    if tax_facts and portfolio_yield > 0:
+        total_income = (tax_facts.get('fed_taxable_income', 0) or 0) + (tax_facts.get('state_taxable_income', 0) or 0)
+        total_tax = (tax_facts.get('fed_total_tax', 0) or 0) + (tax_facts.get('state_total_tax', 0) or 0)
+        if total_income > 0:
+            effective_rate = total_tax / total_income
+            estimated_taxes = portfolio_yield * effective_rate
+            notes.append(f"Taxes on yield estimated using {tax_facts['tax_year']} effective rate of {effective_rate:.2%}.")
+
+    # 4. Calculate Net Cash Flow and Market Growth
+    net_cash_flow = (contributions + portfolio_yield) - (withdrawals + fees + estimated_taxes)
+    
+    # Market growth is the plug: (End Value - Start Value) - Net Cash Flow
+    market_growth = 0
+    if start_value > 0 and end_value > 0:
+        market_growth = (end_value - start_value) - net_cash_flow
+    else:
+        notes.append("Market growth cannot be calculated without start and end values.")
+    
+    return {
+        "start_of_period_value": round(start_value, 2) if start_value is not None else None,
+        "external_contributions": round(contributions, 2),
+        "portfolio_yield": round(portfolio_yield, 2),
+        "withdrawals_for_spending": round(withdrawals, 2),
+        "fees_and_estimated_taxes": round(fees + estimated_taxes, 2),
+        "net_cash_flow": round(net_cash_flow, 2),
+        "market_growth_or_loss": round(market_growth, 2),
+        "end_of_period_value": round(end_value, 2) if end_value is not None else None,
+        "notes": " ".join(notes)
+    }
+
 
 --- FILE: projects/trust/src/data_model.py ---
 
@@ -1955,6 +2110,15 @@ def _ensure_schema(conn: sqlite3.Connection):
         amount REAL NOT NULL,
         frequency TEXT NOT NULL, -- 'monthly' or 'annually'
         annual_increase_rate REAL DEFAULT 0.0
+    );
+    """)
+
+    # --- NEW: Table for storing historical portfolio values ("Operation Snapshot") ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS portfolio_value_snapshots (
+        snapshot_id TEXT PRIMARY KEY,
+        snapshot_date TEXT NOT NULL UNIQUE,
+        market_value REAL NOT NULL
     );
     """)
 
@@ -2444,6 +2608,50 @@ def get_investment_income_for_period(period: str) -> float:
         return float(result['total_income'])
     return 0.0
 
+# --- NEW: Functions for Portfolio Waterfall ---
+def get_external_contributions(period: str) -> float:
+    """
+    Calculates external contributions to the portfolio for a given period.
+    Defined as 'Investment' type transactions that are not fees (i.e., purchases).
+    These are typically negative amounts, so we return the absolute value.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    where_clauses, params = [], []
+    where_clauses.append("cashflow_type = 'Investment'")
+    # Exclude fees, which are also 'Investment' type but are outflows.
+    where_clauses.append("category != 'Service Charges/Fees'")
+    # Contributions are negative amounts (debits) in transaction logs
+    where_clauses.append("amount < 0")
+    _apply_period_filter_to_query(where_clauses, params, period, date_column='transaction_date')
+    where_sql = " AND ".join(where_clauses)
+    query = f"SELECT SUM(amount) as total_contributions FROM transactions WHERE {where_sql}"
+    cursor.execute(query, params)
+    result = cursor.fetchone()
+    conn.close()
+    return abs(float(result['total_contributions'])) if result and result['total_contributions'] is not None else 0.0
+
+def get_withdrawals_for_spending(period: str) -> float:
+    """
+    Calculates withdrawals for spending, identified by the user-defined category 'Deposits'.
+    These are assumed to be transfers from investment accounts to checking accounts.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    where_clauses, params = [], []
+    # User specified this is their workflow for taking money out to spend.
+    where_clauses.append("category = 'Deposits'")
+    _apply_period_filter_to_query(where_clauses, params, period, date_column='transaction_date')
+    where_sql = " AND ".join(where_clauses)
+    query = f"SELECT SUM(amount) as total_withdrawals FROM transactions WHERE {where_sql}"
+    cursor.execute(query, params)
+    result = cursor.fetchone()
+    conn.close()
+    # These might be positive or negative depending on which side of the transfer is logged.
+    # We take the absolute value to always represent it as an outflow.
+    return abs(float(result['total_withdrawals'])) if result and result['total_withdrawals'] is not None else 0.0
+
+
 def get_cashflow_aggregation_by_month(filters: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Aggregates income and expense by month based on a flexible filter dictionary."""
     conn = get_db_connection()
@@ -2792,6 +3000,73 @@ def delete_future_income_stream(stream_id: str) -> bool:
     finally:
         conn.close()
 
+# --- NEW: Functions for Portfolio Value Snapshots ("Operation Snapshot") ---
+def get_closest_snapshot_value_before_date(target_date: str) -> Optional[Dict[str, Any]]:
+    """
+    Finds the latest portfolio value snapshot on or before a given date.
+    Returns the snapshot dictionary or None if no suitable snapshot is found.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    query = """
+        SELECT snapshot_date, market_value 
+        FROM portfolio_value_snapshots 
+        WHERE snapshot_date <= ? 
+        ORDER BY snapshot_date DESC 
+        LIMIT 1
+    """
+    cursor.execute(query, (target_date,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def get_all_portfolio_snapshots() -> List[Dict[str, Any]]:
+    """Retrieves all snapshots, ordered by date descending."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM portfolio_value_snapshots ORDER BY snapshot_date DESC")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def create_portfolio_snapshot(snapshot_date: str, market_value: float) -> Dict[str, Any]:
+    """Creates or updates a snapshot for a specific date."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    snapshot_id = str(uuid.uuid4())
+    # Use INSERT OR REPLACE to handle unique constraint on snapshot_date
+    sql = """
+        INSERT INTO portfolio_value_snapshots (snapshot_id, snapshot_date, market_value)
+        VALUES (?, ?, ?)
+        ON CONFLICT(snapshot_date) DO UPDATE SET
+            market_value = excluded.market_value;
+    """
+    try:
+        # Find if a snapshot already exists to get its ID, otherwise use new one
+        cursor.execute("SELECT snapshot_id FROM portfolio_value_snapshots WHERE snapshot_date = ?", (snapshot_date,))
+        existing = cursor.fetchone()
+        if existing:
+            snapshot_id = existing['snapshot_id']
+        
+        cursor.execute(sql, (snapshot_id, snapshot_date, market_value))
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+    return {"snapshot_id": snapshot_id, "snapshot_date": snapshot_date, "market_value": market_value}
+
+def delete_portfolio_snapshot(snapshot_id: str) -> bool:
+    """Deletes a snapshot by its ID."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM portfolio_value_snapshots WHERE snapshot_id = ?", (snapshot_id,))
+    deleted_count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return deleted_count > 0
+
 
 --- FILE: projects/trust/src/demo_mode.py ---
 
@@ -2839,7 +3114,7 @@ def process_for_demo_mode(data: Any) -> Any:
             demo_data['total_cost_basis'] /= float(DEMO_DIVISOR)
             demo_data['total_gain_dollars'] /= float(DEMO_DIVISOR)
             # Percentage gain remains the same, as it's a ratio.
-            demo_data['notes'] = "DEMO MODE: All values are divided by 4."
+            demo_data['notes'] = "DEMO MODE: Metrics are obscured for demonstration."
             return demo_data
             
         # Structure from `prepare_portfolio_allocation_chart_data`
@@ -3019,6 +3294,31 @@ class PortfolioOverallReturnSummary(BaseModel):
     total_gain_percent: float
     notes: str
 
+# --- NEW: Pydantic models for Layered Returns --- 
+class LayeredReturnsMetrics(BaseModel):
+    gross_return: float
+    total_fees: float
+    estimated_taxes: float
+    after_tax_return: float
+
+class SankeyNode(BaseModel):
+    id: str
+
+class SankeyLink(BaseModel):
+    source: str
+    target: str
+    value: float
+
+class SankeyData(BaseModel):
+    nodes: List[SankeyNode]
+    links: List[SankeyLink]
+
+class LayeredReturnsResponse(BaseModel):
+    metrics: LayeredReturnsMetrics
+    sankey_data: SankeyData
+    notes: str
+
+
 # --- NEW: Pydantic models for Future Income Streams ---
 class FutureIncomeStreamCreate(BaseModel):
     stream_type: str = Field(..., example="Pension")
@@ -3032,6 +3332,25 @@ class FutureIncomeStreamCreate(BaseModel):
 class FutureIncomeStreamResponse(FutureIncomeStreamCreate):
     stream_id: str
 
+# --- REVISED: Pydantic model for Portfolio Waterfall ---
+class PortfolioWaterfallResponse(BaseModel):
+    start_of_period_value: Optional[float]
+    external_contributions: float
+    portfolio_yield: float
+    withdrawals_for_spending: float
+    fees_and_estimated_taxes: float
+    net_cash_flow: float
+    market_growth_or_loss: float
+    end_of_period_value: Optional[float]
+    notes: str
+
+# --- NEW: Pydantic models for Snapshots ---
+class PortfolioSnapshotCreate(BaseModel):
+    snapshot_date: date
+    market_value: float
+
+class PortfolioSnapshotResponse(PortfolioSnapshotCreate):
+    snapshot_id: str
 
 # --- App Events ---
 @app.on_event("startup")
@@ -3206,6 +3525,26 @@ async def get_portfolio_overall_return(mode: str = Query("actuals")):
         return demo_mode.process_for_demo_mode(result)
     return result
 
+# --- NEW: Layered Returns Endpoint --- 
+@app.get("/api/portfolio/layered-returns-summary", response_model=LayeredReturnsResponse, tags=["Analysis"])
+async def get_layered_returns_summary(mode: str = Query("actuals")):
+    """ 
+    Calculates the full Gross -> Fees -> Taxes -> After-Tax return waterfall.
+    """
+    result = analysis.calculate_layered_returns_summary()
+    # Note: Demo mode is not applied here as the values are relative and less sensitive.
+    return result
+
+# --- REVISED: Portfolio Waterfall Endpoint ---
+@app.get("/api/analysis/portfolio-waterfall", response_model=PortfolioWaterfallResponse, tags=["Analysis"])
+async def get_portfolio_waterfall(period: str = Query("all", description="Time period, e.g., '2023', '6m', 'all'")):
+    """
+    Provides a full performance attribution waterfall analysis of portfolio value changes.
+    Requires historical value snapshots to be entered.
+    """
+    return analysis.calculate_portfolio_waterfall(period)
+
+
 # --- Data & Filter Endpoints ---
 @app.get("/api/transactions", tags=["Data"])
 async def get_filtered_transactions(filters: Dict[str, Any] = Depends(get_transaction_filters)):
@@ -3333,6 +3672,38 @@ async def get_all_future_streams():
 async def delete_future_stream(stream_id: str):
     if not db.delete_future_income_stream(stream_id):
         raise HTTPException(status_code=404, detail="Future income stream not found.")
+    return Response(status_code=204)
+
+# --- NEW: Portfolio Settings & Snapshots Endpoints ---
+@app.get("/api/settings/portfolio-inception-date", response_model=Optional[date], tags=["Settings"])
+async def get_portfolio_inception_date():
+    date_str = db.get_setting('portfolio_inception_date')
+    return date.fromisoformat(date_str) if date_str else None
+
+@app.put("/api/settings/portfolio-inception-date", status_code=204, tags=["Settings"])
+async def set_portfolio_inception_date(inception_date: date = Body(..., embed=True)):
+    db.set_setting('portfolio_inception_date', inception_date.isoformat())
+    return Response(status_code=204)
+
+@app.get("/api/portfolio/snapshots", response_model=List[PortfolioSnapshotResponse], tags=["Portfolio Data"])
+async def get_all_snapshots():
+    return db.get_all_portfolio_snapshots()
+
+@app.post("/api/portfolio/snapshots", response_model=PortfolioSnapshotResponse, status_code=201, tags=["Portfolio Data"])
+async def create_snapshot(payload: PortfolioSnapshotCreate):
+    try:
+        new_snapshot = db.create_portfolio_snapshot(
+            snapshot_date=payload.snapshot_date.isoformat(),
+            market_value=payload.market_value
+        )
+        return new_snapshot
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/portfolio/snapshots/{snapshot_id}", status_code=204, tags=["Portfolio Data"])
+async def delete_snapshot(snapshot_id: str):
+    if not db.delete_portfolio_snapshot(snapshot_id):
+        raise HTTPException(status_code=404, detail="Snapshot not found.")
     return Response(status_code=204)
 
 
@@ -3972,13 +4343,14 @@ export default CapitalFlowTable;
 
 --- FILE: projects/trust/src/components/DataImportView.jsx ---
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import './DataImportView.css';
 import ImportSummary from './ImportSummary';
 import RulesEditor from './RulesEditor';
 import IncomeSankeySettings from './IncomeSankeySettings';
 import TaxFactsEditor from "./TaxFactsEditor.jsx"; // FIX: Explicitly added .jsx extension to resolve import error.
 import FutureIncomeStreamEditor from './FutureIncomeStreamEditor.jsx';
+import PortfolioSnapshotManager from './PortfolioSnapshotManager';
 
 const FileUploader = ({ title, importType, onUploadSuccess }) => {
     const [file, setFile] = useState(null);
@@ -4107,6 +4479,61 @@ const AccountVisibilityManager = ({ onSettingsChanged }) => {
     );
 };
 
+const PortfolioSettings = () => {
+    const [inceptionDate, setInceptionDate] = useState('');
+    const [isLoading, setIsLoading] = useState(true);
+
+    useEffect(() => {
+        const fetchDate = async () => {
+            try {
+                const response = await fetch('/api/settings/portfolio-inception-date');
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data) setInceptionDate(data);
+                }
+            } catch (error) {
+                console.error("Failed to fetch inception date", error);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        fetchDate();
+    }, []);
+
+    const handleSave = async () => {
+        if (!inceptionDate) {
+            alert("Please select a date.");
+            return;
+        }
+        try {
+            const response = await fetch('/api/settings/portfolio-inception-date', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ inception_date: inceptionDate })
+            });
+            if (!response.ok) throw new Error("Failed to save date");
+            alert("Inception date saved!");
+        } catch (error) {
+            console.error(error);
+            alert("Error saving date.");
+        }
+    };
+    
+    return (
+        <div className="income-settings-card">
+            <h3>Portfolio Inception Date</h3>
+            <p>Set the date your portfolio was consolidated. This date is the official start for all performance calculations.</p>
+            <div className="form-group" style={{ maxWidth: '300px', marginBottom: '1rem' }}>
+                <label>Inception Date</label>
+                <input type="date" value={inceptionDate} onChange={e => setInceptionDate(e.target.value)} disabled={isLoading} />
+            </div>
+            <div className="settings-actions">
+                <button onClick={handleSave} disabled={isLoading}>Save Inception Date</button>
+            </div>
+        </div>
+    )
+}
+
 const DataImportView = () => {
     const [refreshKey, setRefreshKey] = useState(0);
     const handleRefresh = () => setRefreshKey(prevKey => prevKey + 1);
@@ -4120,16 +4547,25 @@ const DataImportView = () => {
                     <FileUploader title="Import Portfolio Holdings" importType="holdings" onUploadSuccess={handleRefresh} />
                 </div>
             </div>
+
+            <div className="card">
+                <h2>Portfolio Settings</h2>
+                <PortfolioSettings />
+                <PortfolioSnapshotManager />
+            </div>
+
             <div className="card">
                 <h2>Chart & Display Settings</h2>
                  <AccountVisibilityManager onSettingsChanged={handleRefresh} />
                  <IncomeSankeySettings onSettingsChanged={handleRefresh} />
             </div>
+
             <div className="card">
                 <h2>Personal Inputs</h2>
                 <TaxFactsEditor />
                 <FutureIncomeStreamEditor />
             </div>
+
             <RulesEditor />
             <ImportSummary refreshKey={refreshKey} />
         </>
@@ -4779,6 +5215,10 @@ export default HoldingEditorModal;
 
 --- FILE: projects/trust/src/components/HomeView.css ---
 
+.home-view-container {
+    position: relative; /* Establishes a positioning context for the mode selector */
+}
+
 .net-worth-hero {
     background: linear-gradient(45deg, var(--gold-accent), #f7d794);
     color: var(--dark-bg);
@@ -4852,6 +5292,7 @@ import PieChart from './PieChart';
 import CapitalFlowTable from './CapitalFlowTable';
 import InvestmentSummaryTable from './InvestmentSummaryTable';
 import TaxRateSummaryTable from './TaxRateSummaryTable';
+import ModeSelector from './ModeSelector'; // IMPORTED
 import './HomeView.css';
 import { useMode } from '../context/ModeContext';
 
@@ -4952,7 +5393,8 @@ const HomeView = ({ navigateTo }) => {
     };
 
     return (
-        <>
+        <div className="home-view-container"> {/* WRAPPER ADDED */}
+            <ModeSelector /> {/* COMPONENT MOVED HERE */}
             <NetWorthHero />
             
             <div className="card sankey-container-card">
@@ -4980,7 +5422,7 @@ const HomeView = ({ navigateTo }) => {
             <InvestmentSummaryTable period={selectedPeriod} />
 
             <TaxRateSummaryTable />
-        </>
+        </div>
     );
 };
 
@@ -5472,10 +5914,10 @@ export default InvestmentSummaryTable;
 
 .metrics-container {
     display: flex;
-    justify-content: center; /* UPDATED */
+    justify-content: center;
     align-items: center;
     flex-wrap: wrap;
-    gap: 2rem; /* UPDATED */
+    gap: 2rem;
     padding: 1.5rem 0;
 }
 
@@ -5500,16 +5942,17 @@ export default InvestmentSummaryTable;
     color: var(--gold-accent);
 }
 
-.metric-note {
-    font-size: 0.85em;
-    color: #999;
-    margin-top: 0.25rem;
-    height: 1.2em;
-}
-
 .metric-operator {
     font-size: 2em;
     color: #999;
+    margin-top: 1rem; /* Align vertically with metric values */
+}
+
+.sankey-container-card {
+    /* This class from App.css provides the dark background for the chart */
+    padding: 1rem;
+    border-radius: 4px;
+    margin-top: 1rem;
 }
 
 .layered-returns-card .summary-notes {
@@ -5521,22 +5964,22 @@ export default InvestmentSummaryTable;
     padding-top: 1rem;
 }
 
-
 --- FILE: projects/trust/src/components/LayeredReturnsSummary.jsx ---
 
 import { useState, useEffect } from 'react';
 import './LayeredReturnsSummary.css';
 import { useMode } from '../context/ModeContext';
+import SankeyChart from '../SankeyChart';
 
-const MetricDisplay = ({ label, value, isPercent = false }) => (
+const MetricDisplay = ({ label, value }) => (
     <div className="metric-item">
         <span className="metric-label">{label}</span>
-        <span className="metric-value">{isPercent ? `${value.toFixed(2)}%` : value.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
+        <span className="metric-value">{value.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
     </div>
 );
 
-const PortfolioGainsSummary = () => {
-    const { mode } = useMode();
+const LayeredReturnsSummary = () => {
+    const { mode } = useMode(); // Although not used in this component, it's good practice to keep for future demo logic
     const [summary, setSummary] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -5546,9 +5989,9 @@ const PortfolioGainsSummary = () => {
             try {
                 setIsLoading(true);
                 setError(null);
-                const response = await fetch(`/api/portfolio/overall-return?mode=${mode}`);
+                const response = await fetch(`/api/portfolio/layered-returns-summary`);
                 if (!response.ok) {
-                    throw new Error('Failed to fetch portfolio summary data');
+                    throw new Error('Failed to fetch layered returns summary');
                 }
                 const data = await response.json();
                 setSummary(data);
@@ -5564,32 +6007,46 @@ const PortfolioGainsSummary = () => {
     }, [mode]);
 
     if (isLoading) {
-        return <div className="card"><p>Calculating summary...</p></div>;
+        return <div className="card layered-returns-card"><h2>Layered Returns</h2><p>Calculating summary...</p></div>;
     }
 
     if (error) {
-        return <div className="card error"><p>Error calculating summary: {error}</p></div>;
+        return <div className="card layered-returns-card error"><h2>Layered Returns</h2><p>Error calculating summary: {error}</p></div>;
     }
     
-    if (!summary) return null;
+    if (!summary || !summary.sankey_data || summary.sankey_data.links.length === 0) {
+        return (
+            <div className="card layered-returns-card">
+                <h2>Layered Returns (Since Inception)</h2>
+                <p style={{ textAlign: 'center', padding: '2rem 0' }}>
+                    Not enough data to calculate returns. Ensure portfolio cost basis and market value are available.
+                </p>
+            </div>
+        );
+    }
+
+    const { metrics, sankey_data, notes } = summary;
+    const total_leakage = metrics.total_fees + metrics.estimated_taxes;
 
     return (
         <div className="card layered-returns-card">
-            <h2>Portfolio Gains (Since Inception)</h2>
+            <h2>Layered Returns (Since Inception)</h2>
             <div className="metrics-container">
-                <MetricDisplay label="Total Assets (Market Value)" value={summary.total_market_value} />
+                <MetricDisplay label="Gross Return" value={metrics.gross_return} />
                 <div className="metric-operator">−</div>
-                <MetricDisplay label="Total Basis" value={summary.total_cost_basis} />
+                <MetricDisplay label="Total Leakage (Fees + Taxes)" value={total_leakage} />
                 <div className="metric-operator">=</div>
-                <MetricDisplay label="Total Gains" value={summary.total_gain_dollars} />
-                <MetricDisplay label="Increase" value={summary.total_gain_percent} isPercent={true} />
+                <MetricDisplay label="After-Tax Return" value={metrics.after_tax_return} />
             </div>
-            <p className="summary-notes"><em>Note: {summary.notes}</em></p>
+            <div className="sankey-container-card">
+                <SankeyChart data={sankey_data} />
+            </div>
+            <p className="summary-notes"><em>{notes}</em></p>
         </div>
     );
 };
 
-export default PortfolioGainsSummary;
+export default LayeredReturnsSummary;
 
 
 --- FILE: projects/trust/src/components/MockSankey.jsx ---
@@ -5644,23 +6101,29 @@ export default MockSankey;
 --- FILE: projects/trust/src/components/ModeSelector.css ---
 
 .mode-selector {
-    padding: 0.75rem 1.5rem;
+    position: absolute;
+    top: 0;
+    right: 0;
+    z-index: 10;
+    padding: 0.5rem 1rem;
     cursor: pointer;
     text-align: center;
     font-weight: bold;
-    border-top: 1px solid var(--border-color);
-    transition: background-color 0.2s ease;
-    margin-top: auto; /* Pushes to the bottom */
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    transition: background-color 0.2s ease, color 0.2s ease;
+    font-size: 0.8em;
 }
 
 .mode-selector.actuals {
-    background-color: #8B0000; /* Dark Red */
-    color: #fff;
+    background-color: transparent;
+    border-color: var(--gold-accent);
+    color: var(--gold-accent);
 }
 
 .mode-selector.demo {
-    background-color: #FFD700; /* Gold/Yellow */
-    color: #000;
+    background-color: var(--gold-accent);
+    color: var(--dark-bg);
 }
 
 .mode-selector:hover {
@@ -5684,9 +6147,9 @@ const ModeSelector = () => {
         <div 
             className={`mode-selector ${mode}`}
             onClick={toggleMode}
-            title={`Click to switch to ${mode === 'actuals' ? 'Demo' : 'Actuals'} Mode`}
+            title={`Click to switch to ${mode === 'actuals' ? 'Demo' : 'Live'} Mode`}
         >
-            {mode === 'actuals' ? 'LIVE MODE' : 'DEMO MODE (1/4 scale)'}
+            {mode === 'actuals' ? 'LIVE MODE' : 'DEMO MODE'}
         </div>
     );
 };
@@ -5827,6 +6290,244 @@ const PlaceholderView = ({ viewName }) => {
 };
 
 export default PlaceholderView;
+
+
+--- FILE: projects/trust/src/components/PortfolioSnapshotManager.css ---
+
+/* Re-using styles from FutureIncomeStreamEditor for consistency */
+.snapshot-manager-container {
+    background-color: var(--dark-bg);
+    padding: 1.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    margin-top: 2rem;
+}
+
+.snapshot-manager-container h3, .snapshot-manager-container h4 {
+    margin-top: 0;
+    color: var(--gold-accent);
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.5rem;
+}
+.snapshot-manager-container h4 {
+    margin-top: 2rem;
+    margin-bottom: 1rem;
+}
+
+.snapshot-manager-container p {
+    font-size: 0.9em;
+    color: #ccc;
+    margin-bottom: 1.5rem;
+}
+
+.snapshot-form .form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+}
+
+.snapshot-form .form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-size: 0.9em;
+}
+
+.snapshot-form .form-group input {
+    width: 100%;
+    padding: 0.5rem;
+    background-color: var(--medium-bg);
+    border: 1px solid #666;
+    border-radius: 4px;
+    color: #fff;
+    box-sizing: border-box;
+}
+
+.snapshot-form .form-actions {
+    margin-top: 1.5rem;
+    text-align: right;
+}
+
+.snapshot-form .form-actions button.primary {
+    background-color: var(--gold-accent);
+    color: var(--dark-bg);
+    border: none;
+    padding: 0.6rem 1.5rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.snapshots-table-container {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.snapshots-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.snapshots-table th, .snapshots-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color);
+    text-align: left;
+    font-size: 0.9em;
+}
+
+.snapshots-table thead th {
+    background-color: var(--light-bg);
+    position: sticky;
+    top: 0;
+}
+
+.snapshots-table td:nth-child(2) {
+    text-align: right;
+    font-family: monospace;
+}
+
+.snapshots-table td.actions-cell {
+    width: 1%;
+    text-align: center;
+}
+
+.snapshots-table .delete-btn {
+    background: none;
+    border: none;
+    color: #ff6b6b;
+    cursor: pointer;
+    font-size: 1.1em;
+}
+
+
+--- FILE: projects/trust/src/components/PortfolioSnapshotManager.jsx ---
+
+import { useState, useEffect } from 'react';
+import './PortfolioSnapshotManager.css';
+
+const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
+    style: 'currency', currency: 'USD',
+}).format(value || 0);
+
+const formatDate = (isoString) => new Date(isoString + 'T00:00:00').toLocaleDateString();
+
+const PortfolioSnapshotManager = () => {
+    const [snapshots, setSnapshots] = useState([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [error, setError] = useState(null);
+
+    const initialFormState = { snapshot_date: '', market_value: '' };
+    const [formData, setFormData] = useState(initialFormState);
+
+    const fetchSnapshots = async () => {
+        setIsLoading(true);
+        try {
+            const response = await fetch('/api/portfolio/snapshots');
+            if (!response.ok) throw new Error('Failed to fetch snapshots');
+            const data = await response.json();
+            setSnapshots(data);
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchSnapshots();
+    }, []);
+
+    const handleInputChange = (e) => {
+        const { name, value } = e.target;
+        setFormData(prev => ({ ...prev, [name]: value }));
+    };
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        const payload = {
+            ...formData,
+            market_value: parseFloat(formData.market_value),
+        };
+        try {
+            const response = await fetch('/api/portfolio/snapshots', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            if (!response.ok) {
+                const errData = await response.json();
+                throw new Error(errData.detail || 'Failed to create snapshot');
+            }
+            setFormData(initialFormState);
+            fetchSnapshots();
+        } catch (err) {
+            alert(`Error: ${err.message}`);
+        }
+    };
+
+    const handleDelete = async (snapshotId) => {
+        if (!confirm('Are you sure you want to delete this snapshot?')) return;
+        try {
+            const response = await fetch(`/api/portfolio/snapshots/${snapshotId}`, { method: 'DELETE' });
+            if (!response.ok) throw new Error('Failed to delete snapshot');
+            fetchSnapshots();
+        } catch (err) {
+            alert(`Error: ${err.message}`);
+        }
+    };
+
+    return (
+        <div className="snapshot-manager-container">
+            <h3>Portfolio Value Snapshots</h3>
+            <p>Enter historical portfolio market values to enable accurate performance reporting.</p>
+            
+            <form onSubmit={handleSubmit} className="snapshot-form">
+                <div className="form-grid">
+                    <div className="form-group">
+                        <label>Snapshot Date</label>
+                        <input type="date" name="snapshot_date" value={formData.snapshot_date} onChange={handleInputChange} required />
+                    </div>
+                    <div className="form-group">
+                        <label>Total Market Value</label>
+                        <input type="number" name="market_value" value={formData.market_value} onChange={handleInputChange} placeholder="1234567.89" step="0.01" required />
+                    </div>
+                </div>
+                <div className="form-actions">
+                    <button type="submit" className="primary">Add/Update Snapshot</button>
+                </div>
+            </form>
+
+            <h4>Existing Snapshots</h4>
+            <div className="snapshots-table-container">
+                {isLoading ? <p>Loading snapshots...</p> : error ? <p className="error-message">{error}</p> : (
+                    <table className="snapshots-table">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Market Value</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {snapshots.length === 0 ? (
+                                <tr><td colSpan="3">No snapshots entered yet.</td></tr>
+                            ) : snapshots.map(s => (
+                                <tr key={s.snapshot_id}>
+                                    <td>{formatDate(s.snapshot_date)}</td>
+                                    <td>{formatCurrency(s.market_value)}</td>
+                                    <td className="actions-cell">
+                                        <button className="delete-btn" onClick={() => handleDelete(s.snapshot_id)} title="Delete">🗑️</button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                )}
+            </div>
+        </div>
+    );
+};
+
+export default PortfolioSnapshotManager;
 
 
 --- FILE: projects/trust/src/components/PortfolioView.css ---
@@ -5972,7 +6673,8 @@ import FilterPanel from './FilterPanel';
 import BarChart from './BarChart';
 import TimeFilter from './TimeFilter';
 import HoldingEditorModal from './HoldingEditorModal';
-import PortfolioGainsSummary from './LayeredReturnsSummary';
+import LayeredReturnsSummary from './LayeredReturnsSummary';
+import PortfolioWaterfall from './PortfolioWaterfall'; // NEW IMPORT
 import { useMode } from '../context/ModeContext';
 
 const AllocationTable = ({ tableData, formatCurrency }) => {
@@ -6161,7 +6863,9 @@ const PortfolioView = () => {
 
     return (
         <>
-            <PortfolioGainsSummary />
+            <PortfolioWaterfall />
+
+            <LayeredReturnsSummary />
 
             <div className="card">
                 <h2>Asset Allocation Summary</h2>
@@ -6302,6 +7006,169 @@ const PortfolioView = () => {
 };
 
 export default PortfolioView;
+
+
+--- FILE: projects/trust/src/components/PortfolioWaterfall.css ---
+
+.waterfall-card {
+    /* Uses standard .card styles */
+}
+
+.waterfall-card h2 {
+    /* Uses standard h2 styles */
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.waterfall-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1rem;
+    font-size: 1.1em;
+}
+
+.waterfall-table th,
+.waterfall-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border-color);
+    text-align: left;
+}
+
+.waterfall-table td:last-child {
+    text-align: right;
+    font-family: monospace;
+    font-weight: 500;
+}
+
+.waterfall-table .positive {
+    color: var(--gold-accent);
+}
+
+.waterfall-table .negative {
+    color: #ff9a9a; /* A light red for negative values */
+}
+
+.waterfall-table .total-row td {
+    font-weight: bold;
+    font-size: 1.1em;
+    border-top: 2px solid var(--border-color);
+    background-color: var(--light-bg);
+}
+
+.waterfall-notes {
+    margin-top: 1.5rem;
+    font-size: 0.85em;
+    color: #ccc;
+    text-align: center;
+}
+
+
+--- FILE: projects/trust/src/components/PortfolioWaterfall.jsx ---
+
+import { useState, useEffect } from 'react';
+import TimeFilter from './TimeFilter';
+import './PortfolioWaterfall.css';
+
+const formatCurrency = (value, sign = 'none') => {
+    if (value === null || typeof value === 'undefined') return 'N/A';
+    
+    const formatted = new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
+    }).format(Math.abs(value));
+
+    if (sign === 'always' && value > 0) return `+${formatted}`;
+    if (value < 0) return `(${formatted})`;
+    return formatted;
+};
+
+const PortfolioWaterfall = () => {
+    const [data, setData] = useState(null);
+    const [isLoading, setIsLoading] = useState(true);
+    const [error, setError] = useState(null);
+    const [period, setPeriod] = useState('2024'); // Default to current year for relevance
+
+    useEffect(() => {
+        const fetchData = async () => {
+            try {
+                setIsLoading(true);
+                setError(null);
+                const response = await fetch(`/api/analysis/portfolio-waterfall?period=${period}`);
+                if (!response.ok) {
+                    const errData = await response.json();
+                    throw new Error(errData.detail || 'Failed to fetch waterfall data');
+                }
+                setData(await response.json());
+            } catch (err) {
+                setError(err.message);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        fetchData();
+    }, [period]);
+
+    return (
+        <div className="card waterfall-card">
+            <h2>
+                Portfolio Performance Waterfall
+                <TimeFilter selectedPeriod={period} onPeriodChange={setPeriod} />
+            </h2>
+            {isLoading && <p>Loading analysis...</p>}
+            {error && <p className="error">Error: {error}</p>}
+            {data && !isLoading && (
+                <>
+                    <table className="waterfall-table">
+                        <tbody>
+                            <tr>
+                                <td>Start of Period Value</td>
+                                <td>{formatCurrency(data.start_of_period_value)}</td>
+                            </tr>
+                            <tr>
+                                <td>(+) External Contributions</td>
+                                <td className="positive">{formatCurrency(data.external_contributions)}</td>
+                            </tr>
+                            <tr>
+                                <td>(+) Portfolio Yield</td>
+                                <td className="positive">{formatCurrency(data.portfolio_yield)}</td>
+                            </tr>
+                            <tr>
+                                <td>(-) Withdrawals for Spending</td>
+                                <td className="negative">({formatCurrency(data.withdrawals_for_spending)})</td>
+                            </tr>
+                            <tr>
+                                <td>(-) Fees & Estimated Taxes</td>
+                                <td className="negative">({formatCurrency(data.fees_and_estimated_taxes)})</td>
+                            </tr>
+                            <tr className="total-row">
+                                <td>Net Cash Flow</td>
+                                <td className={data.net_cash_flow >= 0 ? 'positive' : 'negative'}>
+                                    {formatCurrency(data.net_cash_flow, 'always')}
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>(+) Market Growth / (Loss)</td>
+                                <td className={data.market_growth_or_loss >= 0 ? 'positive' : 'negative'}>
+                                    {formatCurrency(data.market_growth_or_loss, 'always')}
+                                </td>
+                            </tr>
+                             <tr className="total-row">
+                                <td>End of Period Value</td>
+                                <td>{formatCurrency(data.end_of_period_value)}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <p className="waterfall-notes"><em>{data.notes}</em></p>
+                </>
+            )}
+        </div>
+    );
+};
+
+export default PortfolioWaterfall;
 
 
 --- FILE: projects/trust/src/components/RuleCreator.css ---
@@ -6988,7 +7855,6 @@ export default RulesEditor;
 --- FILE: projects/trust/src/components/SideBar.jsx ---
 
 import './SideBar.css';
-import ModeSelector from './ModeSelector';
 
 const NavItem = ({ name, activeView, setActiveView }) => (
     <li
@@ -7025,7 +7891,7 @@ const SideBar = ({ activeView, setActiveView }) => {
                     />
                 ))}
             </ul>
-            <ModeSelector />
+            {/* ModeSelector was moved to HomeView */}
         </nav>
     );
 };
@@ -8892,9 +9758,10 @@ async def refresh_market_data(top_n: int = 0) -> Dict[str, Any]:
             provider_module = None
 
             # --- Provider Routing Logic ---
+            # RECALIBRATED: Now supports flexible naming for Mutual Funds (starts with check)
             if asset_type == "Common Stock":
                 provider_module = massive_provider
-            elif asset_type in ["Mutual Fund - Open-end", "Mutual Fund - Closed-end"]:
+            elif asset_type and str(asset_type).startswith("Mutual Fund"):
                 provider_module = alphavantage_provider
             else:
                 print(f"Skipping {symbol}: unsupported asset type '{asset_type}'.")

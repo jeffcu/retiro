@@ -4,10 +4,10 @@
 
 .metrics-container {
     display: flex;
-    justify-content: center; /* UPDATED */
+    justify-content: center;
     align-items: center;
     flex-wrap: wrap;
-    gap: 2rem; /* UPDATED */
+    gap: 2rem;
     padding: 1.5rem 0;
 }
 
@@ -32,16 +32,17 @@
     color: var(--gold-accent);
 }
 
-.metric-note {
-    font-size: 0.85em;
-    color: #999;
-    margin-top: 0.25rem;
-    height: 1.2em;
-}
-
 .metric-operator {
     font-size: 2em;
     color: #999;
+    margin-top: 1rem; /* Align vertically with metric values */
+}
+
+.sankey-container-card {
+    /* This class from App.css provides the dark background for the chart */
+    padding: 1rem;
+    border-radius: 4px;
+    margin-top: 1rem;
 }
 
 .layered-returns-card .summary-notes {

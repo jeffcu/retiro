@@ -130,6 +130,15 @@ def _ensure_schema(conn: sqlite3.Connection):
     );
     """)
 
+    # --- NEW: Table for storing historical portfolio values ("Operation Snapshot") ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS portfolio_value_snapshots (
+        snapshot_id TEXT PRIMARY KEY,
+        snapshot_date TEXT NOT NULL UNIQUE,
+        market_value REAL NOT NULL
+    );
+    """)
+
     # --- Schema Migrations ---
     cursor.execute("PRAGMA table_info(holdings)")
     holdings_cols = {row[1] for row in cursor.fetchall()}
@@ -616,6 +625,50 @@ def get_investment_income_for_period(period: str) -> float:
         return float(result['total_income'])
     return 0.0
 
+# --- NEW: Functions for Portfolio Waterfall ---
+def get_external_contributions(period: str) -> float:
+    """
+    Calculates external contributions to the portfolio for a given period.
+    Defined as 'Investment' type transactions that are not fees (i.e., purchases).
+    These are typically negative amounts, so we return the absolute value.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    where_clauses, params = [], []
+    where_clauses.append("cashflow_type = 'Investment'")
+    # Exclude fees, which are also 'Investment' type but are outflows.
+    where_clauses.append("category != 'Service Charges/Fees'")
+    # Contributions are negative amounts (debits) in transaction logs
+    where_clauses.append("amount < 0")
+    _apply_period_filter_to_query(where_clauses, params, period, date_column='transaction_date')
+    where_sql = " AND ".join(where_clauses)
+    query = f"SELECT SUM(amount) as total_contributions FROM transactions WHERE {where_sql}"
+    cursor.execute(query, params)
+    result = cursor.fetchone()
+    conn.close()
+    return abs(float(result['total_contributions'])) if result and result['total_contributions'] is not None else 0.0
+
+def get_withdrawals_for_spending(period: str) -> float:
+    """
+    Calculates withdrawals for spending, identified by the user-defined category 'Deposits'.
+    These are assumed to be transfers from investment accounts to checking accounts.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    where_clauses, params = [], []
+    # User specified this is their workflow for taking money out to spend.
+    where_clauses.append("category = 'Deposits'")
+    _apply_period_filter_to_query(where_clauses, params, period, date_column='transaction_date')
+    where_sql = " AND ".join(where_clauses)
+    query = f"SELECT SUM(amount) as total_withdrawals FROM transactions WHERE {where_sql}"
+    cursor.execute(query, params)
+    result = cursor.fetchone()
+    conn.close()
+    # These might be positive or negative depending on which side of the transfer is logged.
+    # We take the absolute value to always represent it as an outflow.
+    return abs(float(result['total_withdrawals'])) if result and result['total_withdrawals'] is not None else 0.0
+
+
 def get_cashflow_aggregation_by_month(filters: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Aggregates income and expense by month based on a flexible filter dictionary."""
     conn = get_db_connection()
@@ -963,3 +1016,70 @@ def delete_future_income_stream(stream_id: str) -> bool:
         raise e
     finally:
         conn.close()
+
+# --- NEW: Functions for Portfolio Value Snapshots ("Operation Snapshot") ---
+def get_closest_snapshot_value_before_date(target_date: str) -> Optional[Dict[str, Any]]:
+    """
+    Finds the latest portfolio value snapshot on or before a given date.
+    Returns the snapshot dictionary or None if no suitable snapshot is found.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    query = """
+        SELECT snapshot_date, market_value 
+        FROM portfolio_value_snapshots 
+        WHERE snapshot_date <= ? 
+        ORDER BY snapshot_date DESC 
+        LIMIT 1
+    """
+    cursor.execute(query, (target_date,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def get_all_portfolio_snapshots() -> List[Dict[str, Any]]:
+    """Retrieves all snapshots, ordered by date descending."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM portfolio_value_snapshots ORDER BY snapshot_date DESC")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def create_portfolio_snapshot(snapshot_date: str, market_value: float) -> Dict[str, Any]:
+    """Creates or updates a snapshot for a specific date."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    snapshot_id = str(uuid.uuid4())
+    # Use INSERT OR REPLACE to handle unique constraint on snapshot_date
+    sql = """
+        INSERT INTO portfolio_value_snapshots (snapshot_id, snapshot_date, market_value)
+        VALUES (?, ?, ?)
+        ON CONFLICT(snapshot_date) DO UPDATE SET
+            market_value = excluded.market_value;
+    """
+    try:
+        # Find if a snapshot already exists to get its ID, otherwise use new one
+        cursor.execute("SELECT snapshot_id FROM portfolio_value_snapshots WHERE snapshot_date = ?", (snapshot_date,))
+        existing = cursor.fetchone()
+        if existing:
+            snapshot_id = existing['snapshot_id']
+        
+        cursor.execute(sql, (snapshot_id, snapshot_date, market_value))
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+    return {"snapshot_id": snapshot_id, "snapshot_date": snapshot_date, "market_value": market_value}
+
+def delete_portfolio_snapshot(snapshot_id: str) -> bool:
+    """Deletes a snapshot by its ID."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM portfolio_value_snapshots WHERE snapshot_id = ?", (snapshot_id,))
+    deleted_count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return deleted_count > 0

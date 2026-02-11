@@ -1,6 +1,8 @@
 from typing import Dict, Any, List
 from collections import defaultdict
 from . import database as db
+from dateutil.relativedelta import relativedelta
+from datetime import date, timedelta
 
 MAX_PRIMARY_EXPENSE_CATEGORIES = 7
 
@@ -285,4 +287,157 @@ def calculate_portfolio_summary_metrics() -> Dict[str, Any]:
         "total_gain_dollars": round(total_gain_dollars, 2),
         "total_gain_percent": round(total_gain_percent, 2),
         "notes": "Calculated since inception (Total Market Value vs. Total Cost Basis). This is not a time-weighted return."
+    }
+
+# --- NEW: Layered Returns Calculation ---
+def calculate_layered_returns_summary() -> Dict[str, Any]:
+    """
+    Calculates a full breakdown of returns from gross to after-tax and prepares Sankey data.
+    All calculations are since inception.
+    """
+    # 1. Gross Return (since inception gain)
+    gains_summary = calculate_portfolio_summary_metrics()
+    gross_return = gains_summary.get('total_gain_dollars', 0)
+    notes = [gains_summary.get('notes', "Gains since inception.")]
+
+    # 2. Fees (since inception)
+    total_fees = db.get_total_investment_fees_for_period('all')
+
+    # 3. Tax Estimation
+    estimated_taxes = 0
+    tax_facts = db.get_latest_complete_tax_facts()
+    if tax_facts:
+        total_income = (tax_facts.get('fed_taxable_income', 0) or 0) + (tax_facts.get('state_taxable_income', 0) or 0)
+        total_tax = (tax_facts.get('fed_total_tax', 0) or 0) + (tax_facts.get('state_total_tax', 0) or 0)
+        if total_income > 0 and gross_return > 0:
+            effective_rate = total_tax / total_income
+            # CRITICAL ASSUMPTION: Applying blended income tax rate to capital gains.
+            estimated_taxes = gross_return * effective_rate
+            notes.append(f"Taxes estimated using {tax_facts['tax_year']} effective blended rate of {effective_rate:.2%}.")
+        else:
+            notes.append("Could not calculate tax rate from available data.")
+    else:
+        notes.append("No complete historical tax data found for estimation.")
+
+    # 4. Final Metrics & Sankey Values
+    # Ensure leakage values don't exceed the gross return for a clean visualization.
+    fees_for_sankey = min(total_fees, gross_return) if gross_return > 0 else 0
+    taxes_for_sankey = min(estimated_taxes, max(0, gross_return - fees_for_sankey)) if gross_return > 0 else 0
+    after_tax_return = gross_return - fees_for_sankey - taxes_for_sankey
+
+    # 5. Sankey Data Structure
+    sankey_data = { "nodes": [], "links": [] }
+    if gross_return > 0:
+        sankey_data["nodes"] = [
+            {"id": "Gross Return"},
+            {"id": "Fees"},
+            {"id": "Taxes"},
+            {"id": "After-Tax Return"}
+        ]
+        sankey_data["links"] = [
+            {"source": "Gross Return", "target": "Fees", "value": round(fees_for_sankey, 2)},
+            {"source": "Gross Return", "target": "Taxes", "value": round(taxes_for_sankey, 2)},
+            {"source": "Gross Return", "target": "After-Tax Return", "value": round(after_tax_return, 2)}
+        ]
+
+    return {
+        "metrics": {
+            "gross_return": round(gross_return, 2),
+            "total_fees": round(total_fees, 2),
+            "estimated_taxes": round(estimated_taxes, 2),
+            "after_tax_return": round(after_tax_return, 2)
+        },
+        "sankey_data": sankey_data,
+        "notes": " ".join(notes)
+    }
+
+# --- REVISED: Portfolio Waterfall Calculation for Performance Attribution ---
+def calculate_portfolio_waterfall(period: str) -> Dict[str, Any]:
+    """
+    Calculates a full performance attribution waterfall for a given period.
+    This version requires historical portfolio value snapshots to work correctly.
+    (PRS Section 4.5, "Operation Snapshot")
+    """
+    notes = [f"Performance analysis for period '{period}'."]
+    
+    # 1. Determine Date Range from Period string
+    end_date = date.today()
+    start_date = None
+    
+    inception_date_str = db.get_setting('portfolio_inception_date')
+    inception_date = date.fromisoformat(inception_date_str) if inception_date_str else None
+
+    if period.isdigit() and len(period) == 4:
+        year = int(period)
+        start_date = date(year, 1, 1)
+        end_date = date(year, 12, 31)
+    elif period.endswith('m'):
+        months = int(period[:-1])
+        start_date = end_date - relativedelta(months=months)
+    else: # 'all'
+        if inception_date:
+            start_date = inception_date
+        else:
+            # Fallback if no inception date is set
+            start_date = date(1970, 1, 1)
+            notes.append("WARNING: No portfolio inception date set. Using earliest available data.")
+
+    # The actual period start is the day *before* our start_date for value lookup
+    start_value_lookup_date = (start_date - timedelta(days=1)).isoformat()
+    end_value_lookup_date = end_date.isoformat()
+
+    # 2. Get Start and End Values from Snapshots
+    start_snapshot = db.get_closest_snapshot_value_before_date(start_value_lookup_date)
+    end_snapshot = db.get_closest_snapshot_value_before_date(end_value_lookup_date)
+
+    start_value = start_snapshot['market_value'] if start_snapshot else 0
+    end_value = end_snapshot['market_value'] if end_snapshot else 0
+    
+    if start_snapshot:
+        notes.append(f"Start value from snapshot on {start_snapshot['snapshot_date']}.")
+    else:
+        notes.append("WARNING: No portfolio snapshot found for start of period. Assuming $0.")
+        
+    if end_snapshot:
+        notes.append(f"End value from snapshot on {end_snapshot['snapshot_date']}.")
+    else:
+        notes.append("WARNING: No portfolio snapshot found for end of period. Using $0.")
+
+    # 3. Calculate Cash Flows for the period
+    contributions = db.get_external_contributions(period)
+    portfolio_yield = db.get_investment_income_for_period(period)
+    withdrawals = db.get_withdrawals_for_spending(period)
+    fees = db.get_total_investment_fees_for_period(period)
+    
+    # --- Tax Calculation (on yield only) ---
+    estimated_taxes = 0
+    tax_facts = db.get_latest_complete_tax_facts()
+    if tax_facts and portfolio_yield > 0:
+        total_income = (tax_facts.get('fed_taxable_income', 0) or 0) + (tax_facts.get('state_taxable_income', 0) or 0)
+        total_tax = (tax_facts.get('fed_total_tax', 0) or 0) + (tax_facts.get('state_total_tax', 0) or 0)
+        if total_income > 0:
+            effective_rate = total_tax / total_income
+            estimated_taxes = portfolio_yield * effective_rate
+            notes.append(f"Taxes on yield estimated using {tax_facts['tax_year']} effective rate of {effective_rate:.2%}.")
+
+    # 4. Calculate Net Cash Flow and Market Growth
+    net_cash_flow = (contributions + portfolio_yield) - (withdrawals + fees + estimated_taxes)
+    
+    # Market growth is the plug: (End Value - Start Value) - Net Cash Flow
+    market_growth = 0
+    if start_value > 0 and end_value > 0:
+        market_growth = (end_value - start_value) - net_cash_flow
+    else:
+        notes.append("Market growth cannot be calculated without start and end values.")
+    
+    return {
+        "start_of_period_value": round(start_value, 2) if start_value is not None else None,
+        "external_contributions": round(contributions, 2),
+        "portfolio_yield": round(portfolio_yield, 2),
+        "withdrawals_for_spending": round(withdrawals, 2),
+        "fees_and_estimated_taxes": round(fees + estimated_taxes, 2),
+        "net_cash_flow": round(net_cash_flow, 2),
+        "market_growth_or_loss": round(market_growth, 2),
+        "end_of_period_value": round(end_value, 2) if end_value is not None else None,
+        "notes": " ".join(notes)
     }

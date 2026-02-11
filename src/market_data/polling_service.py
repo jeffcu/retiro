@@ -73,9 +73,10 @@ async def refresh_market_data(top_n: int = 0) -> Dict[str, Any]:
             provider_module = None
 
             # --- Provider Routing Logic ---
+            # RECALIBRATED: Now supports flexible naming for Mutual Funds (starts with check)
             if asset_type == "Common Stock":
                 provider_module = massive_provider
-            elif asset_type in ["Mutual Fund - Open-end", "Mutual Fund - Closed-end"]:
+            elif asset_type and str(asset_type).startswith("Mutual Fund"):
                 provider_module = alphavantage_provider
             else:
                 print(f"Skipping {symbol}: unsupported asset type '{asset_type}'.")

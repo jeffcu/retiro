@@ -16,7 +16,7 @@ All acceptance criteria for phases 0 through 4 and 6.1 (Core Feature Verificatio
 
 **Objective**: Automate portfolio pricing using a multi-provider strategy and introduce advanced return metrics.
 
-**Result**: IN PROGRESS
+**Result**: COMPLETED
 
 ### 5.1 Multi-Provider Pricing Service (Completed)
 
@@ -75,17 +75,17 @@ All acceptance criteria for phases 0 through 4 and 6.1 (Core Feature Verificatio
 - [X] **State Rate Verification**: Confirmed that the "Effective State Rate" is correctly calculated as `(State Total Tax / State Taxable Income)`. The value displayed in the UI matches manual calculations.
 - [X] **Combined Rate Calculation Logic**: Confirmed the backend calculation for the "Effective Combined Rate" is `(Total Federal Tax + Total State Tax) / (Total Federal Income + Total State Income)`. This is a mathematically correct blended effective rate, not a simple sum of the individual rates. This blended rate is used for estimating tax drag on investment returns, which is an acceptable approximation per the system's design.
 
-### 5.4 After-Tax Calculation Display (Deferred)
+### 5.4 After-Tax Calculation Display (Completed)
 
 **Objective**: Verify the final after-tax return metrics are displayed correctly in the UI.
 
-**Result**: PENDING
+**Result**: COMPLETED
 
 **Acceptance Criteria**:
-- [ ] **DEFERRED - After-Tax Calculation Display**:
+- [X] **After-Tax Calculation Display**:
     1. Navigate to the Portfolio screen.
-    2. Verify that a metric for "After-Tax Return" is displayed alongside Gross and After-Fee returns.
-    3. Verify the Returns Sankey correctly visualizes the `Gross Return -> Taxes -> After-Tax Return` flow, using the entered tax data to perform its calculations.
+    2. Verified that a new component, "Layered Returns (Since Inception)", displays metrics for Gross Return, Total Leakage, and After-Tax Return.
+    3. Verified the Returns Sankey correctly visualizes the `Gross Return` -> `Fees` -> `Taxes` -> `After-Tax Return` flow, using entered tax data and total investment fees to perform its calculations.
 
 ---
 

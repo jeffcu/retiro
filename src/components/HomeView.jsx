@@ -3,7 +3,6 @@ import SankeyChart from '../SankeyChart';
 import TimeFilter from './TimeFilter';
 import PieChart from './PieChart';
 import CapitalFlowTable from './CapitalFlowTable';
-import InvestmentSummaryTable from './InvestmentSummaryTable';
 import TaxRateSummaryTable from './TaxRateSummaryTable';
 import ModeSelector from './ModeSelector'; // IMPORTED
 import './HomeView.css';
@@ -132,7 +131,7 @@ const HomeView = ({ navigateTo }) => {
                     <p>No holdings data with asset types found.</p>}
             </div>
             
-            <InvestmentSummaryTable period={selectedPeriod} />
+            {/* Removed InvestmentSummaryTable due to unreliable data sensors */}
 
             <TaxRateSummaryTable />
         </div>

@@ -1,0 +1,52 @@
+.waterfall-card {
+    /* Uses standard .card styles */
+}
+
+.waterfall-card h2 {
+    /* Uses standard h2 styles */
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.waterfall-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1rem;
+    font-size: 1.1em;
+}
+
+.waterfall-table th,
+.waterfall-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border-color);
+    text-align: left;
+}
+
+.waterfall-table td:last-child {
+    text-align: right;
+    font-family: monospace;
+    font-weight: 500;
+}
+
+.waterfall-table .positive {
+    color: var(--gold-accent);
+}
+
+.waterfall-table .negative {
+    color: #ff9a9a; /* A light red for negative values */
+}
+
+.waterfall-table .total-row td {
+    font-weight: bold;
+    font-size: 1.1em;
+    border-top: 2px solid var(--border-color);
+    background-color: var(--light-bg);
+}
+
+.waterfall-notes {
+    margin-top: 1.5rem;
+    font-size: 0.85em;
+    color: #ccc;
+    text-align: center;
+}
