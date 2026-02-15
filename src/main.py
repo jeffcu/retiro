@@ -18,6 +18,7 @@ from src.database import initialize_database, save_transactions
 from src.data_model import CashflowType, Transaction, FutureIncomeStream, Property
 from src import database as db
 from src import analysis
+from src import forecast # NEW
 from src import rules_engine
 from src.market_data import polling_service, market_scheduler
 from src import demo_mode
@@ -182,6 +183,21 @@ class PropertyCreate(BaseModel):
 class PropertyResponse(PropertyCreate):
     property_id: str
     equity: float
+
+# --- NEW: Pydantic models for Forecast Config (Phase 9) ---
+class ForecastConfig(BaseModel):
+    birth_year: Optional[int]
+    inflation_rate: Optional[float]
+    return_rate: Optional[float]
+    base_col_categories: Optional[List[str]]
+
+class DiscretionaryItemCreate(BaseModel):
+    name: str
+    amount: float
+    start_year: int
+    end_year: Optional[int] = None
+    is_recurring: bool = False
+    inflation_adjusted: bool = True
 
 
 # --- App Events ---
@@ -603,6 +619,48 @@ async def create_snapshot(payload: PortfolioSnapshotCreate):
 async def delete_snapshot(snapshot_id: str):
     if not db.delete_portfolio_snapshot(snapshot_id):
         raise HTTPException(status_code=404, detail="Snapshot not found.")
+    return Response(status_code=204)
+
+# --- NEW: Phase 9 Forecast Endpoints ---
+@app.get("/api/forecast/config", tags=["Forecast"])
+async def get_forecast_config():
+    return {
+        "birth_year": db.get_setting('forecast_birth_year'),
+        "inflation_rate": db.get_setting('forecast_inflation_rate') or 0.03,
+        "return_rate": db.get_setting('forecast_return_rate') or 0.05,
+        "base_col_categories": db.get_setting('forecast_base_col_categories') or []
+    }
+
+@app.put("/api/forecast/config", status_code=204, tags=["Forecast"])
+async def update_forecast_config(config: ForecastConfig):
+    if config.birth_year is not None: db.set_setting('forecast_birth_year', config.birth_year)
+    if config.inflation_rate is not None: db.set_setting('forecast_inflation_rate', config.inflation_rate)
+    if config.return_rate is not None: db.set_setting('forecast_return_rate', config.return_rate)
+    if config.base_col_categories is not None: db.set_setting('forecast_base_col_categories', config.base_col_categories)
+    return Response(status_code=204)
+
+@app.get("/api/forecast/base-col", tags=["Forecast"])
+async def get_calculated_base_col(categories: Optional[List[str]] = Query(None)):
+    cats_to_check = categories or db.get_setting('forecast_base_col_categories') or []
+    total = db.get_base_col_from_actuals(cats_to_check)
+    return {"base_col": total}
+
+@app.get("/api/forecast/simulation", tags=["Forecast"])
+async def run_forecast_simulation():
+    return forecast.calculate_forecast()
+
+@app.get("/api/forecast/discretionary", tags=["Forecast"])
+async def get_discretionary_items():
+    return db.get_discretionary_budget_items()
+
+@app.post("/api/forecast/discretionary", status_code=201, tags=["Forecast"])
+async def create_discretionary_item(item: DiscretionaryItemCreate):
+    db.save_discretionary_budget_item(item.dict())
+    return {"message": "Item saved"}
+
+@app.delete("/api/forecast/discretionary/{item_id}", status_code=204, tags=["Forecast"])
+async def delete_discretionary_item(item_id: str):
+    db.delete_discretionary_budget_item(item_id)
     return Response(status_code=204)
 
 

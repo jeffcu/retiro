@@ -18,10 +18,9 @@ else
     echo "No existing process found on port $PORT. Starting fresh."
 fi
 
-# Check if node_modules exists, advise if not.
-if [ ! -d "node_modules" ]; then
-  echo "Warning: 'node_modules' directory not found. Please run 'npm install' first."
-fi
+# Always ensure dependencies are up to date
+echo "Checking and installing dependencies..."
+npm install
 
 # Launch the Vite dev server
 # The --port flag ensures it uses the port we cleared.

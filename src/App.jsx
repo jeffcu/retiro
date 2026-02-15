@@ -5,7 +5,8 @@ import PortfolioView from './components/PortfolioView';
 import DataImportView from './components/DataImportView';
 import PlaceholderView from './components/PlaceholderView';
 import TransactionListView from './components/TransactionListView';
-import RealEstateView from './components/RealEstateView'; // IMPORTED
+import RealEstateView from './components/RealEstateView';
+import ForecastView from './components/ForecastView'; // IMPORTED
 import ErrorBoundary from './components/ErrorBoundary'; 
 import './App.css';
 
@@ -32,9 +33,10 @@ function App() {
       case 'Cashflow':
         return <TransactionListView key={JSON.stringify(params)} initialFilters={params} />;
       case 'Real Estate':
-        return <RealEstateView />; // ACTIVATED
-      case 'Projects/Tags':
+        return <RealEstateView />;
       case 'Forecast':
+        return <ForecastView />; // ACTIVATED
+      case 'Projects/Tags':
         return <PlaceholderView viewName={name} />;
       default:
         return <HomeView navigateTo={navigateTo} />;

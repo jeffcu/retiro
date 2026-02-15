@@ -229,6 +229,7 @@ coverage/
   "dependencies": {
     "@nivo/bar": "^0.87.0",
     "@nivo/core": "^0.87.0",
+    "@nivo/line": "^0.87.0",
     "@nivo/pie": "^0.87.0",
     "@nivo/sankey": "^0.87.0",
     "react": "^18.2.0",
@@ -241,6 +242,7 @@ coverage/
     "vite": "^4.0.3"
   }
 }
+
 
 --- FILE: projects/trust/requirements.txt ---
 
@@ -339,6 +341,54 @@ export default defineConfig({
 
 *   **Phase 8:** Data Protection (Completed).
 *   **Phase 9:** Forecast Planner (Next).
+
+--- FILE: projects/trust/library/Phase9_Forecast_Checklist.md ---
+
+# Phase 9: Forecast Planner Verification Checklist
+
+Use this checklist to manually verify the calculation engine of the "Time Machine" forecast.
+
+## 1. Environment Setup
+- [ ] **Data Check**: Ensure you have imported `transactions.csv` (for Base CoL actuals) and `holdings.csv` (for Net Worth).
+- [ ] **Settings**: Go to the Forecast Settings UI (or use API `PUT /api/forecast/config`) and set:
+    - Birth Year: e.g., 1975
+    - Inflation Rate: 0.03 (3%)
+    - Return Rate: 0.05 (5%)
+
+## 2. Base Cost of Living (Actuals)
+- [ ] **Select Categories**: Identify 2-3 specific expense categories (e.g., "Groceries", "Utilities") that have data in the last 12 months.
+- [ ] **Run Verification**: 
+    - Call `GET /api/forecast/base-col?categories=Groceries,Utilities`
+    - **Verify**: The returned `base_col` matches the sum of those categories in your CSV for the last 12 months.
+
+## 3. Discretionary Budget
+- [ ] **Create Item**: Add a "World Tour" item:
+    - Amount: 20,000
+    - Start Year: Current Year + 5
+    - Recurring: No
+    - Inflation Adjusted: Yes
+- [ ] **Verify Storage**: Call `GET /api/forecast/discretionary` and ensure the item exists.
+
+## 4. Simulation Engine Logic
+- [ ] **Run Simulation**: Call `GET /api/forecast/simulation`.
+- [ ] **Verify Year 0**: 
+    - `liquid_assets` should match your current Portfolio Value.
+    - `real_estate_equity` should match your Properties (Value - Mortgage).
+- [ ] **Verify Growth (Year 1)**:
+    - Manually calculate: `Expected_Liquid = Current_Liquid * 1.05 + (Income - Expenses)`.
+    - Compare against the API response for Year 1.
+- [ ] **Verify Inflation**:
+    - Check expenses in Year 10. 
+    - Formula: `Base_CoL * (1.03)^10`.
+- [ ] **Verify Drawdown**:
+    - Set `Return Rate` to -0.10 (-10%) temporarily.
+    - Run simulation.
+    - **Verify**: The `liquid_assets` line drops significantly year-over-year.
+
+## 5. Real Estate Appreciation
+- [ ] **Setup**: Ensure you have a property with an appreciation rate (e.g., 0.03).
+- [ ] **Verify**: In the simulation data, `real_estate_equity` should increase annually, independent of the portfolio return rate.
+
 
 --- FILE: projects/trust/library/Trust Financial System.txt ---
 
@@ -624,17 +674,14 @@ sleep 3 # Give the backend a moment to spin up
 # --- Step 4: Start Frontend (Foreground) ---
 echo "4. Starting frontend dev server on http://localhost:$FRONTEND_PORT..."
 
-# Check npm dependencies
-if [ ! -d "node_modules" ]; then
-  echo "   Running 'npm install' for Node dependencies..."
-  npm install
-fi
+# Always ensure dependencies are installed/updated
+echo "   Updating Node dependencies via npm install..."
+npm install
 
 # Start the Vite server (this blocks the terminal)
 npm run dev -- --port $FRONTEND_PORT
 
 # Cleanup trap will handle termination after Ctrl+C
-
 
 --- FILE: projects/trust/scripts/start_frontend.sh ---
 
@@ -658,10 +705,9 @@ else
     echo "No existing process found on port $PORT. Starting fresh."
 fi
 
-# Check if node_modules exists, advise if not.
-if [ ! -d "node_modules" ]; then
-  echo "Warning: 'node_modules' directory not found. Please run 'npm install' first."
-fi
+# Always ensure dependencies are up to date
+echo "Checking and installing dependencies..."
+npm install
 
 # Launch the Vite dev server
 # The --port flag ensures it uses the port we cleared.
@@ -898,7 +944,8 @@ import PortfolioView from './components/PortfolioView';
 import DataImportView from './components/DataImportView';
 import PlaceholderView from './components/PlaceholderView';
 import TransactionListView from './components/TransactionListView';
-import RealEstateView from './components/RealEstateView'; // IMPORTED
+import RealEstateView from './components/RealEstateView';
+import ForecastView from './components/ForecastView'; // IMPORTED
 import ErrorBoundary from './components/ErrorBoundary'; 
 import './App.css';
 
@@ -925,9 +972,10 @@ function App() {
       case 'Cashflow':
         return <TransactionListView key={JSON.stringify(params)} initialFilters={params} />;
       case 'Real Estate':
-        return <RealEstateView />; // ACTIVATED
-      case 'Projects/Tags':
+        return <RealEstateView />;
       case 'Forecast':
+        return <ForecastView />; // ACTIVATED
+      case 'Projects/Tags':
         return <PlaceholderView viewName={name} />;
       default:
         return <HomeView navigateTo={navigateTo} />;
@@ -1651,7 +1699,7 @@ def _ensure_schema(conn: sqlite3.Connection):
         pattern TEXT,
         category TEXT NOT NULL,
         cashflow_type TEXT NOT NULL,
-        tags TEXT, -- Comma-separated list
+        tags TEXT,
         priority INTEGER DEFAULT 100
     );
     """)
@@ -1753,6 +1801,19 @@ def _ensure_schema(conn: sqlite3.Connection):
         snapshot_id TEXT PRIMARY KEY,
         snapshot_date TEXT NOT NULL UNIQUE,
         market_value REAL NOT NULL
+    );
+    """)
+
+    # --- NEW: Discretionary Budget Items (Phase 9) ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS discretionary_budget_items (
+        item_id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        amount REAL NOT NULL,
+        start_year INTEGER NOT NULL,
+        end_year INTEGER,
+        is_recurring INTEGER DEFAULT 0,
+        inflation_adjusted INTEGER DEFAULT 1
     );
     """)
 
@@ -2785,6 +2846,83 @@ def get_total_real_estate_equity() -> float:
         return val - debt
     return 0.0
 
+# --- NEW: Phase 9 Forecast Functions ---
+def get_base_col_from_actuals(categories: List[str]) -> float:
+    """
+    Calculates the Base Cost of Living by summing the last 12 months 
+    of expenses for the provided list of categories.
+    """
+    if not categories:
+        return 0.0
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    placeholders = ', '.join('?' for _ in categories)
+    # Logic: Expense type transactions, in the categories list, within last 12 months.
+    query = f"""
+        SELECT SUM(amount) as total_expense 
+        FROM transactions 
+        WHERE cashflow_type = 'Expense' 
+          AND category IN ({placeholders})
+          AND transaction_date >= date('now', '-12 months')
+    """
+    
+    try:
+        cursor.execute(query, categories)
+        result = cursor.fetchone()
+        total = result['total_expense'] if result and result['total_expense'] else 0.0
+        return abs(total)
+    except sqlite3.Error as e:
+        print(f"Error calculating base CoL: {e}")
+        return 0.0
+    finally:
+        conn.close()
+
+def get_discretionary_budget_items() -> List[Dict[str, Any]]:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM discretionary_budget_items ORDER BY start_year ASC")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def save_discretionary_budget_item(item: Dict[str, Any]):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    # Using INSERT OR REPLACE to handle both create and update
+    sql = """
+        INSERT OR REPLACE INTO discretionary_budget_items (
+            item_id, name, amount, start_year, end_year, is_recurring, inflation_adjusted
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    """
+    params = (
+        item.get('item_id', str(uuid.uuid4())),
+        item['name'],
+        float(item['amount']),
+        int(item['start_year']),
+        int(item['end_year']) if item.get('end_year') else None,
+        1 if item.get('is_recurring') else 0,
+        1 if item.get('inflation_adjusted') else 0
+    )
+    try:
+        cursor.execute(sql, params)
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def delete_discretionary_budget_item(item_id: str) -> bool:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM discretionary_budget_items WHERE item_id = ?", (item_id,))
+    deleted = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return deleted > 0
+
 
 --- FILE: projects/trust/src/demo_mode.py ---
 
@@ -2915,6 +3053,162 @@ def process_for_demo_mode(data: Any) -> Any:
     return data
 
 
+--- FILE: projects/trust/src/forecast.py ---
+
+from datetime import date
+from decimal import Decimal
+from typing import List, Dict, Any, Optional
+from . import database as db
+
+def calculate_forecast() -> Dict[str, Any]:
+    """
+    The Time Machine Simulation Engine.
+    Projects Net Worth year-over-year from the current year until Age 95.
+    """
+    
+    # 1. Gather Simulation Inputs
+    birth_year = db.get_setting('forecast_birth_year')
+    inflation_rate = float(db.get_setting('forecast_inflation_rate') or 0.03)
+    return_rate = float(db.get_setting('forecast_return_rate') or 0.05)
+    
+    # Selected categories for Base CoL (e.g., ["Groceries", "Utilities"])
+    base_col_categories = db.get_setting('forecast_base_col_categories') or []
+    
+    # 2. Establish Starting State
+    current_year = date.today().year
+    
+    # Current Net Worth Components
+    liquid_assets = db.get_total_portfolio_market_value()
+    properties = db.get_all_properties()
+    real_estate_equity = db.get_total_real_estate_equity()
+    
+    # Calculate Base Cost of Living from Actuals (Last 12 Months)
+    base_col_annual = db.get_base_col_from_actuals(base_col_categories)
+    
+    discretionary_items = db.get_discretionary_budget_items()
+    future_income_streams = db.get_all_future_income_streams()
+    
+    if not birth_year:
+        return {"error": "Birth Year not set. Please configure settings."}
+    
+    end_year = birth_year + 95
+    
+    # 3. The Simulation Loop
+    simulation_data = []
+    
+    # Working variables for the loop
+    current_liquid = liquid_assets
+    
+    # We track property values individually to apply specific appreciation rates
+    # Structure: { property_id: current_value }
+    # Mortgage balance is assumed constant for now (conservative) or we could amortize.
+    # For v1.7, let's keep debt constant (interest only assumption) or just track equity growth via asset growth.
+    working_properties = [
+        {
+            "id": p['property_id'], 
+            "value": p['current_value'], 
+            "debt": p['mortgage_balance'],
+            "rate": p['appreciation_rate']
+        } 
+        for p in properties
+    ]
+
+    for year in range(current_year, end_year + 1):
+        age = year - birth_year
+        
+        # A. Calculate Income for this Year
+        year_income = 0.0
+        for stream in future_income_streams:
+            start = date.fromisoformat(stream['start_date'])
+            end = date.fromisoformat(stream['end_date']) if stream['end_date'] else None
+            
+            # Check if active this year
+            if start.year <= year and (end is None or end.year >= year):
+                amount = stream['amount']
+                # Adjust for frequency
+                annual_amount = amount * 12 if stream['frequency'] == 'monthly' else amount
+                
+                # Apply COLA / Increase Rate
+                # Formula: Base * (1 + rate) ^ (year - start_year)
+                years_active = year - start.year
+                increase_rate = stream['annual_increase_rate']
+                adjusted_amount = annual_amount * ((1 + increase_rate) ** years_active)
+                
+                year_income += adjusted_amount
+
+        # B. Calculate Expenses for this Year
+        
+        # Base CoL (Inflated)
+        # Formula: Base * (1 + inflation) ^ (year - current_year)
+        years_from_start = year - current_year
+        year_base_col = base_col_annual * ((1 + inflation_rate) ** years_from_start)
+        
+        # Discretionary Items
+        year_discretionary = 0.0
+        for item in discretionary_items:
+            # Check if active
+            item_start = item['start_year']
+            item_end = item['end_year'] if item['end_year'] else (9999 if item['is_recurring'] else item_start)
+            
+            if item_start <= year <= item_end:
+                item_amount = item['amount']
+                if item['inflation_adjusted']:
+                    # Inflate from the Item's Start Year, not current year, or just generic inflation?
+                    # Usually budgeting implies "In Today's Dollars". Let's inflate from current_year.
+                    item_amount = item_amount * ((1 + inflation_rate) ** years_from_start)
+                year_discretionary += item_amount
+
+        total_expenses = year_base_col + year_discretionary
+
+        # C. Calculate Net Portfolio Growth/Drawdown
+        # 1. Grow the liquid pile (Pre-drawdown or Post? Usually start of year balance grows, then cashflow happens)
+        # Let's do: (Balance * Growth) + Income - Expenses
+        investment_growth = current_liquid * return_rate
+        
+        net_cashflow = year_income - total_expenses
+        
+        # Update Liquid Assets
+        # If net_cashflow is negative, we burn principal. If positive, we save.
+        current_liquid += (investment_growth + net_cashflow)
+
+        # D. Grow Real Estate
+        year_re_value = 0.0
+        year_re_debt = 0.0
+        for prop in working_properties:
+            # Appreciate value
+            prop['value'] = prop['value'] * (1 + prop['rate'])
+            year_re_value += prop['value']
+            year_re_debt += prop['debt']
+
+        total_net_worth = current_liquid + (year_re_value - year_re_debt)
+
+        # E. Record Simulation Step
+        simulation_data.append({
+            "year": year,
+            "age": age,
+            "liquid_assets": round(current_liquid, 2),
+            "real_estate_equity": round(year_re_value - year_re_debt, 2),
+            "total_net_worth": round(total_net_worth, 2),
+            "total_income": round(year_income, 2),
+            "total_expenses": round(total_expenses, 2),
+            "base_col_expense": round(year_base_col, 2),
+            "discretionary_expense": round(year_discretionary, 2),
+            "net_cashflow": round(net_cashflow, 2),
+            "investment_growth": round(investment_growth, 2)
+        })
+        
+    return {
+        "simulation_series": simulation_data,
+        "settings": {
+            "birth_year": birth_year,
+            "inflation_rate": inflation_rate,
+            "return_rate": return_rate,
+            "starting_nw": liquid_assets + real_estate_equity,
+            "starting_base_col": base_col_annual
+        }
+    }
+
+
 --- FILE: projects/trust/src/index.css ---
 
 :root {
@@ -2976,6 +3270,7 @@ from src.database import initialize_database, save_transactions
 from src.data_model import CashflowType, Transaction, FutureIncomeStream, Property
 from src import database as db
 from src import analysis
+from src import forecast # NEW
 from src import rules_engine
 from src.market_data import polling_service, market_scheduler
 from src import demo_mode
@@ -3140,6 +3435,21 @@ class PropertyCreate(BaseModel):
 class PropertyResponse(PropertyCreate):
     property_id: str
     equity: float
+
+# --- NEW: Pydantic models for Forecast Config (Phase 9) ---
+class ForecastConfig(BaseModel):
+    birth_year: Optional[int]
+    inflation_rate: Optional[float]
+    return_rate: Optional[float]
+    base_col_categories: Optional[List[str]]
+
+class DiscretionaryItemCreate(BaseModel):
+    name: str
+    amount: float
+    start_year: int
+    end_year: Optional[int] = None
+    is_recurring: bool = False
+    inflation_adjusted: bool = True
 
 
 # --- App Events ---
@@ -3561,6 +3871,48 @@ async def create_snapshot(payload: PortfolioSnapshotCreate):
 async def delete_snapshot(snapshot_id: str):
     if not db.delete_portfolio_snapshot(snapshot_id):
         raise HTTPException(status_code=404, detail="Snapshot not found.")
+    return Response(status_code=204)
+
+# --- NEW: Phase 9 Forecast Endpoints ---
+@app.get("/api/forecast/config", tags=["Forecast"])
+async def get_forecast_config():
+    return {
+        "birth_year": db.get_setting('forecast_birth_year'),
+        "inflation_rate": db.get_setting('forecast_inflation_rate') or 0.03,
+        "return_rate": db.get_setting('forecast_return_rate') or 0.05,
+        "base_col_categories": db.get_setting('forecast_base_col_categories') or []
+    }
+
+@app.put("/api/forecast/config", status_code=204, tags=["Forecast"])
+async def update_forecast_config(config: ForecastConfig):
+    if config.birth_year is not None: db.set_setting('forecast_birth_year', config.birth_year)
+    if config.inflation_rate is not None: db.set_setting('forecast_inflation_rate', config.inflation_rate)
+    if config.return_rate is not None: db.set_setting('forecast_return_rate', config.return_rate)
+    if config.base_col_categories is not None: db.set_setting('forecast_base_col_categories', config.base_col_categories)
+    return Response(status_code=204)
+
+@app.get("/api/forecast/base-col", tags=["Forecast"])
+async def get_calculated_base_col(categories: Optional[List[str]] = Query(None)):
+    cats_to_check = categories or db.get_setting('forecast_base_col_categories') or []
+    total = db.get_base_col_from_actuals(cats_to_check)
+    return {"base_col": total}
+
+@app.get("/api/forecast/simulation", tags=["Forecast"])
+async def run_forecast_simulation():
+    return forecast.calculate_forecast()
+
+@app.get("/api/forecast/discretionary", tags=["Forecast"])
+async def get_discretionary_items():
+    return db.get_discretionary_budget_items()
+
+@app.post("/api/forecast/discretionary", status_code=201, tags=["Forecast"])
+async def create_discretionary_item(item: DiscretionaryItemCreate):
+    db.save_discretionary_budget_item(item.dict())
+    return {"message": "Item saved"}
+
+@app.delete("/api/forecast/discretionary/{item_id}", status_code=204, tags=["Forecast"])
+async def delete_discretionary_item(item_id: str):
+    db.delete_discretionary_budget_item(item_id)
     return Response(status_code=204)
 
 
@@ -4829,6 +5181,623 @@ const FilterPanel = ({ config, onFilterSubmit, initialValues = {} }) => {
 };
 
 export default FilterPanel;
+
+
+--- FILE: projects/trust/src/components/ForecastView.css ---
+
+.forecast-view-container {
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+}
+
+.forecast-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 2rem;
+}
+
+@media (min-width: 1200px) {
+    .forecast-grid {
+        grid-template-columns: 1fr 2fr;
+    }
+}
+
+.settings-panel {
+    background-color: var(--light-bg);
+    padding: 1.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+}
+
+.settings-panel h3 {
+    margin-top: 0;
+    color: var(--text-color);
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.5rem;
+}
+
+.setting-group {
+    margin-bottom: 1.5rem;
+}
+
+.setting-group label {
+    display: block;
+    color: #ccc;
+    font-size: 0.9em;
+    margin-bottom: 0.5rem;
+}
+
+.setting-group input {
+    width: 100%;
+    padding: 0.5rem;
+    background-color: var(--medium-bg);
+    border: 1px solid #666;
+    border-radius: 4px;
+    color: #fff;
+    box-sizing: border-box;
+}
+
+/* --- Collapsible CoL Styles --- */
+.col-calculator-panel {
+    background-color: var(--light-bg);
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    margin-top: 2rem;
+    overflow: hidden;
+}
+
+.col-header {
+    padding: 1rem 1.5rem;
+    background-color: var(--medium-bg);
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid transparent;
+    transition: background-color 0.2s;
+}
+
+.col-header:hover {
+    background-color: #333;
+}
+
+.col-header h3 {
+    margin: 0;
+    font-size: 1em;
+    color: var(--text-color);
+    font-weight: 500;
+}
+
+.col-header .total-badge {
+    font-weight: bold;
+    color: var(--gold-accent);
+    font-size: 1.1em;
+    margin-right: 1rem;
+}
+
+.col-header .toggle-icon {
+    color: #888;
+    font-size: 0.8em;
+    transform: rotate(0deg);
+    transition: transform 0.2s;
+}
+
+.col-header.open .toggle-icon {
+    transform: rotate(180deg);
+}
+
+.col-content {
+    padding: 1rem 1.5rem;
+    border-top: 1px solid var(--border-color);
+    animation: slideDown 0.3s ease-out;
+}
+
+@keyframes slideDown {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.col-selector-list {
+    max-height: 200px;
+    overflow-y: auto;
+    background-color: var(--dark-bg);
+    padding: 0.5rem;
+    border-radius: 4px;
+    border: 1px solid #444;
+    margin-top: 0.5rem;
+}
+
+.col-item {
+    display: flex;
+    align-items: center;
+    padding: 0.25rem 0.5rem;
+}
+
+.col-item:hover {
+    background-color: rgba(255,255,255,0.05);
+}
+
+.col-item input {
+    width: auto;
+    margin-right: 0.75rem;
+    cursor: pointer;
+}
+
+.col-item label {
+    cursor: pointer;
+    flex-grow: 1;
+    font-size: 0.9em;
+}
+
+/* --- Chart Styles --- */
+.chart-panel {
+    background-color: var(--dark-bg);
+    padding: 1.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    min-height: 400px;
+    margin-bottom: 2rem;
+}
+
+.chart-panel h2 {
+    margin-top: 0;
+    color: var(--gold-accent);
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.5rem;
+}
+
+.charts-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 2rem;
+    margin-top: 2rem;
+}
+
+@media (min-width: 1200px) {
+    .charts-row {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+.chart-sub-panel {
+    background-color: var(--dark-bg);
+    padding: 1rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+}
+
+.chart-sub-panel h3 {
+    margin-top: 0;
+    font-size: 1.1em;
+    color: #ccc;
+    text-align: center;
+}
+
+/* --- Budget Panel --- */
+.budget-panel {
+    background-color: var(--light-bg);
+    padding: 1.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+}
+
+.budget-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1rem;
+}
+
+.budget-table th, .budget-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color);
+    text-align: left;
+}
+
+.budget-table th {
+    background-color: var(--medium-bg);
+    color: #ccc;
+}
+
+.budget-form {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border-color);
+    align-items: end;
+}
+
+.budget-form button {
+    background-color: var(--gold-accent);
+    color: var(--dark-bg);
+    border: none;
+    padding: 0.6rem 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.delete-btn {
+    background: none;
+    border: none;
+    color: #ff6b6b;
+    cursor: pointer;
+}
+
+
+--- FILE: projects/trust/src/components/ForecastView.jsx ---
+
+import { useState, useEffect } from 'react';
+import { ResponsiveLine } from '@nivo/line';
+import { ResponsiveBar } from '@nivo/bar';
+import './ForecastView.css';
+
+const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+}).format(value || 0);
+
+// --- CHARTS ---
+
+const RunwayChart = ({ data }) => {
+    if (!data || data.length === 0) return <p>No simulation data available.</p>;
+
+    const netWorthSeries = {
+        id: "Total Net Worth",
+        data: data.map(d => ({ x: d.age, y: d.total_net_worth }))
+    };
+
+    return (
+        <div style={{ height: '400px' }}>
+            <ResponsiveLine
+                data={[netWorthSeries]}
+                margin={{ top: 20, right: 110, bottom: 50, left: 80 }}
+                xScale={{ type: 'linear', min: 'auto', max: 'auto' }}
+                yScale={{ type: 'linear', min: 'auto', max: 'auto' }}
+                axisBottom={{ 
+                    legend: 'Age', legendOffset: 36, legendPosition: 'middle', 
+                    tickSize: 5, tickPadding: 5 
+                }}
+                axisLeft={{ 
+                    legend: 'Net Worth ($)', legendOffset: -70, legendPosition: 'middle', 
+                    format: value => `$${value / 1000000}M`
+                }}
+                colors={['#E2B254']} // Gold for Net Worth
+                lineWidth={3}
+                pointSize={4}
+                pointColor={{ theme: 'background' }}
+                pointBorderWidth={2}
+                pointBorderColor={{ from: 'serieColor' }}
+                useMesh={true}
+                enableArea={true}
+                areaOpacity={0.1}
+                theme={{
+                    axis: { 
+                        ticks: { text: { fill: '#bbb' } }, 
+                        legend: { text: { fill: '#bbb' } } 
+                    },
+                    grid: { line: { stroke: '#444' } },
+                    tooltip: { container: { background: '#222', color: '#fff' } }
+                }}
+            />
+        </div>
+    );
+};
+
+const AssetCompositionChart = ({ data }) => {
+    // Stacked Area Chart for Assets
+    if (!data || data.length === 0) return null;
+
+    const liquidSeries = {
+        id: "Liquid Portfolio",
+        data: data.map(d => ({ x: d.age, y: d.liquid_assets }))
+    };
+    const realEstateSeries = {
+        id: "Real Estate Equity",
+        data: data.map(d => ({ x: d.age, y: d.real_estate_equity }))
+    };
+
+    return (
+        <div style={{ height: '300px' }}>
+            <ResponsiveLine
+                data={[liquidSeries, realEstateSeries]}
+                margin={{ top: 20, right: 20, bottom: 50, left: 70 }}
+                xScale={{ type: 'linear' }}
+                yScale={{ type: 'linear', stacked: true }}
+                axisBottom={{ legend: 'Age', legendOffset: 36, legendPosition: 'middle' }}
+                axisLeft={{ format: value => `$${value / 1000000}M` }}
+                colors={['#4facfe', '#00f2fe']} // Blue gradients
+                enableArea={true}
+                areaOpacity={0.6}
+                enablePoints={false}
+                useMesh={true}
+                theme={{
+                    axis: { ticks: { text: { fill: '#bbb' } }, legend: { text: { fill: '#bbb' } } },
+                    grid: { line: { stroke: '#444' } },
+                    tooltip: { container: { background: '#222', color: '#fff' } }
+                }}
+            />
+        </div>
+    );
+};
+
+const ExpenseCompositionChart = ({ data }) => {
+    // Stacked Bar Chart for Expenses
+    if (!data || data.length === 0) return null;
+
+    return (
+        <div style={{ height: '300px' }}>
+            <ResponsiveBar
+                data={data}
+                keys={['base_col_expense', 'discretionary_expense']}
+                indexBy="age"
+                margin={{ top: 20, right: 20, bottom: 50, left: 70 }}
+                padding={0.1}
+                colors={['#ff6b6b', '#feca57']}
+                axisBottom={{ legend: 'Age', legendOffset: 36, legendPosition: 'middle' }}
+                axisLeft={{ 
+                    format: value => `$${value / 1000}k`,
+                    legend: 'Annual Expenses',
+                    legendPosition: 'middle',
+                    legendOffset: -60
+                }}
+                enableLabel={false}
+                tooltip={({ id, value, indexValue }) => (
+                    <div style={{ padding: 12, background: '#222', color: '#fff', border: '1px solid #555' }}>
+                        <strong>Age {indexValue}</strong><br />
+                        {id === 'base_col_expense' ? 'Base CoL' : 'Discretionary'}: {formatCurrency(value)}
+                    </div>
+                )}
+                theme={{
+                    axis: { ticks: { text: { fill: '#bbb' } }, legend: { text: { fill: '#bbb' } } },
+                    grid: { line: { stroke: '#444' } }
+                }}
+            />
+        </div>
+    );
+};
+
+// --- COMPONENTS ---
+
+const ForecastSettings = ({ config, setConfig, onSave }) => {
+    const handleChange = (e) => {
+        const { name, value } = e.target;
+        setConfig(prev => ({ ...prev, [name]: value }));
+    };
+
+    return (
+        <div className="settings-panel">
+            <h3>Flight Parameters</h3>
+            <div className="setting-group">
+                <label>Birth Year</label>
+                <input type="number" name="birth_year" value={config.birth_year || ''} onChange={handleChange} onBlur={onSave} />
+            </div>
+            <div className="setting-group">
+                <label>Inflation Rate (0.03 = 3%)</label>
+                <input type="number" name="inflation_rate" step="0.001" value={config.inflation_rate || ''} onChange={handleChange} onBlur={onSave} />
+            </div>
+            <div className="setting-group">
+                <label>Portfolio Return Rate (0.05 = 5%)</label>
+                <input type="number" name="return_rate" step="0.001" value={config.return_rate || ''} onChange={handleChange} onBlur={onSave} />
+            </div>
+        </div>
+    );
+};
+
+const BaseColCalculator = ({ selectedCategories, onSelectionChange, calculatedTotal }) => {
+    const [allCategories, setAllCategories] = useState([]);
+    const [isOpen, setIsOpen] = useState(false);
+
+    useEffect(() => {
+        fetch('/api/filter-options')
+            .then(r => r.json())
+            .then(d => setAllCategories(d.categories || []));
+    }, []);
+
+    const handleToggle = (cat) => {
+        const newSelection = selectedCategories.includes(cat)
+            ? selectedCategories.filter(c => c !== cat)
+            : [...selectedCategories, cat];
+        onSelectionChange(newSelection);
+    };
+
+    return (
+        <div className="col-calculator-panel">
+            <div className={`col-header ${isOpen ? 'open' : ''}`} onClick={() => setIsOpen(!isOpen)}>
+                <h3>Base Cost of Living (Year 0)</h3>
+                <div style={{display:'flex', alignItems:'center'}}>
+                    <span className="total-badge">{formatCurrency(calculatedTotal)}</span>
+                    <span className="toggle-icon">▼</span>
+                </div>
+            </div>
+            
+            {isOpen && (
+                <div className="col-content">
+                    <p style={{fontSize: '0.9em', color: '#999', marginTop: 0}}>Select categories based on last 12 months actuals.</p>
+                    <div className="col-selector-list">
+                        {allCategories.map(cat => (
+                            <div key={cat} className="col-item">
+                                <input 
+                                    type="checkbox" 
+                                    id={`col-${cat}`}
+                                    checked={selectedCategories.includes(cat)}
+                                    onChange={() => handleToggle(cat)}
+                                />
+                                <label htmlFor={`col-${cat}`}>{cat}</label>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
+const DiscretionaryBudget = ({ items, onAdd, onDelete }) => {
+    const [newItem, setNewItem] = useState({ name: '', amount: '', start_year: new Date().getFullYear(), is_recurring: false });
+
+    const handleSubmit = (e) => {
+        e.preventDefault();
+        onAdd(newItem);
+        setNewItem({ name: '', amount: '', start_year: new Date().getFullYear(), is_recurring: false });
+    };
+
+    return (
+        <div className="budget-panel">
+            <h3>Discretionary Budget (Big Ticket Items)</h3>
+            <form onSubmit={handleSubmit} className="budget-form">
+                <input type="text" placeholder="Item Name" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} required />
+                <input type="number" placeholder="Amount" value={newItem.amount} onChange={e => setNewItem({...newItem, amount: e.target.value})} required />
+                <input type="number" placeholder="Start Year" value={newItem.start_year} onChange={e => setNewItem({...newItem, start_year: e.target.value})} required />
+                <label style={{display:'flex', alignItems:'center', color: '#ccc'}}>
+                    <input type="checkbox" checked={newItem.is_recurring} onChange={e => setNewItem({...newItem, is_recurring: e.target.checked})} style={{width:'auto', marginRight:'5px'}} />
+                    Recurring?
+                </label>
+                <button type="submit">Add Item</button>
+            </form>
+            
+            <table className="budget-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Amount</th>
+                        <th>Start Year</th>
+                        <th>Recurring</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {items.map(item => (
+                        <tr key={item.item_id}>
+                            <td>{item.name}</td>
+                            <td>{formatCurrency(item.amount)}</td>
+                            <td>{item.start_year}</td>
+                            <td>{item.is_recurring ? 'Yes' : 'No'}</td>
+                            <td><button className="delete-btn" onClick={() => onDelete(item.item_id)}>✕</button></td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
+};
+
+// --- MAIN VIEW ---
+
+const ForecastView = () => {
+    const [config, setConfig] = useState({});
+    const [baseColCategories, setBaseColCategories] = useState([]);
+    const [baseColTotal, setBaseColTotal] = useState(0);
+    const [simulationData, setSimulationData] = useState([]);
+    const [budgetItems, setBudgetItems] = useState([]);
+    const [refreshKey, setRefreshKey] = useState(0);
+
+    // Initial Load
+    useEffect(() => {
+        fetch('/api/forecast/config').then(r => r.json()).then(data => {
+            setConfig(data);
+            setBaseColCategories(data.base_col_categories || []);
+        });
+        
+        fetch('/api/forecast/discretionary').then(r => r.json()).then(setBudgetItems);
+    }, []);
+
+    // Recalculate Simulation whenever inputs change
+    useEffect(() => {
+        fetch('/api/forecast/simulation').then(r => r.json()).then(data => {
+            setSimulationData(data.simulation_series);
+            if (data.settings && data.settings.starting_base_col) {
+                setBaseColTotal(data.settings.starting_base_col);
+            }
+        });
+    }, [refreshKey, config]); 
+
+    const saveConfig = async () => {
+        await fetch('/api/forecast/config', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                ...config,
+                base_col_categories: baseColCategories
+            })
+        });
+        setRefreshKey(k => k + 1);
+    };
+
+    // Auto-save base categories when they change
+    useEffect(() => {
+        if (baseColCategories.length > 0) {
+            saveConfig();
+        }
+    }, [baseColCategories]);
+
+    const handleAddItem = async (item) => {
+        await fetch('/api/forecast/discretionary', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(item)
+        });
+        const res = await fetch('/api/forecast/discretionary');
+        setBudgetItems(await res.json());
+        setRefreshKey(k => k + 1);
+    };
+
+    const handleDeleteItem = async (id) => {
+        await fetch(`/api/forecast/discretionary/${id}`, { method: 'DELETE' });
+        const res = await fetch('/api/forecast/discretionary');
+        setBudgetItems(await res.json());
+        setRefreshKey(k => k + 1);
+    };
+
+    return (
+        <div className="forecast-view-container">
+            <div className="chart-panel">
+                <h2>The Runway (Age 95 Horizon)</h2>
+                <RunwayChart data={simulationData} />
+            </div>
+            
+            <div className="charts-row">
+                <div className="chart-sub-panel">
+                    <h3>Asset Composition (Accumulation)</h3>
+                    <AssetCompositionChart data={simulationData} />
+                </div>
+                <div className="chart-sub-panel">
+                    <h3>Expense Profile (Outflows)</h3>
+                    <ExpenseCompositionChart data={simulationData} />
+                </div>
+            </div>
+
+            <div className="forecast-grid">
+                <div className="left-column">
+                    <ForecastSettings 
+                        config={config} 
+                        setConfig={setConfig} 
+                        onSave={saveConfig} 
+                    />
+                    <BaseColCalculator 
+                        selectedCategories={baseColCategories} 
+                        onSelectionChange={setBaseColCategories} 
+                        calculatedTotal={baseColTotal} 
+                    />
+                </div>
+                
+                <div className="right-column">
+                    <DiscretionaryBudget 
+                        items={budgetItems} 
+                        onAdd={handleAddItem} 
+                        onDelete={handleDeleteItem} 
+                    />
+                </div>
+            </div>
+        </div>
+    );
+};
+
+export default ForecastView;
 
 
 --- FILE: projects/trust/src/components/FutureIncomeStreamEditor.css ---

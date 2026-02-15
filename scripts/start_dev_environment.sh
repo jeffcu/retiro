@@ -71,11 +71,9 @@ sleep 3 # Give the backend a moment to spin up
 # --- Step 4: Start Frontend (Foreground) ---
 echo "4. Starting frontend dev server on http://localhost:$FRONTEND_PORT..."
 
-# Check npm dependencies
-if [ ! -d "node_modules" ]; then
-  echo "   Running 'npm install' for Node dependencies..."
-  npm install
-fi
+# Always ensure dependencies are installed/updated
+echo "   Updating Node dependencies via npm install..."
+npm install
 
 # Start the Vite server (this blocks the terminal)
 npm run dev -- --port $FRONTEND_PORT

@@ -47,7 +47,7 @@ def _ensure_schema(conn: sqlite3.Connection):
         pattern TEXT,
         category TEXT NOT NULL,
         cashflow_type TEXT NOT NULL,
-        tags TEXT, -- Comma-separated list
+        tags TEXT,
         priority INTEGER DEFAULT 100
     );
     """)
@@ -149,6 +149,19 @@ def _ensure_schema(conn: sqlite3.Connection):
         snapshot_id TEXT PRIMARY KEY,
         snapshot_date TEXT NOT NULL UNIQUE,
         market_value REAL NOT NULL
+    );
+    """)
+
+    # --- NEW: Discretionary Budget Items (Phase 9) ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS discretionary_budget_items (
+        item_id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        amount REAL NOT NULL,
+        start_year INTEGER NOT NULL,
+        end_year INTEGER,
+        is_recurring INTEGER DEFAULT 0,
+        inflation_adjusted INTEGER DEFAULT 1
     );
     """)
 
@@ -1180,3 +1193,80 @@ def get_total_real_estate_equity() -> float:
         debt = row['total_debt'] or 0.0
         return val - debt
     return 0.0
+
+# --- NEW: Phase 9 Forecast Functions ---
+def get_base_col_from_actuals(categories: List[str]) -> float:
+    """
+    Calculates the Base Cost of Living by summing the last 12 months 
+    of expenses for the provided list of categories.
+    """
+    if not categories:
+        return 0.0
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    placeholders = ', '.join('?' for _ in categories)
+    # Logic: Expense type transactions, in the categories list, within last 12 months.
+    query = f"""
+        SELECT SUM(amount) as total_expense 
+        FROM transactions 
+        WHERE cashflow_type = 'Expense' 
+          AND category IN ({placeholders})
+          AND transaction_date >= date('now', '-12 months')
+    """
+    
+    try:
+        cursor.execute(query, categories)
+        result = cursor.fetchone()
+        total = result['total_expense'] if result and result['total_expense'] else 0.0
+        return abs(total)
+    except sqlite3.Error as e:
+        print(f"Error calculating base CoL: {e}")
+        return 0.0
+    finally:
+        conn.close()
+
+def get_discretionary_budget_items() -> List[Dict[str, Any]]:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM discretionary_budget_items ORDER BY start_year ASC")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def save_discretionary_budget_item(item: Dict[str, Any]):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    # Using INSERT OR REPLACE to handle both create and update
+    sql = """
+        INSERT OR REPLACE INTO discretionary_budget_items (
+            item_id, name, amount, start_year, end_year, is_recurring, inflation_adjusted
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    """
+    params = (
+        item.get('item_id', str(uuid.uuid4())),
+        item['name'],
+        float(item['amount']),
+        int(item['start_year']),
+        int(item['end_year']) if item.get('end_year') else None,
+        1 if item.get('is_recurring') else 0,
+        1 if item.get('inflation_adjusted') else 0
+    )
+    try:
+        cursor.execute(sql, params)
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def delete_discretionary_budget_item(item_id: str) -> bool:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM discretionary_budget_items WHERE item_id = ?", (item_id,))
+    deleted = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return deleted > 0
