@@ -1,43 +1,37 @@
-# Curie Trust - Acceptance Test Plan v1.4
+# Curie Trust - Acceptance Test Plan v1.7
 
 ## 1. Introduction
-
-This document outlines the acceptance criteria and testing strategy for each phase of the Curie Trust Financial Control Center project, as defined in the revised Project Requirements Specification (PRS), Section 10. The plan follows a user-feature-centric approach, verifying that each vertical slice of functionality is complete and correct before proceeding.
-
----
-
-## 2. Phase 0-6: Core Functionality (Completed)
-
-All acceptance criteria for phases 0 through 6 are considered stable.
+This document outlines the acceptance criteria for the Curie Trust Financial Control Center.
 
 ---
 
-## 3. Phase 7: Retirement & Estate Forecasting
+## 2. Phase 0-8: Core Functionality (Completed)
+All previous phases are stable.
 
-**Objective**: Provide comprehensive net worth tracking (including Real Estate) and future-looking financial projections.
+---
 
-### 7.1 Real Estate Data Management
+## 3. Phase 9: Forecast Planner (Next)
 
-**Objective**: Verify the creation, update, and display of property assets.
+**Objective**: Provide a simulation of Net Worth trajectory up to age 95.
 
+### 9.1 Forecast Settings
 **Acceptance Criteria**:
-- [ ] **Create Property**: User can add a "Principal Residence" with Purchase Price, Mortgage, Current Value, and Appreciation Rate. It appears in the list.
-- [ ] **Limit Check**: Verify logic allows adding additional properties.
-- [ ] **Update Property**: Edit the "Current Value Estimate" of an existing property. The change is persisted.
-- [ ] **Equity Calculation**: Verify that Equity is calculated as `Current Value - Mortgage Balance`.
+- [ ] **Birth Year**: User can enter birth year; system accurately calculates current and future age.
+- [ ] **Rates**: User can set Inflation Rate and Investment Return Rate. Changes to these immediately affect the graph.
 
-### 7.2 Total Net Worth Hero
-
-**Objective**: Verify the Home Screen Hero correctly aggregates Portfolio and Real Estate data.
-
+### 9.2 Base Cost of Living (CoL)
 **Acceptance Criteria**:
-- [ ] **Display**: The Hero section now shows two values: "Liquid Portfolio" and "Total Net Worth (Inc. Real Estate)".
-- [ ] **Calculation**: 
-    - Liquid Portfolio = Total Market Value of Holdings.
-    - Total Net Worth = Liquid Portfolio + Sum(Property Equity).
-- [ ] **Verification**: Manually sum the portfolio value and property equity to ensure the displayed total is correct.
+- [ ] **Actuals Driven**: Checking a category (e.g., "Groceries") adds the sum of the *last 12 months* of that category to the Base CoL.
+- [ ] **No Manual Override**: The Base CoL is strictly derived from the selected categories' actual data.
 
-### 7.3 Future Income Streams (Completed)
-
+### 9.3 The Simulation (The Runway)
 **Acceptance Criteria**:
-- [X] **CRUD**: User can create, read, and delete future income streams (Social Security, RMDs).
+- [ ] **Logic Accuracy**: Verify calculation: `Next_Year_NW = (Assets * (1 + Return)) + Income - Expenses`.
+- [ ] **Drawdown Visualization**: If Expenses > (Income + Growth), the Net Worth line should visibly decline.
+- [ ] **Compounding**: Verify that positive savings result in exponential growth (compounding returns).
+
+### 9.4 The Graph
+**Acceptance Criteria**:
+- [ ] **X-Axis**: Years/Age (e.g., "2025 (Age 50)").
+- [ ] **Y-Axis**: Net Worth (Currency).
+- [ ] **Visibility**: The chart clearly shows if/when the Net Worth line crosses zero (exhaustion of assets).

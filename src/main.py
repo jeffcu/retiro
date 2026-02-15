@@ -1,8 +1,10 @@
 import uvicorn
 import uuid
 import asyncio
+import shutil
 from datetime import datetime, timezone, date
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body, Response, Query, Depends, BackgroundTasks, Path
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import os
@@ -623,6 +625,30 @@ async def trigger_market_data_refresh(background_tasks: BackgroundTasks, limit: 
 async def trigger_eod_market_data_refresh(background_tasks: BackgroundTasks):
     background_tasks.add_task(polling_service.refresh_eod_data)
     return {"message": "Bulk EOD data refresh initiated in the background for ALL holdings."}
+
+# --- NEW: Backup & Restore Endpoints ---
+@app.get("/api/admin/backup", tags=["Admin"])
+async def download_backup():
+    """Downloads the current SQLite database file."""
+    db_path = db.DB_FILE
+    filename = f"trust_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+    return FileResponse(path=db_path, filename=filename, media_type='application/octet-stream')
+
+@app.post("/api/admin/restore", tags=["Admin"])
+async def restore_backup(file: UploadFile = File(...)):
+    """Overwrites the current database with the uploaded file."""
+    try:
+        # Verify file extension (simple check)
+        if not file.filename.endswith('.db') and not file.filename.endswith('.sqlite'):
+            raise HTTPException(status_code=400, detail="Invalid file type. Please upload a .db file.")
+        
+        # Overwrite the database file
+        with open(db.DB_FILE, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        return {"message": "Database restored successfully. Please refresh the application."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to restore backup: {e}")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)

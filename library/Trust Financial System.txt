@@ -1,4 +1,4 @@
-Curie Trust Financial Control Center — Project Requirements Specification (PRS) v1.4
+Curie Trust Financial Control Center — Project Requirements Specification (PRS) v1.7
 
 1) Mission
 
@@ -6,325 +6,86 @@ Build a local-first financial control center for the Curie Trust that continuous
 	1.	What is our latest net worth (right now)?
 	2.	Where did our income go (by top budget category and projects/tags)?
 	3.	What rate of return are we getting on our investments (before fees, after fees, after taxes)?
+	4.	(New) Will our capital last until age 95?
 
-The system ingests periodic CSV/spreadsheet uploads from multiple financial institutions, normalizes them into Curie Trust’s internal data model, and keeps market values fresh via API “drip” updates throughout the day, with hourly polling for the top 25 holdings and after-market polling for the long tail (250+).
+The system ingests periodic CSV/spreadsheet uploads from multiple financial institutions, normalizes them into Curie Trust’s internal data model, and keeps market values fresh via API “drip” updates.
 
 ⸻
 
 2) Core UX Requirements (Sankey-forward)
 
-Sankey diagrams are not decorative. They are the primary language for “money as flow / conversion / leakage.”
-
-2.1 Required Sankey Diagrams (Must-Haves)
-
-A) Capital Flow & Expense Breakdown (Home Screen Primary Sankey) - REVISED v1.4
-	•	Purpose: To visualize the complete financial loop, from all capital sources to their ultimate allocation as either consumption or savings, with a detailed expense breakdown.
-	•	Tier 1 (Sources of Capital):
-		•	`Income Categories`: Sum of transactions with `Income` cashflow type, broken out by individual categories (e.g., "Salary", "Rebates & Returns"). The specific categories displayed are user-configurable in Data & Settings.
-		•	`Portfolio Yield`: Sum of transactions with `Investment` cashflow type categorized as yield (e.g., "Dividends", "Interest Income").
-	•	Tier 2 (Aggregation):
-		•	A single node, `Total Inflows`, representing the total cash generated. All Tier 1 nodes flow into this node.
-	•	Tier 3 (Primary Allocation):
-		•	`Total Inflows` splits into two paths:
-			•	`Consumption`: Sum of all `Expense` cashflow type transactions. This represents capital that has been spent.
-			•	`Net Savings`: The remainder (`Total Inflows` - `Consumption`), representing retained capital.
-	•	Tier 4 (Expense Breakdown):
-		•	The `Consumption` node further splits into the top 5–7 budget categories, with the remainder aggregated into an `Other Expenses` node.
-	•	Tier 5 (Expense Sub-Breakdown):
-		•	The `Other Expenses` node splits further into the next 5-7 smaller budget categories, providing a second level of detail.
-
-B) Estate Flow (Net Worth / Estate Screen Sankey)
-	•	Left: Income + portfolio distributions (if modeled)
-	•	Flows to:
-	•	Consumption Expenses
-	•	CapEx → Real Estate Basis
-	•	Portfolio (invested) → Market Return → Fees → Taxes → After-Tax Return
-	•	This diagram must clearly show “conversion” (CapEx) vs “leakage” (fees/taxes).
-
-2.2 Sankey Interaction Rules
-	•	Node/flow click drills down to:
-	•	Categories → merchants → transactions
-	•	CapEx → asset ledger entries
-	•	Fees/taxes → supporting manual records
-	•	Must support: month, YTD, rolling 12 months, custom range.
-	•	Must cap complexity: max ~20-25 nodes per Sankey; enforce “Other” aggregation.
+2.1 Required Sankey Diagrams
+[... unchanged from v1.5 ...]
 
 ⸻
 
-3) Financial Semantics (Non-Negotiable)
-
-3.1 Transaction Cashflow Types (Mutually Exclusive)
-
-Every transaction is exactly one:
-	•	Income: Money entering the trust's operational cash flow.
-	•	Expense (consumption): Money leaving the trust for goods/services.
-	•	Transfer (between trust-controlled accounts; net-zero for cash flow). Transfers are NOT considered income or expenses and are excluded from the primary Sankey.
-	•	CapEx (capital improvement; increases asset basis).
-	•	Investment: A transaction affecting portfolio value but not operational cash flow (e.g., security purchases, sales, reinvested dividends). Investment-type transactions are excluded from the main Income→Uses Sankey.
-
-Expenses drive “spend/burn.”
-CapEx is excluded from “spend/burn” but included in net worth via asset basis.
-
-3.1.1 Semantic Clarification on Rebates & Returns
-	•	While technically negative expenses, credits, rebates, and returns from merchants can be treated as a form of income for visualization simplicity. The recommended method is to create a rule that assigns these transactions the `Income` cashflow type and a specific category like "Rebates & Returns". This allows them to appear as a distinct income stream in the Sankey chart, aligning with user mental models.
-
-3.2 Tags (Non-Exclusive, Multi-Label)
-	•	A transaction can have 0..N tags (e.g., Travel AND Italy26).
-	•	Tag subtotals are non-exclusive by default (overlap is expected).
-
-3.3 Real Estate CapEx Accounting
-	•	Trust has no mortgage; liabilities default $0 unless user adds any.
-	•	CapEx transactions link to an Asset and increase asset basis.
-	•	Market value is tracked separately via snapshots (manual or appraised).
+3) Financial Semantics
+[... unchanged from v1.5 ...]
 
 ⸻
 
 4) Screens (UI Requirements Summary)
 
 4.1 Home (Command Center)
+	•	Latest Net Worth Hero
+	•	Capital Flow Sankey
+	•	Portfolio Allocation
 
-Priority order:
-	1.	Latest Net Worth Hero
-	2.	Capital Flow & Expense Breakdown Sankey
-	3.	Collapsible Tabular Capital Flow Breakdown
-	4.	Portfolio Allocation Pie Chart
-	5.	Alerts/insights (spend spikes, missing imports, stale prices)
+4.2 - 4.5
+[... unchanged ...]
 
-4.2 Cashflow
-	•	Monthly income vs expenses trend
-	•	Category drilldowns
-	•	Toggle include/exclude CapEx (default exclude)
-
-4.3 Projects/Tags
-	•	Tag selector (single or multi)
-	•	Tag-specific totals, trends, and “where it went” Sankey filtered by tag
-
-4.4 Real Estate / Estate
-	•	Asset basis ledger
-	•	CapEx over time
-	•	Market value snapshots
-	•	Estate Flow Sankey
-	•	Summary of future income streams (Social Security, RMDs, etc.)
-
-4..5 Portfolio
-	•	Value over time (snapshots + intraday updates)
-	•	Allocation and concentration
-	•	Return layer metrics:
-	•	Before fees
-	•	After fees
-	•	After taxes
-
-4.6 Forecast
-	•	Scenario-based forecast:
-	•	Expenses (consumption)
-	•	Income (historical and modeled future streams like Social Security, RMDs)
-	•	Expected returns
-	•	One-time planned CapEx events
-	•	Outputs: projected portfolio, net worth, runway
-
-4.7 Data & Settings
-	•	CSV import, mapping profiles, dedupe logs
-	•	Filter Rules editor (see section 5.3)
-	•	Manual entry: fees, taxes, market value snapshots
-	•	Tax Facts Entry: A form to input key data from annual tax returns (e.g., Form 1040, 540) to enable after-tax calculations.
-	•	Future Income Stream Editor: A section to define recurring future income (e.g., Social Security, RMDs) for forecasting.
-	•	Backup/restore
+4.6 Forecast (The Time Machine) - REVISED v1.7
+	•	Global Settings:
+		•	Birth Year: Used to calculate current age and the horizon line (Age 95).
+		•	Inflation Rate %: User entered (default 3.0%). Applies to all expenses annually.
+		•	Assumed Portfolio Return %: User entered (default 5.0%). Applies to liquid assets annually.
+	•	Base Cost of Living (CoL) Engine:
+		•	Selector: Collapsible list of all expense categories.
+		•	Calculation: System sums the *last 12 months of actuals* for checked categories to establish "Year 0 Base CoL".
+		•	Projection: This base amount grows annually by the Inflation Rate.
+	•	Discretionary Budget Table:
+		•	Table for future one-off or recurring large expenses (e.g., "World Tour").
+		•	"Replicate Forward": Option to repeat an expense annually until age 95, adjusting for inflation.
+	•	The Simulation (Runway Logic):
+		•	System calculates year-over-year Net Worth:
+			`Next_NW = (Current_NW * (1 + Return_Rate)) + (Future_Income - (Base_CoL + Discretionary))`
+		•	Real Estate values grow separately by their specific Appreciation Rates.
+	•	Visualization (The Runway Graph):
+		•	Primary View: A Line Graph of **Projected Total Net Worth** from now until Age 95.
+		•	Goal: Visual confirmation of whether assets are exhausted (line hits zero) or sustained (line stays positive).
+		•	Secondary View (Tooltip/Overlay): Show the "Annual Deficit/Surplus" for any hovered year.
 
 ⸻
 
-5) Data Ingestion Requirements (CSV/Spreadsheet Flexibility)
-
-5.1 Supported Inputs (v1.0)
-	•	Bank transactions CSV
-	•	Credit card transactions CSV
-	•	Brokerage/retirement holdings snapshots spreadsheet/CSV
-	•	Optional: account balance snapshots
-
-5.2 Import Pipeline (Must)
-	1.	Upload file(s) (drag/drop)
-	2.	Detect type via column heuristics
-	3.	Preview + mapping UI (first time per institution)
-	4.	Save Import Profile (mapping + sign rules + date formats + Filter Rule Set)
-	5.	Normalize into internal schema
-	6.	Deduplicate (hash-based fallback)
-	7.	Produce import audit log + “what changed” summary
-
-5.3 Categorization & Type Assignment (Filter Rules Engine v2)
-
-	•	The system uses "Rule Sets" tied to each Import Profile. A global rule set can act as a fallback.
-	•	Each rule consists of Conditions and an Action.
-	•	Rules are evaluated in order of priority. The first rule that matches all conditions is applied.
-
-	•	Rule Conditions:
-		•	Description Pattern: A string or regex to match against the transaction description.
-		•	Case Sensitive: A boolean flag for the description match.
-		•	Account Filter: An inclusion or exclusion list of account names for the rule to apply to.
-
-	•	Rule Action (sets one or more of the following):
-		•	Set Cashflow Type (to Income, Expense, Transfer, CapEx, or Investment)
-		•	Set Category
-		•	Add Tags
-
-	•	Manual override is always available; edits can generate “rule suggestions.”
+5) Data Ingestion & Rules
+[... unchanged ...]
 
 ⸻
 
-6) Market Value Drip Updates (API-driven pricing)
-
-6.1 Requirements
-	•	Maintain a Price Cache and update holdings market values throughout the day.
-	•	Polling schedule:
-	•	Top 25 holdings: hourly during market hours
-	•	Long tail 250+: after-market (end-of-day) polling
-	•	Must support multiple asset types where possible (stocks/ETFs; others optional).
-	•	Must degrade gracefully if API limits are hit (backoff, partial refresh, stale flags).
-
-6.2 Vendor Strategy (Pluggable Provider Interface)
-
-Implement a provider interface so Curie Trust can switch data sources without rewriting the app:
-
-Provider Interface (example)
-	•	get_quotes(symbols[]) -> {symbol: {price, timestamp, source}}
-	•	get_eod_prices(symbols[], date) -> ...
-	•	get_metadata(symbol) -> {name, currency, type}
-
-The primary provider is the Massive API, which has a free tier with a rate limit of 5 calls per minute. The polling service design must accommodate this constraint through careful scheduling (e.g., 12 seconds between calls), batching where possible, and robust caching to ensure the service remains responsive and within vendor limits.
-
-6.3 Polling Algorithm
-	•	Rank holdings by current market value daily.
-	•	Select top 25 by value for “frequent set.”
-	•	During market hours:
-	•	Once per hour: batch request for top 25 (or smaller batches per provider limits)
-	•	After market close:
-	•	EOD refresh for all symbols not refreshed within the day
-	•	Use:
-	•	exponential backoff on errors
-	•	circuit breaker if provider fails repeatedly
-	•	stale-data indicators in UI (e.g., “prices last updated 2h ago”)
-
-6.4 Storage & Audit
-	•	Store every quote with timestamp (or store latest + optional history).
-	•	Keep provenance: provider name + request time.
-	•	Log refresh runs: number updated, failures, duration.
+6) Market Data & Returns
+[... unchanged ...]
 
 ⸻
 
-7) Returns Before Fees / After Fees / After Taxes
-
-7.1 Inputs
-	•	Portfolio value time series from holdings snapshots + intraday quotes.
-	•	User-entered Fee Records (manual entry for management fees, etc.).
-	•	User-entered Tax Year Facts from annual tax returns. The system will prompt for key lines to calculate effective tax rates on investment income. Required inputs include:
-		•	Tax Year
-		•	Filing Status
-		•	Federal Taxable Income (Form 1040, Line 15)
-		•	Federal Total Tax (Form 1040, Line 24)
-		•	State Taxable Income (e.g., CA 540, Line 19)
-		•	State Total Tax (e.g., CA 540, Line 31)
-
-7.2 Output Metrics (Required)
-
-For selected period:
-	•	Gross Return ($, %): value change adjusted for contributions/withdrawals if available; otherwise snapshot-to-snapshot change labeled “approx.”
-	•	After Fees Return: gross minus fees in period
-	•	After Taxes Return: after-fees minus taxes in period, calculated using effective rates from user-provided Tax Year Facts.
-
-All return views must label:
-	•	“Exact” vs “Estimated” based on data completeness.
-
-⸻
-
-8) Internal Data Model (Minimum Entities)
-	•	Transaction
-	•	Account
-	•	Institution
-	•	Category
-	•	Tag + TransactionTag
-	•	Asset (Real Estate, Portfolio, etc.)
-	•	AssetValueSnapshot (manual market value)
-	•	CapExEntry (or CapEx as Transaction with asset_id)
-	•	HoldingSnapshot (positions)
-	•	PriceQuote (intraday/EOD)
-	•	FeeRecord
-	•	TaxYearFacts (stores key data points from annual tax returns)
-	•	FutureIncomeStream (stores definitions for projected income like Social Security, RMDs)
-		•	stream_id (PK)
-		•	stream_type (e.g., 'Social Security', 'Pension', 'RMD')
-		•	description (e.g., 'Spouse SS', '401k RMD')
-		•	start_date, end_date (optional)
-		•	amount (per period)
-		•	frequency (e.g., 'monthly', 'annually')
-		•	annual_increase_rate (for COLA)
-	•	ImportProfile + ImportRun + ImportRowHash (dedupe/audit)
-	•	FilterRule (pattern, case_sensitive, account_filters, action, import_profile_id)
-
-⸻
-
-9) Non-Functional Requirements
-	•	Local-first storage (SQLite recommended)
-	•	Fast UI response (<1s for common filters on typical dataset sizes)
-	•	Deterministic calculations (same inputs → same outputs)
-	•	Safe importing (idempotent; repeat import doesn’t duplicate)
-	•	Backups (single file export + restore)
-	•	Security: encryption at rest optional v1.0; strongly recommended if later cloud sync exists
+8) Internal Data Model (Additions for v1.7)
+	•	...existing entities...
+	•	`app_settings` (KV store): Stores `forecast_inflation_rate`, `forecast_birth_year`, `forecast_return_rate`, `base_col_categories`.
+	•	`discretionary_budget_item`:
+		•	item_id (PK)
+		•	name, amount, start_year
+		•	is_recurring, inflation_adjusted (booleans)
 
 ⸻
 
 10) Phased Delivery (User-Feature Centric)
 
-Development will proceed in vertical slices, ensuring a tangible user-facing feature is delivered in each phase.
+[... Phases 0-8 Completed/Stable ...]
 
-Phase 0: The Walking Skeleton (Completed)
-	•	Goal: Prove the end-to-end data pipeline is viable.
-	•	Features: API-driven CSV import, data storage in SQLite, backend serves data, frontend renders a basic chart.
-
-Phase 1: The Dynamic Sankey (Completed)
-	•	Goal: Visualize real, user-imported data in the primary Sankey chart.
-	•	Features: The Income→Uses Sankey chart on the home screen is driven by data from the imported transactions. Basic categorization rules are applied during import.
-
-Phase 2: Interactive Drill-Downs & Rules Management (Completed)
-	•	Goal: Allow users to inspect their data and manage categorization.
-	•	Features: Clicking a node/link on the Sankey drills down to a list of underlying transactions. A UI is available to create, view, and delete categorization rules.
-
-Phase 3: Introducing Capital Expenditures (CapEx) (Completed)
-	•	Goal: Differentiate consumption expenses from asset-building expenses and visualize the impact.
-	•	Features: Users can mark transactions as CapEx. The primary Sankey is updated to show the Income → Expenses / CapEx / Surplus split. A basic Real Estate screen shows asset basis.
-
-Phase 4: The Portfolio View (Completed)
-	•	Goal: Establish the initial portfolio tracking capability.
-	•	Features: Import a holdings CSV. A new Portfolio screen displays a list of holdings and their current market value (via on-demand price fetches).
-
-Phase 5: Automated Market Data & Layered Returns (In Progress)
-	•	Goal: Automate portfolio pricing and introduce advanced return metrics.
-	•	Features: 
-		• Implement the scheduled “drip” pricing service using a multi-provider strategy.
-		• Implement the `TaxFactsEditor` UI for manual entry of annual tax data.
-		• Implement backend database table (`TaxYearFacts`) and API endpoints to store and retrieve tax data.
-		• Update the analysis engine to calculate after-tax returns using stored tax facts.
-		• The Portfolio screen displays Gross, After-Fee, and After-Tax returns.
-	•	NOTE: Final UI verification of after-tax calculations is deferred in favor of starting Phase 7 work.
-
-Phase 6: Advanced Rules Engine & Portfolio Separation (Completed)
-	•	Goal: Implement the v2 rules engine to separate portfolio activity from cash flow.
-	•	Features: Update database and backend logic for conditional rules. Modify analysis engine to exclude 'Investment' type transactions from cash flow Sankey. Begin UI design for new rules editor.
-
-Phase 7: Retirement & Estate Forecasting
-	•	Goal: Provide future-looking financial projections based on user-defined scenarios.
-	•	Features: 
-    •   A new section in 'Data & Settings' to define recurring future income streams, including Social Security, RMDs, and pensions. This requires a `FutureIncomeStreamEditor` UI and corresponding backend infrastructure.
-    •   A new Forecast screen (PRS Section 4.6).
-    •   Users can define scenarios with assumptions for future income, expenses (consumption), and expected investment returns.
-    •   The system must allow for modeling one-time planned events, such as a large Capital Expenditure.
-    •   The output will be a projection of the Trust's portfolio value and total net worth over a specified time horizon.
-
-⸻
-
-11) Acceptance Criteria (Key)
-	•	Home screen shows: Net Worth Hero + Capital Flow Sankey + Portfolio Allocation Pie Chart.
-	•	The Capital Flow Sankey must correctly combine 'Income' and 'Investment' (yield) type transactions.
-	•	Importing the same CSV twice produces no duplicates.
-	•	A transaction can be tagged with multiple tags and contributes to both tag totals.
-	•	Marking a transaction as CapEx:
-	•	- removes it from “spending”
-	•	- increases the selected asset’s basis ledger
-	•	Top 25 holdings refresh hourly during market hours; others refresh after market; UI clearly indicates quote staleness.
+Phase 9: The Forecast Planner (Next)
+	•	Goal: Visualize capital longevity and drawdown trajectory.
+	•	Features:
+		•	Forecast Settings (Birth Year, Inflation, Return Rate).
+		•	Base CoL Calculator (Actuals-based).
+		•	Discretionary Budget Editor.
+		•	Simulation Engine (Year-over-Year Net Worth calculation).
+		•	Runway Graph (Projected Net Worth vs. Time).

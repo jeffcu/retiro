@@ -277,104 +277,72 @@ export default defineConfig({
 --- FILE: projects/trust/docs/Master_Design_Specification.md ---
 
 # Curie Trust Financial Control Center
-## Master Design Specification (MDS) v1.2
+## Master Design Specification (MDS) v1.5
 
 ---
 
 ### 1. Overview
-
-This document outlines the technical architecture for the Curie Trust Financial Control Center, a local-first desktop application designed for comprehensive financial tracking, analysis, and forecasting. The system ingests data from various financial institutions, normalizes it against an internal model, enriches it with market data via external APIs, and presents insights through a Sankey-forward user interface.
-
-The prime directive is to answer three core questions with high clarity:
-1.  What is our latest net worth (Liquid + Real Estate)?
-2.  Where did our income go?
-3.  What is our investment rate of return (gross, after fees, after taxes)?
+[... Unchanged ...]
 
 ### 2. System Architecture
-
-The application will follow a simple, robust, local-first architecture.
-
-*   **Backend:** A Python application responsible for all business logic, data processing, storage, and external API communication. This ensures deterministic calculations and direct control over the data pipeline.
-*   **Frontend:** A web-based user interface (e.g., built with React or Vue) served locally by the Python backend. This allows for a modern, interactive UX without the complexities of a native GUI framework.
-*   **Storage:** A single-file SQLite database for all persistent data. This provides transactional integrity and simplifies backup/restore operations.
-*   **Communication:** The frontend will communicate with the backend via a local REST or WebSocket API.
-
-```mermaid
-graph TD
-    A[User] --> B{Frontend (Web UI)};
-    B <--> C{Backend API (Python/FastAPI)};
-    C --> D[Business Logic];
-    D <--> E[SQLite Database];
-    D --> F(External APIs: Massive, Alphavantage);
-    G[CSV/Spreadsheet Files] --> C;
-```
+[... Unchanged ...]
 
 ### 3. Core Modules
 
-The system is decomposed into the following distinct modules within the `src` directory:
-
-*   `src/data_model.py`: Defines the core Python data structures (`Transaction`, `Holding`, `Property`, etc.) using dataclasses and Enums.
-*   `src/database.py`: Manages all interaction with the SQLite database, including schema creation, CRUD operations, and transaction management.
-*   `src/importers/`: A package for data ingestion. Contains parsers for different CSV formats and the logic for mapping, normalization, and deduplication.
-*   `src/rules_engine.py`: Handles the logic for automatically categorizing transactions based on user-defined rules (e.g., merchant regex matching).
-*   `src/market_data/`: A package for fetching external market data. Contains the provider interface and specific implementations for the Massive API and Alphavantage.
-*   `src/analysis.py`: Contains functions for financial calculations, generating Sankey diagram data, calculating portfolio returns, and running forecasts.
-*   `src/main.py` or `src/api.py`: The main application entry point. Runs the web server (e.g., FastAPI) and exposes the API endpoints for the frontend.
+*   `src/data_model.py`: [...]
+*   `src/database.py`: [...]
+*   `src/importers/`: [...]
+*   `src/rules_engine.py`: [...]
+*   `src/market_data/`: [...]
+*   `src/analysis.py`: Enhanced in v1.4.
+*   `src/forecast.py`: **New Module**. Encapsulates the "Time Machine" simulation logic.
+    *   `calculate_forecast()`: The core loop. Takes current NW, settings, and budget items. Returns a year-by-year list of projected values.
 
 ### 4. Data Model & Storage
 
-*   **Database:** SQLite
-*   **Location:** `data/trust.db` (within the project structure, but outside `src`)
-*   **Schema:** The database schema will directly mirror the entities defined in `src/data_model.py` and the PRS Section 8.
+*   **Database:** SQLite `data/trust.db`
 
-**Key Tables:**
-*   `transactions`: Stores all financial events (income, expense, transfer, capex).
-*   `accounts`: Represents financial accounts (e.g., checking, credit card).
-*   `assets`: Represents major abstract assets (legacy/future use).
-*   `properties`: Stores Real Estate assets. Columns: `property_id` (PK), `name`, `purchase_price`, `mortgage_balance`, `current_value`, `appreciation_rate`, `is_primary`.
-*   `holdings`: Stores portfolio positions (e.g., 100 shares of AAPL in Account X). Includes a `last_price_update_failed` flag for UI error reporting.
-*   `price_history`: Caches historical and intraday price quotes for securities.
-*   `rules`: Stores user-defined rules for transaction categorization.
-*   `import_profiles`: Saves column mappings and settings for specific CSV formats.
-*   `tax_year_facts`: Stores key data from annual tax returns to calculate after-tax returns. Contains columns like `tax_year` (PK), `filing_status`, `fed_taxable_income`, `fed_total_tax`, `state_taxable_income`, `state_total_tax`.
-*   `future_income_streams`: Stores definitions for projected, recurring cashflows for forecasting (e.g., Social Security, RMDs).
+**New Tables (v1.5):**
+*   `discretionary_budget_items`:
+    *   `item_id` (TEXT PK)
+    *   `name` (TEXT)
+    *   `amount` (REAL)
+    *   `start_year` (INTEGER)
+    *   `is_recurring` (INTEGER/BOOL)
+    *   `inflation_adjusted` (INTEGER/BOOL)
+*   `app_settings` (Existing): Will now store:
+    *   `forecast_inflation_rate` (REAL, default 0.03)
+    *   `forecast_return_rate` (REAL, default 0.05) - *New in v1.5*
+    *   `forecast_birth_year` (INTEGER)
+    *   `forecast_col_categories` (JSON list of category names)
 
 ### 5. API Interfaces
 
-#### 5.1 Internal Backend API
-
-The backend will expose RESTful endpoints for the frontend, such as:
-*   `GET /api/net-worth`: Returns the latest calculated net worth.
-*   `GET /api/sankey/income?period=YTD`: Returns data formatted for the Income->Uses Sankey.
-*   `POST /api/import/csv`: Accepts a CSV file for ingestion.
-*   `GET /api/properties`: Retrieves real estate records.
-*   `POST /api/properties`: Adds a new property.
-*   `PUT /api/properties/{id}`: Updates a property.
-
-#### 5.2 External APIs
-
-The system employs a multi-provider strategy for market data, orchestrated by the `polling_service`.
+#### 5.3 Forecast API (New)
+*   `GET /api/forecast/config`: Get inflation, birth year, return rate.
+*   `PUT /api/forecast/config`: Update settings.
+*   `GET /api/forecast/base-col`: Returns the calculated "Year 0" cost based on last 12 months of selected categories.
+*   `POST /api/forecast/discretionary`: CRUD for budget items.
+*   `GET /api/forecast/simulation`: Returns the projection series:
+    *   `year`: 2024, 2025...
+    *   `age`: 50, 51...
+    *   `starting_net_worth`: Value at start of year.
+    *   `income`: Total income for year (from Future Streams).
+    *   `expenses`: Base CoL + Discretionary for year.
+    *   `investment_growth`: Calculated growth on liquid assets.
+    *   `ending_net_worth`: Value at end of year.
 
 ### 6. Security
-
-As a local-first application, the primary security concerns are key management and data integrity.
-
-*   **API Key Storage:** API keys (`MASSIVE_API_KEY`, `ALPHA_VANTAGE_API_KEY`) must not be hardcoded. They will be stored in a configuration file (`.env`) that is explicitly excluded from version control via `.gitignore`.
-*   **Data Storage:** The `trust.db` SQLite file contains sensitive financial data. While encryption-at-rest is optional for v1.0, the design should accommodate a future implementation.
-*   **Input Validation:** All data from imported files will be strictly validated and sanitized before being inserted into the database.
-*   **No Inbound Network Access:** The application server will bind to `localhost` by default, ensuring it is not exposed to the local network.
+[... Unchanged ...]
 
 ### 7. Phased Implementation Plan
 
-Development will follow the user-feature centric plan outlined in the PRS (Section 10).
-
-*   **Phase 0-6:** Completed (Core pipeline, Sankey, Portfolio, Returns).
-*   **Phase 7:** Retirement & Estate Forecasting (In Progress). Includes Real Estate logic integration.
-
+*   **Phase 8:** Data Protection (Completed).
+*   **Phase 9:** Forecast Planner (Next).
 
 --- FILE: projects/trust/library/Trust Financial System.txt ---
 
-Curie Trust Financial Control Center — Project Requirements Specification (PRS) v1.4
+Curie Trust Financial Control Center — Project Requirements Specification (PRS) v1.7
 
 1) Mission
 
@@ -382,376 +350,129 @@ Build a local-first financial control center for the Curie Trust that continuous
 	1.	What is our latest net worth (right now)?
 	2.	Where did our income go (by top budget category and projects/tags)?
 	3.	What rate of return are we getting on our investments (before fees, after fees, after taxes)?
+	4.	(New) Will our capital last until age 95?
 
-The system ingests periodic CSV/spreadsheet uploads from multiple financial institutions, normalizes them into Curie Trust’s internal data model, and keeps market values fresh via API “drip” updates throughout the day, with hourly polling for the top 25 holdings and after-market polling for the long tail (250+).
+The system ingests periodic CSV/spreadsheet uploads from multiple financial institutions, normalizes them into Curie Trust’s internal data model, and keeps market values fresh via API “drip” updates.
 
 ⸻
 
 2) Core UX Requirements (Sankey-forward)
 
-Sankey diagrams are not decorative. They are the primary language for “money as flow / conversion / leakage.”
-
-2.1 Required Sankey Diagrams (Must-Haves)
-
-A) Capital Flow & Expense Breakdown (Home Screen Primary Sankey) - REVISED v1.4
-	•	Purpose: To visualize the complete financial loop, from all capital sources to their ultimate allocation as either consumption or savings, with a detailed expense breakdown.
-	•	Tier 1 (Sources of Capital):
-		•	`Income Categories`: Sum of transactions with `Income` cashflow type, broken out by individual categories (e.g., "Salary", "Rebates & Returns"). The specific categories displayed are user-configurable in Data & Settings.
-		•	`Portfolio Yield`: Sum of transactions with `Investment` cashflow type categorized as yield (e.g., "Dividends", "Interest Income").
-	•	Tier 2 (Aggregation):
-		•	A single node, `Total Inflows`, representing the total cash generated. All Tier 1 nodes flow into this node.
-	•	Tier 3 (Primary Allocation):
-		•	`Total Inflows` splits into two paths:
-			•	`Consumption`: Sum of all `Expense` cashflow type transactions. This represents capital that has been spent.
-			•	`Net Savings`: The remainder (`Total Inflows` - `Consumption`), representing retained capital.
-	•	Tier 4 (Expense Breakdown):
-		•	The `Consumption` node further splits into the top 5–7 budget categories, with the remainder aggregated into an `Other Expenses` node.
-	•	Tier 5 (Expense Sub-Breakdown):
-		•	The `Other Expenses` node splits further into the next 5-7 smaller budget categories, providing a second level of detail.
-
-B) Estate Flow (Net Worth / Estate Screen Sankey)
-	•	Left: Income + portfolio distributions (if modeled)
-	•	Flows to:
-	•	Consumption Expenses
-	•	CapEx → Real Estate Basis
-	•	Portfolio (invested) → Market Return → Fees → Taxes → After-Tax Return
-	•	This diagram must clearly show “conversion” (CapEx) vs “leakage” (fees/taxes).
-
-2.2 Sankey Interaction Rules
-	•	Node/flow click drills down to:
-	•	Categories → merchants → transactions
-	•	CapEx → asset ledger entries
-	•	Fees/taxes → supporting manual records
-	•	Must support: month, YTD, rolling 12 months, custom range.
-	•	Must cap complexity: max ~20-25 nodes per Sankey; enforce “Other” aggregation.
+2.1 Required Sankey Diagrams
+[... unchanged from v1.5 ...]
 
 ⸻
 
-3) Financial Semantics (Non-Negotiable)
-
-3.1 Transaction Cashflow Types (Mutually Exclusive)
-
-Every transaction is exactly one:
-	•	Income: Money entering the trust's operational cash flow.
-	•	Expense (consumption): Money leaving the trust for goods/services.
-	•	Transfer (between trust-controlled accounts; net-zero for cash flow). Transfers are NOT considered income or expenses and are excluded from the primary Sankey.
-	•	CapEx (capital improvement; increases asset basis).
-	•	Investment: A transaction affecting portfolio value but not operational cash flow (e.g., security purchases, sales, reinvested dividends). Investment-type transactions are excluded from the main Income→Uses Sankey.
-
-Expenses drive “spend/burn.”
-CapEx is excluded from “spend/burn” but included in net worth via asset basis.
-
-3.1.1 Semantic Clarification on Rebates & Returns
-	•	While technically negative expenses, credits, rebates, and returns from merchants can be treated as a form of income for visualization simplicity. The recommended method is to create a rule that assigns these transactions the `Income` cashflow type and a specific category like "Rebates & Returns". This allows them to appear as a distinct income stream in the Sankey chart, aligning with user mental models.
-
-3.2 Tags (Non-Exclusive, Multi-Label)
-	•	A transaction can have 0..N tags (e.g., Travel AND Italy26).
-	•	Tag subtotals are non-exclusive by default (overlap is expected).
-
-3.3 Real Estate CapEx Accounting
-	•	Trust has no mortgage; liabilities default $0 unless user adds any.
-	•	CapEx transactions link to an Asset and increase asset basis.
-	•	Market value is tracked separately via snapshots (manual or appraised).
+3) Financial Semantics
+[... unchanged from v1.5 ...]
 
 ⸻
 
 4) Screens (UI Requirements Summary)
 
 4.1 Home (Command Center)
+	•	Latest Net Worth Hero
+	•	Capital Flow Sankey
+	•	Portfolio Allocation
 
-Priority order:
-	1.	Latest Net Worth Hero
-	2.	Capital Flow & Expense Breakdown Sankey
-	3.	Collapsible Tabular Capital Flow Breakdown
-	4.	Portfolio Allocation Pie Chart
-	5.	Alerts/insights (spend spikes, missing imports, stale prices)
+4.2 - 4.5
+[... unchanged ...]
 
-4.2 Cashflow
-	•	Monthly income vs expenses trend
-	•	Category drilldowns
-	•	Toggle include/exclude CapEx (default exclude)
-
-4.3 Projects/Tags
-	•	Tag selector (single or multi)
-	•	Tag-specific totals, trends, and “where it went” Sankey filtered by tag
-
-4.4 Real Estate / Estate
-	•	Asset basis ledger
-	•	CapEx over time
-	•	Market value snapshots
-	•	Estate Flow Sankey
-	•	Summary of future income streams (Social Security, RMDs, etc.)
-
-4..5 Portfolio
-	•	Value over time (snapshots + intraday updates)
-	•	Allocation and concentration
-	•	Return layer metrics:
-	•	Before fees
-	•	After fees
-	•	After taxes
-
-4.6 Forecast
-	•	Scenario-based forecast:
-	•	Expenses (consumption)
-	•	Income (historical and modeled future streams like Social Security, RMDs)
-	•	Expected returns
-	•	One-time planned CapEx events
-	•	Outputs: projected portfolio, net worth, runway
-
-4.7 Data & Settings
-	•	CSV import, mapping profiles, dedupe logs
-	•	Filter Rules editor (see section 5.3)
-	•	Manual entry: fees, taxes, market value snapshots
-	•	Tax Facts Entry: A form to input key data from annual tax returns (e.g., Form 1040, 540) to enable after-tax calculations.
-	•	Future Income Stream Editor: A section to define recurring future income (e.g., Social Security, RMDs) for forecasting.
-	•	Backup/restore
+4.6 Forecast (The Time Machine) - REVISED v1.7
+	•	Global Settings:
+		•	Birth Year: Used to calculate current age and the horizon line (Age 95).
+		•	Inflation Rate %: User entered (default 3.0%). Applies to all expenses annually.
+		•	Assumed Portfolio Return %: User entered (default 5.0%). Applies to liquid assets annually.
+	•	Base Cost of Living (CoL) Engine:
+		•	Selector: Collapsible list of all expense categories.
+		•	Calculation: System sums the *last 12 months of actuals* for checked categories to establish "Year 0 Base CoL".
+		•	Projection: This base amount grows annually by the Inflation Rate.
+	•	Discretionary Budget Table:
+		•	Table for future one-off or recurring large expenses (e.g., "World Tour").
+		•	"Replicate Forward": Option to repeat an expense annually until age 95, adjusting for inflation.
+	•	The Simulation (Runway Logic):
+		•	System calculates year-over-year Net Worth:
+			`Next_NW = (Current_NW * (1 + Return_Rate)) + (Future_Income - (Base_CoL + Discretionary))`
+		•	Real Estate values grow separately by their specific Appreciation Rates.
+	•	Visualization (The Runway Graph):
+		•	Primary View: A Line Graph of **Projected Total Net Worth** from now until Age 95.
+		•	Goal: Visual confirmation of whether assets are exhausted (line hits zero) or sustained (line stays positive).
+		•	Secondary View (Tooltip/Overlay): Show the "Annual Deficit/Surplus" for any hovered year.
 
 ⸻
 
-5) Data Ingestion Requirements (CSV/Spreadsheet Flexibility)
-
-5.1 Supported Inputs (v1.0)
-	•	Bank transactions CSV
-	•	Credit card transactions CSV
-	•	Brokerage/retirement holdings snapshots spreadsheet/CSV
-	•	Optional: account balance snapshots
-
-5.2 Import Pipeline (Must)
-	1.	Upload file(s) (drag/drop)
-	2.	Detect type via column heuristics
-	3.	Preview + mapping UI (first time per institution)
-	4.	Save Import Profile (mapping + sign rules + date formats + Filter Rule Set)
-	5.	Normalize into internal schema
-	6.	Deduplicate (hash-based fallback)
-	7.	Produce import audit log + “what changed” summary
-
-5.3 Categorization & Type Assignment (Filter Rules Engine v2)
-
-	•	The system uses "Rule Sets" tied to each Import Profile. A global rule set can act as a fallback.
-	•	Each rule consists of Conditions and an Action.
-	•	Rules are evaluated in order of priority. The first rule that matches all conditions is applied.
-
-	•	Rule Conditions:
-		•	Description Pattern: A string or regex to match against the transaction description.
-		•	Case Sensitive: A boolean flag for the description match.
-		•	Account Filter: An inclusion or exclusion list of account names for the rule to apply to.
-
-	•	Rule Action (sets one or more of the following):
-		•	Set Cashflow Type (to Income, Expense, Transfer, CapEx, or Investment)
-		•	Set Category
-		•	Add Tags
-
-	•	Manual override is always available; edits can generate “rule suggestions.”
+5) Data Ingestion & Rules
+[... unchanged ...]
 
 ⸻
 
-6) Market Value Drip Updates (API-driven pricing)
-
-6.1 Requirements
-	•	Maintain a Price Cache and update holdings market values throughout the day.
-	•	Polling schedule:
-	•	Top 25 holdings: hourly during market hours
-	•	Long tail 250+: after-market (end-of-day) polling
-	•	Must support multiple asset types where possible (stocks/ETFs; others optional).
-	•	Must degrade gracefully if API limits are hit (backoff, partial refresh, stale flags).
-
-6.2 Vendor Strategy (Pluggable Provider Interface)
-
-Implement a provider interface so Curie Trust can switch data sources without rewriting the app:
-
-Provider Interface (example)
-	•	get_quotes(symbols[]) -> {symbol: {price, timestamp, source}}
-	•	get_eod_prices(symbols[], date) -> ...
-	•	get_metadata(symbol) -> {name, currency, type}
-
-The primary provider is the Massive API, which has a free tier with a rate limit of 5 calls per minute. The polling service design must accommodate this constraint through careful scheduling (e.g., 12 seconds between calls), batching where possible, and robust caching to ensure the service remains responsive and within vendor limits.
-
-6.3 Polling Algorithm
-	•	Rank holdings by current market value daily.
-	•	Select top 25 by value for “frequent set.”
-	•	During market hours:
-	•	Once per hour: batch request for top 25 (or smaller batches per provider limits)
-	•	After market close:
-	•	EOD refresh for all symbols not refreshed within the day
-	•	Use:
-	•	exponential backoff on errors
-	•	circuit breaker if provider fails repeatedly
-	•	stale-data indicators in UI (e.g., “prices last updated 2h ago”)
-
-6.4 Storage & Audit
-	•	Store every quote with timestamp (or store latest + optional history).
-	•	Keep provenance: provider name + request time.
-	•	Log refresh runs: number updated, failures, duration.
+6) Market Data & Returns
+[... unchanged ...]
 
 ⸻
 
-7) Returns Before Fees / After Fees / After Taxes
-
-7.1 Inputs
-	•	Portfolio value time series from holdings snapshots + intraday quotes.
-	•	User-entered Fee Records (manual entry for management fees, etc.).
-	•	User-entered Tax Year Facts from annual tax returns. The system will prompt for key lines to calculate effective tax rates on investment income. Required inputs include:
-		•	Tax Year
-		•	Filing Status
-		•	Federal Taxable Income (Form 1040, Line 15)
-		•	Federal Total Tax (Form 1040, Line 24)
-		•	State Taxable Income (e.g., CA 540, Line 19)
-		•	State Total Tax (e.g., CA 540, Line 31)
-
-7.2 Output Metrics (Required)
-
-For selected period:
-	•	Gross Return ($, %): value change adjusted for contributions/withdrawals if available; otherwise snapshot-to-snapshot change labeled “approx.”
-	•	After Fees Return: gross minus fees in period
-	•	After Taxes Return: after-fees minus taxes in period, calculated using effective rates from user-provided Tax Year Facts.
-
-All return views must label:
-	•	“Exact” vs “Estimated” based on data completeness.
-
-⸻
-
-8) Internal Data Model (Minimum Entities)
-	•	Transaction
-	•	Account
-	•	Institution
-	•	Category
-	•	Tag + TransactionTag
-	•	Asset (Real Estate, Portfolio, etc.)
-	•	AssetValueSnapshot (manual market value)
-	•	CapExEntry (or CapEx as Transaction with asset_id)
-	•	HoldingSnapshot (positions)
-	•	PriceQuote (intraday/EOD)
-	•	FeeRecord
-	•	TaxYearFacts (stores key data points from annual tax returns)
-	•	FutureIncomeStream (stores definitions for projected income like Social Security, RMDs)
-		•	stream_id (PK)
-		•	stream_type (e.g., 'Social Security', 'Pension', 'RMD')
-		•	description (e.g., 'Spouse SS', '401k RMD')
-		•	start_date, end_date (optional)
-		•	amount (per period)
-		•	frequency (e.g., 'monthly', 'annually')
-		•	annual_increase_rate (for COLA)
-	•	ImportProfile + ImportRun + ImportRowHash (dedupe/audit)
-	•	FilterRule (pattern, case_sensitive, account_filters, action, import_profile_id)
-
-⸻
-
-9) Non-Functional Requirements
-	•	Local-first storage (SQLite recommended)
-	•	Fast UI response (<1s for common filters on typical dataset sizes)
-	•	Deterministic calculations (same inputs → same outputs)
-	•	Safe importing (idempotent; repeat import doesn’t duplicate)
-	•	Backups (single file export + restore)
-	•	Security: encryption at rest optional v1.0; strongly recommended if later cloud sync exists
+8) Internal Data Model (Additions for v1.7)
+	•	...existing entities...
+	•	`app_settings` (KV store): Stores `forecast_inflation_rate`, `forecast_birth_year`, `forecast_return_rate`, `base_col_categories`.
+	•	`discretionary_budget_item`:
+		•	item_id (PK)
+		•	name, amount, start_year
+		•	is_recurring, inflation_adjusted (booleans)
 
 ⸻
 
 10) Phased Delivery (User-Feature Centric)
 
-Development will proceed in vertical slices, ensuring a tangible user-facing feature is delivered in each phase.
+[... Phases 0-8 Completed/Stable ...]
 
-Phase 0: The Walking Skeleton (Completed)
-	•	Goal: Prove the end-to-end data pipeline is viable.
-	•	Features: API-driven CSV import, data storage in SQLite, backend serves data, frontend renders a basic chart.
-
-Phase 1: The Dynamic Sankey (Completed)
-	•	Goal: Visualize real, user-imported data in the primary Sankey chart.
-	•	Features: The Income→Uses Sankey chart on the home screen is driven by data from the imported transactions. Basic categorization rules are applied during import.
-
-Phase 2: Interactive Drill-Downs & Rules Management (Completed)
-	•	Goal: Allow users to inspect their data and manage categorization.
-	•	Features: Clicking a node/link on the Sankey drills down to a list of underlying transactions. A UI is available to create, view, and delete categorization rules.
-
-Phase 3: Introducing Capital Expenditures (CapEx) (Completed)
-	•	Goal: Differentiate consumption expenses from asset-building expenses and visualize the impact.
-	•	Features: Users can mark transactions as CapEx. The primary Sankey is updated to show the Income → Expenses / CapEx / Surplus split. A basic Real Estate screen shows asset basis.
-
-Phase 4: The Portfolio View (Completed)
-	•	Goal: Establish the initial portfolio tracking capability.
-	•	Features: Import a holdings CSV. A new Portfolio screen displays a list of holdings and their current market value (via on-demand price fetches).
-
-Phase 5: Automated Market Data & Layered Returns (In Progress)
-	•	Goal: Automate portfolio pricing and introduce advanced return metrics.
-	•	Features: 
-		• Implement the scheduled “drip” pricing service using a multi-provider strategy.
-		• Implement the `TaxFactsEditor` UI for manual entry of annual tax data.
-		• Implement backend database table (`TaxYearFacts`) and API endpoints to store and retrieve tax data.
-		• Update the analysis engine to calculate after-tax returns using stored tax facts.
-		• The Portfolio screen displays Gross, After-Fee, and After-Tax returns.
-	•	NOTE: Final UI verification of after-tax calculations is deferred in favor of starting Phase 7 work.
-
-Phase 6: Advanced Rules Engine & Portfolio Separation (Completed)
-	•	Goal: Implement the v2 rules engine to separate portfolio activity from cash flow.
-	•	Features: Update database and backend logic for conditional rules. Modify analysis engine to exclude 'Investment' type transactions from cash flow Sankey. Begin UI design for new rules editor.
-
-Phase 7: Retirement & Estate Forecasting
-	•	Goal: Provide future-looking financial projections based on user-defined scenarios.
-	•	Features: 
-    •   A new section in 'Data & Settings' to define recurring future income streams, including Social Security, RMDs, and pensions. This requires a `FutureIncomeStreamEditor` UI and corresponding backend infrastructure.
-    •   A new Forecast screen (PRS Section 4.6).
-    •   Users can define scenarios with assumptions for future income, expenses (consumption), and expected investment returns.
-    •   The system must allow for modeling one-time planned events, such as a large Capital Expenditure.
-    •   The output will be a projection of the Trust's portfolio value and total net worth over a specified time horizon.
-
-⸻
-
-11) Acceptance Criteria (Key)
-	•	Home screen shows: Net Worth Hero + Capital Flow Sankey + Portfolio Allocation Pie Chart.
-	•	The Capital Flow Sankey must correctly combine 'Income' and 'Investment' (yield) type transactions.
-	•	Importing the same CSV twice produces no duplicates.
-	•	A transaction can be tagged with multiple tags and contributes to both tag totals.
-	•	Marking a transaction as CapEx:
-	•	- removes it from “spending”
-	•	- increases the selected asset’s basis ledger
-	•	Top 25 holdings refresh hourly during market hours; others refresh after market; UI clearly indicates quote staleness.
-
+Phase 9: The Forecast Planner (Next)
+	•	Goal: Visualize capital longevity and drawdown trajectory.
+	•	Features:
+		•	Forecast Settings (Birth Year, Inflation, Return Rate).
+		•	Base CoL Calculator (Actuals-based).
+		•	Discretionary Budget Editor.
+		•	Simulation Engine (Year-over-Year Net Worth calculation).
+		•	Runway Graph (Projected Net Worth vs. Time).
 
 --- FILE: projects/trust/library/acceptance_test.md.txt ---
 
-# Curie Trust - Acceptance Test Plan v1.4
+# Curie Trust - Acceptance Test Plan v1.7
 
 ## 1. Introduction
-
-This document outlines the acceptance criteria and testing strategy for each phase of the Curie Trust Financial Control Center project, as defined in the revised Project Requirements Specification (PRS), Section 10. The plan follows a user-feature-centric approach, verifying that each vertical slice of functionality is complete and correct before proceeding.
-
----
-
-## 2. Phase 0-6: Core Functionality (Completed)
-
-All acceptance criteria for phases 0 through 6 are considered stable.
+This document outlines the acceptance criteria for the Curie Trust Financial Control Center.
 
 ---
 
-## 3. Phase 7: Retirement & Estate Forecasting
+## 2. Phase 0-8: Core Functionality (Completed)
+All previous phases are stable.
 
-**Objective**: Provide comprehensive net worth tracking (including Real Estate) and future-looking financial projections.
+---
 
-### 7.1 Real Estate Data Management
+## 3. Phase 9: Forecast Planner (Next)
 
-**Objective**: Verify the creation, update, and display of property assets.
+**Objective**: Provide a simulation of Net Worth trajectory up to age 95.
 
+### 9.1 Forecast Settings
 **Acceptance Criteria**:
-- [ ] **Create Property**: User can add a "Principal Residence" with Purchase Price, Mortgage, Current Value, and Appreciation Rate. It appears in the list.
-- [ ] **Limit Check**: Verify logic allows adding additional properties.
-- [ ] **Update Property**: Edit the "Current Value Estimate" of an existing property. The change is persisted.
-- [ ] **Equity Calculation**: Verify that Equity is calculated as `Current Value - Mortgage Balance`.
+- [ ] **Birth Year**: User can enter birth year; system accurately calculates current and future age.
+- [ ] **Rates**: User can set Inflation Rate and Investment Return Rate. Changes to these immediately affect the graph.
 
-### 7.2 Total Net Worth Hero
-
-**Objective**: Verify the Home Screen Hero correctly aggregates Portfolio and Real Estate data.
-
+### 9.2 Base Cost of Living (CoL)
 **Acceptance Criteria**:
-- [ ] **Display**: The Hero section now shows two values: "Liquid Portfolio" and "Total Net Worth (Inc. Real Estate)".
-- [ ] **Calculation**: 
-    - Liquid Portfolio = Total Market Value of Holdings.
-    - Total Net Worth = Liquid Portfolio + Sum(Property Equity).
-- [ ] **Verification**: Manually sum the portfolio value and property equity to ensure the displayed total is correct.
+- [ ] **Actuals Driven**: Checking a category (e.g., "Groceries") adds the sum of the *last 12 months* of that category to the Base CoL.
+- [ ] **No Manual Override**: The Base CoL is strictly derived from the selected categories' actual data.
 
-### 7.3 Future Income Streams (Completed)
-
+### 9.3 The Simulation (The Runway)
 **Acceptance Criteria**:
-- [X] **CRUD**: User can create, read, and delete future income streams (Social Security, RMDs).
+- [ ] **Logic Accuracy**: Verify calculation: `Next_Year_NW = (Assets * (1 + Return)) + Income - Expenses`.
+- [ ] **Drawdown Visualization**: If Expenses > (Income + Growth), the Net Worth line should visibly decline.
+- [ ] **Compounding**: Verify that positive savings result in exponential growth (compounding returns).
 
+### 9.4 The Graph
+**Acceptance Criteria**:
+- [ ] **X-Axis**: Years/Age (e.g., "2025 (Age 50)").
+- [ ] **Y-Axis**: Net Worth (Currency).
+- [ ] **Visibility**: The chart clearly shows if/when the Net Worth line crosses zero (exhaustion of assets).
 
 --- FILE: projects/trust/scripts/refresh_eod.sh ---
 
@@ -3070,71 +2791,125 @@ def get_total_real_estate_equity() -> float:
 from typing import List, Dict, Any
 from decimal import Decimal
 
-DEMO_DIVISOR = Decimal('4.0')
+# Portfolio assets are divided by 4 (25% of value shown)
+PORTFOLIO_DIVISOR = Decimal('4.0')
+
+# Real Estate assets are divided by 2 (50% of value shown)
+REAL_ESTATE_DIVISOR = Decimal('2.0')
 
 def _apply_demo_to_holding(holding: Dict[str, Any]) -> Dict[str, Any]:
-    """Applies demo mode transformation to a single holding dictionary."""
+    """Applies demo mode transformation to a single holding dictionary (Portfolio)."""
     if not isinstance(holding, dict):
         return holding
     
     demo_holding = holding.copy()
     
-    # These fields represent real values that should be scaled.
+    # These fields represent real values that should be scaled by the PORTFOLIO divisor.
     fields_to_scale = ['quantity', 'cost_basis', 'market_value', 'total_market_value', 'value']
     
     for field in fields_to_scale:
         if field in demo_holding and demo_holding[field] is not None:
             try:
                 original_value = Decimal(str(demo_holding[field]))
-                demo_holding[field] = original_value / DEMO_DIVISOR
+                demo_holding[field] = float(original_value / PORTFOLIO_DIVISOR)
             except (TypeError, ValueError):
-                # Ignore fields that are not numeric
                 pass
                 
     return demo_holding
 
+def _apply_demo_to_property(prop: Dict[str, Any]) -> Dict[str, Any]:
+    """Applies demo mode transformation to a single property dictionary (Real Estate)."""
+    if not isinstance(prop, dict):
+        return prop
+    
+    demo_prop = prop.copy()
+
+    # These fields represent real estate values to be scaled by the REAL ESTATE divisor.
+    fields_to_scale = ['purchase_price', 'mortgage_balance', 'current_value', 'equity']
+
+    for field in fields_to_scale:
+        if field in demo_prop and demo_prop[field] is not None:
+            try:
+                original_value = Decimal(str(demo_prop[field]))
+                demo_prop[field] = float(original_value / REAL_ESTATE_DIVISOR)
+            except (TypeError, ValueError):
+                pass
+    
+    return demo_prop
+
 def process_for_demo_mode(data: Any) -> Any:
     """
     Recursively processes a data structure to apply demo mode transformations.
-    This is designed to handle various response types from the API.
+    Intelligently detects if data is Real Estate or Portfolio based on keys.
     """
     if isinstance(data, list):
-        return [_apply_demo_to_holding(item) for item in data]
+        if not data:
+            return data
+        
+        # Peek at the first item to determine the type of list
+        first_item = data[0]
+        if isinstance(first_item, dict):
+            if 'mortgage_balance' in first_item or 'purchase_price' in first_item:
+                # It's a list of Properties
+                return [_apply_demo_to_property(item) for item in data]
+            else:
+                # Assume it's a list of Holdings
+                return [_apply_demo_to_holding(item) for item in data]
+        
+        return data
     
     if isinstance(data, dict):
-        # Handle specific, known data structures first
+        # Handle specific, known data structures
         
-        # Structure from `calculate_portfolio_summary_metrics`
-        if all(k in data for k in ['total_market_value', 'total_cost_basis', 'total_gain_dollars']):
-            demo_data = data.copy()
-            demo_data['total_market_value'] /= float(DEMO_DIVISOR)
-            demo_data['total_cost_basis'] /= float(DEMO_DIVISOR)
-            demo_data['total_gain_dollars'] /= float(DEMO_DIVISOR)
-            # Percentage gain remains the same, as it's a ratio.
-            demo_data['notes'] = "DEMO MODE: Metrics are obscured for demonstration."
-            return demo_data
-            
-        # Structure from `prepare_portfolio_allocation_chart_data`
+        # 1. Portfolio Allocation (Pie Chart & Table)
+        # This is purely portfolio data, use standard divisor.
         if all(k in data for k in ['chartData', 'tableData']):
             demo_data = data.copy()
             demo_data['chartData'] = [
-                {**item, 'value': item['value'] / float(DEMO_DIVISOR)}
+                {**item, 'value': float(Decimal(str(item['value'])) / PORTFOLIO_DIVISOR)}
                 for item in data['chartData']
             ]
             demo_data['tableData'] = [
-                {**item, 'value': int(item['value'] / float(DEMO_DIVISOR))}
+                {**item, 'value': int(Decimal(str(item['value'])) / PORTFOLIO_DIVISOR)}
                 for item in data['tableData']
             ]
-            # Percentages remain the same.
-            return demo_data
-            
-        # Structure from `portfolio/summary`
-        if 'total_market_value' in data and len(data.keys()) == 1:
-            demo_data = data.copy()
-            demo_data['total_market_value'] /= float(DEMO_DIVISOR)
             return demo_data
 
-        # Fallback for generic dictionaries (though less likely to be used)
+        # 2. Portfolio Summary / Overall Return (Mix of Liquid and Real Estate)
+        # This requires applying DIFFERENT divisors to different keys and re-summing.
+        if 'total_real_estate_equity' in data or 'total_market_value' in data:
+            demo_data = data.copy()
+            
+            # Scale Liquid Portfolio
+            if 'total_market_value' in demo_data:
+                val = Decimal(str(demo_data['total_market_value']))
+                demo_data['total_market_value'] = float(val / PORTFOLIO_DIVISOR)
+
+            # Scale Cost Basis (Portfolio)
+            if 'total_cost_basis' in demo_data:
+                val = Decimal(str(demo_data['total_cost_basis']))
+                demo_data['total_cost_basis'] = float(val / PORTFOLIO_DIVISOR)
+
+            # Scale Gains (Portfolio)
+            if 'total_gain_dollars' in demo_data:
+                val = Decimal(str(demo_data['total_gain_dollars']))
+                demo_data['total_gain_dollars'] = float(val / PORTFOLIO_DIVISOR)
+            
+            # Scale Real Estate
+            if 'total_real_estate_equity' in demo_data:
+                val = Decimal(str(demo_data['total_real_estate_equity']))
+                demo_data['total_real_estate_equity'] = float(val / REAL_ESTATE_DIVISOR)
+            
+            # Recalculate Total Net Worth if present (Sum of scaled parts)
+            if 'total_net_worth' in demo_data:
+                tmv = Decimal(str(demo_data.get('total_market_value', 0)))
+                tre = Decimal(str(demo_data.get('total_real_estate_equity', 0)))
+                demo_data['total_net_worth'] = float(tmv + tre)
+
+            demo_data['notes'] = "DEMO MODE: Values reduced (Portfolio 25%, Real Estate 50%)."
+            return demo_data
+
+        # Fallback for generic dictionaries
         return {key: process_for_demo_mode(value) for key, value in data.items()}
 
     return data
@@ -3184,8 +2959,10 @@ ReactDOM.createRoot(document.getElementById('root')).render(
 import uvicorn
 import uuid
 import asyncio
+import shutil
 from datetime import datetime, timezone, date
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body, Response, Query, Depends, BackgroundTasks, Path
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import os
@@ -3807,6 +3584,30 @@ async def trigger_eod_market_data_refresh(background_tasks: BackgroundTasks):
     background_tasks.add_task(polling_service.refresh_eod_data)
     return {"message": "Bulk EOD data refresh initiated in the background for ALL holdings."}
 
+# --- NEW: Backup & Restore Endpoints ---
+@app.get("/api/admin/backup", tags=["Admin"])
+async def download_backup():
+    """Downloads the current SQLite database file."""
+    db_path = db.DB_FILE
+    filename = f"trust_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+    return FileResponse(path=db_path, filename=filename, media_type='application/octet-stream')
+
+@app.post("/api/admin/restore", tags=["Admin"])
+async def restore_backup(file: UploadFile = File(...)):
+    """Overwrites the current database with the uploaded file."""
+    try:
+        # Verify file extension (simple check)
+        if not file.filename.endswith('.db') and not file.filename.endswith('.sqlite'):
+            raise HTTPException(status_code=400, detail="Invalid file type. Please upload a .db file.")
+        
+        # Overwrite the database file
+        with open(db.DB_FILE, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        return {"message": "Database restored successfully. Please refresh the application."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to restore backup: {e}")
+
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)
 
@@ -4420,6 +4221,76 @@ export default CapitalFlowTable;
     cursor: not-allowed;
 }
 
+/* --- Backup Manager Styles --- */
+.backup-card {
+    background-color: var(--dark-bg);
+    padding: 1.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+}
+
+.backup-card h3 {
+    margin-top: 0;
+    color: var(--gold-accent);
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.5rem;
+}
+
+.backup-actions {
+    display: flex;
+    gap: 1.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.backup-section {
+    flex: 1;
+    min-width: 250px;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.restore-zone {
+    border-left: 1px solid #444;
+    padding-left: 1.5rem;
+}
+
+.backup-btn {
+    background-color: var(--medium-bg);
+    border: 1px solid var(--gold-accent);
+    color: var(--gold-accent);
+    padding: 0.8rem 1.5rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+    text-align: center;
+}
+
+.backup-btn:hover {
+    background-color: rgba(226, 178, 84, 0.1);
+}
+
+.restore-btn {
+    background-color: #5a2a2a;
+    color: #f2a7a7;
+    border: 1px solid #8c3c3c;
+    padding: 0.6rem 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+    width: 100%;
+}
+
+.restore-btn:hover {
+    background-color: #6d3333;
+}
+
+.restore-input-group {
+    display: flex;
+    gap: 0.5rem;
+}
+
 
 --- FILE: projects/trust/src/components/DataImportView.jsx ---
 
@@ -4428,7 +4299,7 @@ import './DataImportView.css';
 import ImportSummary from './ImportSummary';
 import RulesEditor from './RulesEditor';
 import IncomeSankeySettings from './IncomeSankeySettings';
-import TaxFactsEditor from "./TaxFactsEditor.jsx"; // FIX: Explicitly added .jsx extension to resolve import error.
+import TaxFactsEditor from "./TaxFactsEditor.jsx"; 
 import FutureIncomeStreamEditor from './FutureIncomeStreamEditor.jsx';
 import PortfolioSnapshotManager from './PortfolioSnapshotManager';
 
@@ -4493,6 +4364,74 @@ const FileUploader = ({ title, importType, onUploadSuccess }) => {
         </div>
     );
 };
+
+const BackupManager = () => {
+    const [isRestoring, setIsRestoring] = useState(false);
+    const [restoreFile, setRestoreFile] = useState(null);
+
+    const handleDownload = () => {
+        window.open('/api/admin/backup', '_blank');
+    };
+
+    const handleRestore = async (e) => {
+        e.preventDefault();
+        if (!restoreFile) return;
+        
+        if (!confirm("WARNING: This will overwrite your entire database with the selected backup file. This action cannot be undone. Are you sure?")) {
+            return;
+        }
+
+        setIsRestoring(true);
+        const formData = new FormData();
+        formData.append('file', restoreFile);
+
+        try {
+            const response = await fetch('/api/admin/restore', {
+                method: 'POST',
+                body: formData
+            });
+            
+            if (!response.ok) {
+                const errData = await response.json();
+                throw new Error(errData.detail || 'Restore failed');
+            }
+            
+            alert("Database restored successfully. The page will now reload.");
+            window.location.reload();
+        } catch (error) {
+            alert(`Restore Error: ${error.message}`);
+        } finally {
+            setIsRestoring(false);
+        }
+    };
+
+    return (
+        <div className="backup-card">
+            <h3>System Backup & Restore</h3>
+            <div className="backup-actions">
+                <div className="backup-section">
+                    <p>Download a snapshot of the current database.</p>
+                    <button className="backup-btn" onClick={handleDownload}>⬇ Download Database Snapshot</button>
+                </div>
+                <div className="backup-section restore-zone">
+                    <p style={{color: '#ff9a9a'}}>Dangerous: Overwrite current data with a backup.</p>
+                    <form onSubmit={handleRestore} className="restore-input-group">
+                        <input 
+                            type="file" 
+                            accept=".db,.sqlite" 
+                            onChange={(e) => setRestoreFile(e.target.files[0])} 
+                            required
+                            style={{width: 'auto', flexGrow: 1}}
+                        />
+                        <button type="submit" className="restore-btn" disabled={isRestoring}>
+                            {isRestoring ? 'Restoring...' : '⬆ Restore'}
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    );
+}
 
 const AccountVisibilityManager = ({ onSettingsChanged }) => {
     const [accounts, setAccounts] = useState([]);
@@ -4620,6 +4559,11 @@ const DataImportView = () => {
 
     return (
         <>
+             <div className="card">
+                <h2>System Maintenance</h2>
+                <BackupManager />
+            </div>
+
             <div className="card">
                 <h2>Data Importers</h2>
                 <div className="importer-container">

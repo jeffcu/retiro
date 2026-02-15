@@ -3,7 +3,7 @@ import './DataImportView.css';
 import ImportSummary from './ImportSummary';
 import RulesEditor from './RulesEditor';
 import IncomeSankeySettings from './IncomeSankeySettings';
-import TaxFactsEditor from "./TaxFactsEditor.jsx"; // FIX: Explicitly added .jsx extension to resolve import error.
+import TaxFactsEditor from "./TaxFactsEditor.jsx"; 
 import FutureIncomeStreamEditor from './FutureIncomeStreamEditor.jsx';
 import PortfolioSnapshotManager from './PortfolioSnapshotManager';
 
@@ -68,6 +68,74 @@ const FileUploader = ({ title, importType, onUploadSuccess }) => {
         </div>
     );
 };
+
+const BackupManager = () => {
+    const [isRestoring, setIsRestoring] = useState(false);
+    const [restoreFile, setRestoreFile] = useState(null);
+
+    const handleDownload = () => {
+        window.open('/api/admin/backup', '_blank');
+    };
+
+    const handleRestore = async (e) => {
+        e.preventDefault();
+        if (!restoreFile) return;
+        
+        if (!confirm("WARNING: This will overwrite your entire database with the selected backup file. This action cannot be undone. Are you sure?")) {
+            return;
+        }
+
+        setIsRestoring(true);
+        const formData = new FormData();
+        formData.append('file', restoreFile);
+
+        try {
+            const response = await fetch('/api/admin/restore', {
+                method: 'POST',
+                body: formData
+            });
+            
+            if (!response.ok) {
+                const errData = await response.json();
+                throw new Error(errData.detail || 'Restore failed');
+            }
+            
+            alert("Database restored successfully. The page will now reload.");
+            window.location.reload();
+        } catch (error) {
+            alert(`Restore Error: ${error.message}`);
+        } finally {
+            setIsRestoring(false);
+        }
+    };
+
+    return (
+        <div className="backup-card">
+            <h3>System Backup & Restore</h3>
+            <div className="backup-actions">
+                <div className="backup-section">
+                    <p>Download a snapshot of the current database.</p>
+                    <button className="backup-btn" onClick={handleDownload}>⬇ Download Database Snapshot</button>
+                </div>
+                <div className="backup-section restore-zone">
+                    <p style={{color: '#ff9a9a'}}>Dangerous: Overwrite current data with a backup.</p>
+                    <form onSubmit={handleRestore} className="restore-input-group">
+                        <input 
+                            type="file" 
+                            accept=".db,.sqlite" 
+                            onChange={(e) => setRestoreFile(e.target.files[0])} 
+                            required
+                            style={{width: 'auto', flexGrow: 1}}
+                        />
+                        <button type="submit" className="restore-btn" disabled={isRestoring}>
+                            {isRestoring ? 'Restoring...' : '⬆ Restore'}
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    );
+}
 
 const AccountVisibilityManager = ({ onSettingsChanged }) => {
     const [accounts, setAccounts] = useState([]);
@@ -195,6 +263,11 @@ const DataImportView = () => {
 
     return (
         <>
+             <div className="card">
+                <h2>System Maintenance</h2>
+                <BackupManager />
+            </div>
+
             <div className="card">
                 <h2>Data Importers</h2>
                 <div className="importer-container">
