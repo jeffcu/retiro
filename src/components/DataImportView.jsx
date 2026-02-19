@@ -45,7 +45,8 @@ const FileUploader = ({ title, importType, onUploadSuccess }) => {
         } catch (err) {
             setMessage(`Error: ${err.message}`);
             setIsError(true);
-        } finally {
+        }
+        finally {
             setIsUploading(false);
         }
     };
@@ -65,6 +66,94 @@ const FileUploader = ({ title, importType, onUploadSuccess }) => {
                 <button type="submit" disabled={isUploading}>{isUploading ? 'Uploading...' : 'Upload'}</button>
             </form>
             {message && <p className={`message ${isError ? 'error' : 'success'}`}>{message}</p>}
+        </div>
+    );
+};
+
+// --- NEW: AccountTaxStatusManager ---
+const AccountTaxStatusManager = () => {
+    const [accounts, setAccounts] = useState([]);
+    const [metadata, setMetadata] = useState({});
+    const [isLoading, setIsLoading] = useState(true);
+    const [savingId, setSavingId] = useState(null);
+
+    useEffect(() => {
+        const fetchData = async () => {
+            setIsLoading(true);
+            try {
+                const [accRes, metaRes] = await Promise.all([
+                    fetch('/api/accounts'),
+                    fetch('/api/accounts/metadata')
+                ]);
+                const accData = await accRes.json();
+                const metaData = await metaRes.json();
+                setAccounts(accData);
+                setMetadata(metaData);
+            } catch (error) {
+                console.error("Failed to load account data", error);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        fetchData();
+    }, []);
+
+    const handleStatusChange = async (accountId, newStatus) => {
+        const currentMeta = metadata[accountId] || {};
+        const updatedMeta = { ...currentMeta, tax_status: newStatus };
+        
+        // Optimistic UI update
+        setMetadata(prev => ({ ...prev, [accountId]: updatedMeta }));
+        
+        setSavingId(accountId);
+        try {
+            await fetch(`/api/accounts/${accountId}/metadata`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tax_status: newStatus, notes: currentMeta.notes })
+            });
+        } catch (error) {
+            console.error("Save failed", error);
+            alert("Failed to save tax status.");
+        } finally {
+            setSavingId(null);
+        }
+    };
+
+    return (
+        <div className="visibility-manager-card" style={{marginTop: '2rem'}}>
+            <h3>Account Tax Status (for RMDs & Forecasting)</h3>
+            {isLoading ? <p>Loading...</p> : (
+                <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '0.9em'}}>
+                    <thead>
+                        <tr style={{borderBottom: '1px solid #444', textAlign: 'left'}}>
+                            <th style={{padding: '8px'}}>Account ID</th>
+                            <th style={{padding: '8px'}}>Tax Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {accounts.map(acc => (
+                            <tr key={acc} style={{borderBottom: '1px solid #444'}}>
+                                <td style={{padding: '8px'}}>{acc}</td>
+                                <td style={{padding: '8px'}}>
+                                    <select 
+                                        value={metadata[acc]?.tax_status || 'Taxable'}
+                                        onChange={(e) => handleStatusChange(acc, e.target.value)}
+                                        style={{padding: '4px', background: '#333', color: '#fff', border: '1px solid #555', borderRadius: '4px'}}
+                                        disabled={savingId === acc}
+                                    >
+                                        <option value="Taxable">Taxable (Standard)</option>
+                                        <option value="Deferred">Tax-Deferred (IRA/401k)</option>
+                                        <option value="Roth">Tax-Free (Roth)</option>
+                                        <option value="Exempt">Exempt (HSA/Other)</option>
+                                    </select>
+                                    {savingId === acc && <span style={{marginLeft: '8px', fontSize: '0.8em', color: '#aaa'}}>Saving...</span>}
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            )}
         </div>
     );
 };
@@ -278,6 +367,7 @@ const DataImportView = () => {
 
             <div className="card">
                 <h2>Portfolio Settings</h2>
+                <AccountTaxStatusManager />
                 <PortfolioSettings />
                 <PortfolioSnapshotManager />
             </div>

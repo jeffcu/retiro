@@ -59,9 +59,10 @@ echo "   Synchronizing Python dependencies..."
 pip install -r requirements.txt > /dev/null
 
 # --- Step 3: Start Backend (Background) ---
-echo "3. Starting backend server on http://127.0.0.1:$BACKEND_PORT..."
+echo "3. Starting backend server on http://0.0.0.0:$BACKEND_PORT..."
 # Using --workers 1 to avoid complexity with concurrency/DB locks for now, and --reload for dev ease.
-uvicorn src.main:app --reload --host 127.0.0.1 --port $BACKEND_PORT &
+# Scotty: Bind to 0.0.0.0 for LAN access
+uvicorn src.main:app --reload --host 0.0.0.0 --port $BACKEND_PORT &
 
 # Capture the PID of the background process
 BACKEND_PID=$!
@@ -69,13 +70,14 @@ echo "   Backend started with PID $BACKEND_PID."
 sleep 3 # Give the backend a moment to spin up
 
 # --- Step 4: Start Frontend (Foreground) ---
-echo "4. Starting frontend dev server on http://localhost:$FRONTEND_PORT..."
+echo "4. Starting frontend dev server on http://0.0.0.0:$FRONTEND_PORT..."
 
 # Always ensure dependencies are installed/updated
 echo "   Updating Node dependencies via npm install..."
 npm install
 
 # Start the Vite server (this blocks the terminal)
-npm run dev -- --port $FRONTEND_PORT
+# Scotty: Added --host to listen on LAN
+npm run dev -- --host --port $FRONTEND_PORT
 
 # Cleanup trap will handle termination after Ctrl+C

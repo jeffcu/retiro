@@ -36,7 +36,8 @@ echo "Synchronizing Python dependencies from requirements.txt..."
 pip install -r requirements.txt
 
 # Launch the uvicorn server with hot-reloading
-echo "Launching uvicorn with --reload on http://127.0.0.1:$PORT..."
-uvicorn src.main:app --reload --host 127.0.0.1 --port $PORT
+# Scotty: Bind to 0.0.0.0 to allow access from local network (iPad, etc.)
+echo "Launching uvicorn with --reload on http://0.0.0.0:$PORT..."
+uvicorn src.main:app --reload --host 0.0.0.0 --port $PORT
 
 echo "--- Backend server process terminated. ---"

@@ -24,7 +24,8 @@ npm install
 
 # Launch the Vite dev server
 # The --port flag ensures it uses the port we cleared.
-echo "Launching 'npm run dev' on http://localhost:$PORT..."
-npm run dev -- --port $PORT
+# The --host flag ensures it listens on the LAN, not just localhost.
+echo "Launching 'npm run dev' on http://0.0.0.0:$PORT..."
+npm run dev -- --host --port $PORT
 
 echo "--- Vite dev server process terminated. ---"

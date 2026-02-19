@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import os
 import traceback
-from typing import List, Optional, Any, Dict
+from typing import List, Optional, Any, Dict, Union
 from pydantic import BaseModel, Field
 from decimal import Decimal
 
@@ -27,9 +27,10 @@ load_dotenv()
 
 app = FastAPI(title="Curie Trust Financial Control Center API", version="1.0")
 
+# Scotty: Opening the hailing frequencies to all ships in the sector (Local Network Access)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["*"], # Allow all origins for local dev convenience
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -189,7 +190,17 @@ class ForecastConfig(BaseModel):
     birth_year: Optional[int]
     inflation_rate: Optional[float]
     return_rate: Optional[float]
+    withdrawal_tax_rate: Optional[float]
+    retirement_age: Optional[int]
+    nogo_age: Optional[int]
     base_col_categories: Optional[List[str]]
+    # Phase Multipliers can be strings from UI (e.g. empty string to clear), so we allow Any/Union
+    phase_multipliers: Optional[Dict[str, Dict[str, Union[float, int, str]]]] 
+    # --- NEW: Residence Sale Strategy ---
+    residence_sale_enabled: Optional[bool] = False
+    residence_sale_year: Optional[int] = None
+    # --- NEW: CoL Lookback ---
+    base_col_lookback_years: Optional[int] = 1
 
 class DiscretionaryItemCreate(BaseModel):
     name: str
@@ -198,6 +209,12 @@ class DiscretionaryItemCreate(BaseModel):
     end_year: Optional[int] = None
     is_recurring: bool = False
     inflation_adjusted: bool = True
+    category: Optional[str] = None
+
+# --- NEW: Account Metadata Pydantic ---
+class AccountMetadataUpdate(BaseModel):
+    tax_status: str
+    notes: Optional[str] = None
 
 
 # --- App Events ---
@@ -483,6 +500,16 @@ async def set_sankey_income_settings(categories: List[str] = Body(...)):
     db.set_setting('sankey_income_categories', categories)
     return Response(status_code=204)
 
+# --- NEW: Account Metadata Endpoints ---
+@app.get("/api/accounts/metadata", response_model=Dict[str, Dict[str, Any]], tags=["Accounts"])
+async def get_account_metadata():
+    return db.get_account_metadata()
+
+@app.put("/api/accounts/{account_id}/metadata", status_code=204, tags=["Accounts"])
+async def update_account_metadata(account_id: str, payload: AccountMetadataUpdate):
+    db.set_account_metadata(account_id, payload.tax_status, payload.notes)
+    return Response(status_code=204)
+
 # --- NEW: Tax Facts Endpoints --- 
 @app.get("/api/tax-facts/{year}", response_model=TaxFactsResponse, tags=["Tax Data"])
 async def get_tax_facts_for_year(year: int = Path(..., ge=2000, le=2100)):
@@ -628,21 +655,63 @@ async def get_forecast_config():
         "birth_year": db.get_setting('forecast_birth_year'),
         "inflation_rate": db.get_setting('forecast_inflation_rate') or 0.03,
         "return_rate": db.get_setting('forecast_return_rate') or 0.05,
-        "base_col_categories": db.get_setting('forecast_base_col_categories') or []
+        "withdrawal_tax_rate": db.get_setting('forecast_withdrawal_tax_rate') or 0.15,
+        "retirement_age": db.get_setting('forecast_retirement_age') or 65,
+        "nogo_age": db.get_setting('forecast_nogo_age') or 80,
+        "base_col_categories": db.get_setting('forecast_base_col_categories') or [],
+        "phase_multipliers": db.get_setting('forecast_phase_multipliers') or {},
+        "residence_sale_enabled": db.get_setting('forecast_residence_sale_enabled') or False,
+        "residence_sale_year": db.get_setting('forecast_residence_sale_year'),
+        "base_col_lookback_years": db.get_setting('forecast_base_col_lookback_years') or 1
     }
 
 @app.put("/api/forecast/config", status_code=204, tags=["Forecast"])
 async def update_forecast_config(config: ForecastConfig):
-    if config.birth_year is not None: db.set_setting('forecast_birth_year', config.birth_year)
-    if config.inflation_rate is not None: db.set_setting('forecast_inflation_rate', config.inflation_rate)
-    if config.return_rate is not None: db.set_setting('forecast_return_rate', config.return_rate)
-    if config.base_col_categories is not None: db.set_setting('forecast_base_col_categories', config.base_col_categories)
+    # We use __fields_set__ to know which fields were actually sent in the request.
+    # This allows us to handle explicit nulls (clearing a value) vs missing fields (no update).
+    
+    fields_set = config.__fields_set__
+
+    if 'birth_year' in fields_set: 
+        db.set_setting('forecast_birth_year', config.birth_year)
+    
+    if 'inflation_rate' in fields_set: 
+        db.set_setting('forecast_inflation_rate', config.inflation_rate)
+    
+    if 'return_rate' in fields_set: 
+        db.set_setting('forecast_return_rate', config.return_rate)
+    
+    if 'withdrawal_tax_rate' in fields_set: 
+        db.set_setting('forecast_withdrawal_tax_rate', config.withdrawal_tax_rate)
+    
+    if 'retirement_age' in fields_set: 
+        db.set_setting('forecast_retirement_age', config.retirement_age)
+    
+    if 'nogo_age' in fields_set: 
+        db.set_setting('forecast_nogo_age', config.nogo_age)
+    
+    if 'base_col_categories' in fields_set: 
+        db.set_setting('forecast_base_col_categories', config.base_col_categories)
+    
+    if 'phase_multipliers' in fields_set: 
+        db.set_setting('forecast_phase_multipliers', config.phase_multipliers)
+    
+    # --- NEW: Residence Sale Settings ---
+    if 'residence_sale_enabled' in fields_set: 
+        db.set_setting('forecast_residence_sale_enabled', config.residence_sale_enabled)
+    
+    if 'residence_sale_year' in fields_set: 
+        db.set_setting('forecast_residence_sale_year', config.residence_sale_year)
+    
+    if 'base_col_lookback_years' in fields_set:
+        db.set_setting('forecast_base_col_lookback_years', config.base_col_lookback_years)
+
     return Response(status_code=204)
 
 @app.get("/api/forecast/base-col", tags=["Forecast"])
-async def get_calculated_base_col(categories: Optional[List[str]] = Query(None)):
+async def get_calculated_base_col(categories: Optional[List[str]] = Query(None), lookback_years: int = Query(1)):
     cats_to_check = categories or db.get_setting('forecast_base_col_categories') or []
-    total = db.get_base_col_from_actuals(cats_to_check)
+    total = db.get_base_col_from_actuals(cats_to_check, lookback_years)
     return {"base_col": total}
 
 @app.get("/api/forecast/simulation", tags=["Forecast"])
@@ -709,4 +778,5 @@ async def restore_backup(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"Failed to restore backup: {e}")
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    # Scotty: Binding to 0.0.0.0 is crucial for the iPad (remote access) to work!
+    uvicorn.run(app, host="0.0.0.0", port=8000)
