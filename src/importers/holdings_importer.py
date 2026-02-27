@@ -54,12 +54,13 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Hold
         print("Warning: Holdings CSV file is empty or has no headers.")
         return [], {}, [], []
 
+    # Scotty: Removed 'accountname' from tags to prevent auto-tagging from Account Name column.
     HEADER_ALIASES = {
         'symbol': ['symbol', 'ticker', 'symbolcusip'],
         'quantity': ['quantity', 'shares', 'units'],
         'cost_basis': ['costbasis', 'cost', 'totalcost', 'costbasis($)'],
         'market_value': ['marketvalue', 'value', 'totalvalue', 'value($)'],
-        'tags': ['tags', 'group', 'category', 'accountname'], # Added Account Name to tags for visibility
+        'tags': ['tags', 'group', 'category'], 
         'asset_type': ['assettype', 'type', 'assetclass', 'securitytypedescription', 'description'],
         'account_number': ['accountnumber', 'account#', 'accountno', 'accountid', 'account'],
     }
