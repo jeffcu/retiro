@@ -1,19 +1,49 @@
 .forecast-view-container {
     display: flex;
     flex-direction: column;
-    gap: 2rem;
+    gap: 1.5rem;
 }
 
-.forecast-grid {
+/* --- The Grid Layout --- */
+.dashboard-grid {
     display: grid;
     grid-template-columns: 1fr;
-    gap: 2rem;
+    gap: 1.5rem;
 }
 
 @media (min-width: 1200px) {
-    .forecast-grid {
-        grid-template-columns: 1fr 2fr;
+    .dashboard-grid {
+        grid-template-columns: 1fr 1fr;
     }
+}
+
+/* Utility classes for grid spanning */
+.grid-full {
+    grid-column: 1 / -1;
+}
+
+.grid-half-left {
+    /* Default placement */
+}
+
+.grid-half-right {
+    /* Default placement */
+}
+
+/* --- Component Specifics --- */
+.chart-panel {
+    background-color: var(--dark-bg);
+    padding: 1.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    min-height: 300px;
+}
+
+.chart-panel h2, .chart-panel h3 {
+    margin-top: 0;
+    color: var(--gold-accent);
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.5rem;
 }
 
 .settings-panel {
@@ -21,6 +51,8 @@
     padding: 1.5rem;
     border-radius: 8px;
     border: 1px solid var(--border-color);
+    height: 100%; /* Fill height of grid cell */
+    box-sizing: border-box;
 }
 
 .settings-panel h3 {
@@ -30,18 +62,38 @@
     padding-bottom: 0.5rem;
 }
 
+/* --- Collapsible Logic --- */
+.collapsible-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+}
+
+.collapsible-header:hover {
+    opacity: 0.8;
+}
+
+/* FIX: Renamed class to prevent conflict with CapitalFlowTable grid layout */
+.forecast-collapsible-content {
+    margin-top: 1rem;
+    animation: slideDown 0.3s ease-out;
+    display: block; /* Ensure it's not a grid */
+}
+
+/* --- Form Inputs --- */
 .setting-group {
-    margin-bottom: 1.5rem;
+    margin-bottom: 1rem;
 }
 
 .setting-group label {
     display: block;
     color: #ccc;
-    font-size: 0.9em;
-    margin-bottom: 0.5rem;
+    font-size: 0.85em;
+    margin-bottom: 0.25rem;
 }
 
-.setting-group input {
+.setting-group input, .setting-group select {
     width: 100%;
     padding: 0.5rem;
     background-color: var(--medium-bg);
@@ -51,197 +103,59 @@
     box-sizing: border-box;
 }
 
-/* --- Hide Number Spinners --- */
-/* Chrome, Safari, Edge, Opera */
-input[type=number]::-webkit-inner-spin-button, 
-input[type=number]::-webkit-outer-spin-button { 
-  -webkit-appearance: none; 
-  margin: 0; 
-}
-/* Firefox */
-input[type=number] {
-  -moz-appearance: textfield;
-}
-
-/* --- Collapsible CoL Styles --- */
-.col-calculator-panel {
-    background-color: var(--light-bg);
-    border-radius: 8px;
-    border: 1px solid var(--border-color);
-    margin-top: 2rem;
-    overflow: hidden;
-}
-
-.col-header {
-    padding: 1rem 1.5rem;
-    background-color: var(--medium-bg);
-    cursor: pointer;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    border-bottom: 1px solid transparent;
-    transition: background-color 0.2s;
-}
-
-.col-header:hover {
-    background-color: #333;
-}
-
-.col-header h3 {
-    margin: 0;
-    font-size: 1em;
-    color: var(--text-color);
-    font-weight: 500;
-}
-
-.col-header .total-badge {
-    font-weight: bold;
-    color: var(--gold-accent);
-    font-size: 1.1em;
-    margin-right: 1rem;
-}
-
-.col-header .toggle-icon {
-    color: #888;
-    font-size: 0.8em;
-    transform: rotate(0deg);
-    transition: transform 0.2s;
-}
-
-.col-header.open .toggle-icon {
-    transform: rotate(180deg);
-}
-
-.col-content {
-    padding: 1rem 1.5rem;
-    border-top: 1px solid var(--border-color);
-    animation: slideDown 0.3s ease-out;
-}
-
-@keyframes slideDown {
-    from { opacity: 0; transform: translateY(-10px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-
-.col-selector-list {
-    max-height: 200px;
-    overflow-y: auto;
-    background-color: var(--dark-bg);
-    padding: 0.5rem;
-    border-radius: 4px;
-    border: 1px solid #444;
-    margin-top: 0.5rem;
-}
-
+/* --- Base CoL Sunset Inputs --- */
 .col-item {
     display: flex;
     align-items: center;
-    padding: 0.25rem 0.5rem;
+    padding: 0.4rem 0.5rem;
+    border-bottom: 1px solid #444;
 }
 
-.col-item:hover {
-    background-color: rgba(255,255,255,0.05);
+.col-item:last-child {
+    border-bottom: none;
 }
 
-.col-item input {
-    width: auto;
-    margin-right: 0.75rem;
-    cursor: pointer;
-}
-
-.col-item label {
-    cursor: pointer;
+.col-label-group {
     flex-grow: 1;
+    display: flex;
+    align-items: center;
+}
+
+.col-end-year {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.col-end-year input {
+    width: 70px;
+    padding: 0.25rem;
     font-size: 0.9em;
 }
 
-/* --- Chart Styles --- */
-.chart-panel {
-    background-color: var(--dark-bg);
-    padding: 1.5rem;
-    border-radius: 8px;
-    border: 1px solid var(--border-color);
-    min-height: 400px;
-    margin-bottom: 2rem;
+.col-end-year span {
+    font-size: 0.8em;
+    color: #aaa;
 }
 
-.chart-panel h2 {
-    margin-top: 0;
-    color: var(--gold-accent);
-    border-bottom: 1px solid var(--border-color);
-    padding-bottom: 0.5rem;
-}
-
-.charts-row {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 2rem;
-    margin-top: 2rem;
-}
-
-@media (min-width: 1200px) {
-    .charts-row {
-        grid-template-columns: 1fr 1fr;
-    }
-}
-
-.chart-sub-panel {
-    background-color: var(--dark-bg);
-    padding: 1rem;
-    border-radius: 8px;
-    border: 1px solid var(--border-color);
-}
-
-.chart-sub-panel h3 {
-    margin-top: 0;
-    font-size: 1.1em;
-    color: #ccc;
-    text-align: center;
-}
-
-/* --- Budget Panel --- */
-.budget-panel {
-    background-color: var(--light-bg);
-    padding: 1.5rem;
-    border-radius: 8px;
-    border: 1px solid var(--border-color);
-}
-
+/* --- Budget & Telemetry Table --- */
 .budget-table {
     width: 100%;
     border-collapse: collapse;
     margin-top: 1rem;
-}
-
-.budget-table th, .budget-table td {
-    padding: 8px 12px;
-    border-bottom: 1px solid var(--border-color);
-    text-align: left;
+    font-size: 0.9em;
 }
 
 .budget-table th {
-    background-color: var(--medium-bg);
+    text-align: left;
     color: #ccc;
+    border-bottom: 1px solid #555;
+    padding: 0.5rem;
 }
 
-.budget-form {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 1rem;
-    margin-bottom: 1rem;
-    padding-bottom: 1rem;
-    border-bottom: 1px solid var(--border-color);
-    align-items: end;
-}
-
-.budget-form button {
-    background-color: var(--gold-accent);
-    color: var(--dark-bg);
-    border: none;
-    padding: 0.6rem 1rem;
-    border-radius: 4px;
-    cursor: pointer;
-    font-weight: bold;
+.budget-table td {
+    padding: 0.5rem;
+    border-bottom: 1px solid #444;
 }
 
 .delete-btn {
@@ -249,4 +163,11 @@ input[type=number] {
     border: none;
     color: #ff6b6b;
     cursor: pointer;
+    font-weight: bold;
+}
+
+.toggle-checkbox {
+    cursor: pointer;
+    width: 18px;
+    height: 18px;
 }

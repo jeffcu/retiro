@@ -191,6 +191,7 @@ class ForecastConfig(BaseModel):
     inflation_rate: Optional[float]
     return_rate: Optional[float]
     withdrawal_tax_rate: Optional[float]
+    state_tax_rate: Optional[float] # NEW
     retirement_age: Optional[int]
     nogo_age: Optional[int]
     base_col_categories: Optional[List[str]]
@@ -201,8 +202,15 @@ class ForecastConfig(BaseModel):
     residence_sale_year: Optional[int] = None
     # --- NEW: CoL Lookback ---
     base_col_lookback_years: Optional[int] = 1
+    # --- NEW: Withdrawal Strategy (v1.9.1) ---
+    withdrawal_strategy: Optional[str] = 'standard'
+    # --- NEW: Fix for Tax Filing Status (v1.9.2) ---
+    tax_filing_status: Optional[str] = 'single'
+    # --- NEW: Roth Conversion Strategy (Phase 10) ---
+    roth_conversion_target: Optional[str] = 'none'
 
 class DiscretionaryItemCreate(BaseModel):
+    item_id: Optional[str] = None # Allow ID to be passed for updates
     name: str
     amount: float
     start_year: int
@@ -210,6 +218,7 @@ class DiscretionaryItemCreate(BaseModel):
     is_recurring: bool = False
     inflation_adjusted: bool = True
     category: Optional[str] = None
+    is_enabled: Optional[bool] = True # NEW
 
 # --- NEW: Account Metadata Pydantic ---
 class AccountMetadataUpdate(BaseModel):
@@ -418,6 +427,16 @@ async def get_portfolio_waterfall(period: str = Query("all", description="Time p
     """
     return analysis.calculate_portfolio_waterfall(period)
 
+# --- NEW: Account Performance Summary Endpoint (v1.9.3) ---
+@app.get("/api/accounts/performance", tags=["Analysis"])
+async def get_account_performance(mode: str = Query("actuals")):
+    """
+    Returns aggregated performance metrics per account (value, cost basis, gain, tax status).
+    """
+    data = analysis.get_account_performance_summary()
+    if mode == 'demo':
+        return demo_mode.process_for_demo_mode(data)
+    return data
 
 # --- Data & Filter Endpoints ---
 @app.get("/api/transactions", tags=["Data"])
@@ -656,13 +675,17 @@ async def get_forecast_config():
         "inflation_rate": db.get_setting('forecast_inflation_rate') or 0.03,
         "return_rate": db.get_setting('forecast_return_rate') or 0.05,
         "withdrawal_tax_rate": db.get_setting('forecast_withdrawal_tax_rate') or 0.15,
+        "state_tax_rate": db.get_setting('forecast_state_tax_rate') or 0.0,
         "retirement_age": db.get_setting('forecast_retirement_age') or 65,
         "nogo_age": db.get_setting('forecast_nogo_age') or 80,
         "base_col_categories": db.get_setting('forecast_base_col_categories') or [],
         "phase_multipliers": db.get_setting('forecast_phase_multipliers') or {},
         "residence_sale_enabled": db.get_setting('forecast_residence_sale_enabled') or False,
         "residence_sale_year": db.get_setting('forecast_residence_sale_year'),
-        "base_col_lookback_years": db.get_setting('forecast_base_col_lookback_years') or 1
+        "base_col_lookback_years": db.get_setting('forecast_base_col_lookback_years') or 1,
+        "withdrawal_strategy": db.get_setting('forecast_withdrawal_strategy') or 'standard',
+        "tax_filing_status": db.get_setting('forecast_tax_filing_status') or 'single',
+        "roth_conversion_target": db.get_setting('forecast_roth_conversion_target') or 'none'
     }
 
 @app.put("/api/forecast/config", status_code=204, tags=["Forecast"])
@@ -671,6 +694,7 @@ async def update_forecast_config(config: ForecastConfig):
     # This allows us to handle explicit nulls (clearing a value) vs missing fields (no update).
     
     fields_set = config.__fields_set__
+    print(f"DEBUG: Received forecast config update. Fields: {fields_set}")
 
     if 'birth_year' in fields_set: 
         db.set_setting('forecast_birth_year', config.birth_year)
@@ -683,6 +707,9 @@ async def update_forecast_config(config: ForecastConfig):
     
     if 'withdrawal_tax_rate' in fields_set: 
         db.set_setting('forecast_withdrawal_tax_rate', config.withdrawal_tax_rate)
+
+    if 'state_tax_rate' in fields_set: 
+        db.set_setting('forecast_state_tax_rate', config.state_tax_rate)
     
     if 'retirement_age' in fields_set: 
         db.set_setting('forecast_retirement_age', config.retirement_age)
@@ -703,8 +730,20 @@ async def update_forecast_config(config: ForecastConfig):
     if 'residence_sale_year' in fields_set: 
         db.set_setting('forecast_residence_sale_year', config.residence_sale_year)
     
-    if 'base_col_lookback_years' in fields_set:
+    if 'base_col_lookback_years' in fields_set: 
         db.set_setting('forecast_base_col_lookback_years', config.base_col_lookback_years)
+
+    # --- NEW: Withdrawal Strategy ---
+    if 'withdrawal_strategy' in fields_set:
+        db.set_setting('forecast_withdrawal_strategy', config.withdrawal_strategy)
+        
+    # --- NEW: Tax Filing Status ---
+    if 'tax_filing_status' in fields_set:
+        db.set_setting('forecast_tax_filing_status', config.tax_filing_status)
+
+    # --- NEW: Roth Conversion Strategy ---
+    if 'roth_conversion_target' in fields_set:
+        db.set_setting('forecast_roth_conversion_target', config.roth_conversion_target)
 
     return Response(status_code=204)
 
@@ -715,8 +754,11 @@ async def get_calculated_base_col(categories: Optional[List[str]] = Query(None),
     return {"base_col": total}
 
 @app.get("/api/forecast/simulation", tags=["Forecast"])
-async def run_forecast_simulation():
-    return forecast.calculate_forecast()
+async def run_forecast_simulation(mode: str = Query("actuals")):
+    result = forecast.calculate_forecast()
+    if mode == 'demo':
+        return demo_mode.process_for_demo_mode(result)
+    return result
 
 @app.get("/api/forecast/discretionary", tags=["Forecast"])
 async def get_discretionary_items():

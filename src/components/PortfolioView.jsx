@@ -54,7 +54,7 @@ const PortfolioSummary = ({ holdings, formatCurrency }) => {
 };
 
 const filterConfig = [
-    { id: 'account_id', label: 'Account', type: 'select', optionsKey: 'accounts' },
+    { id: 'account_id', label: 'Account', type: 'select', optionsKey: 'holding_accounts' },
     { id: 'asset_type', label: 'Asset Type', type: 'select', optionsKey: 'assetTypes' },
     { id: 'symbol', label: 'Symbol', type: 'text', placeholder: 'e.g., AAPL' },
     { id: 'tags', label: 'Tag Contains', type: 'text', placeholder: 'e.g., ESG' },
@@ -146,7 +146,8 @@ const PortfolioView = () => {
         let direction = 'descending';
         if (sortConfig && sortConfig.key === key && sortConfig.direction === 'descending') {
             direction = 'ascending';
-        } else if (sortConfig && sortConfig.key === key && sortConfig.direction === 'ascending') {
+        }
+        if (sortConfig && sortConfig.key === key && sortConfig.direction === 'ascending') {
             setSortConfig(null);
             return;
         }

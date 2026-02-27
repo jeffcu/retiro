@@ -289,6 +289,93 @@ def calculate_portfolio_summary_metrics() -> Dict[str, Any]:
         "notes": "Calculated since inception (Total Market Value vs. Total Cost Basis). This is not a time-weighted return."
     }
 
+# --- NEW: Account Performance Summary (Source of Truth for Forecast) ---
+def get_account_performance_summary() -> List[Dict[str, Any]]:
+    """
+    Aggregates holdings by account (and sub-account/number) to provide a clear view 
+    of where assets live and how they are taxed. This data drives the Forecast engine's 
+    starting buckets and the Account Summary table on the Home Page.
+    """
+    # Get all holdings
+    holdings = db.get_holdings()
+    # Get metadata
+    metadata = db.get_account_metadata() # returns dict {account_id: {tax_status, notes, group_name}}
+
+    # Group by (account_id, account_number)
+    accounts = {}
+    for h in holdings:
+        # Group ID is the high-level import batch (e.g. "Fidelity")
+        group_id = h['account_id'] 
+        # Sub-Account Number (e.g. "123456789")
+        acc_num = h.get('account_number')
+        
+        # Create a unique key for aggregation
+        # If no account number, we fall back to just the group ID
+        key = (group_id, acc_num) if acc_num else (group_id, None)
+        
+        if key not in accounts:
+            # Determine display name and metadata lookup key
+            if acc_num:
+                lookup_key = f"{group_id}::{acc_num}"
+            else:
+                lookup_key = group_id
+
+            # Determine tax status AND group name via hierarchical lookup
+            tax_status = "Taxable" # Default
+            group_name = None
+            
+            # 1. Try specific composite key (Group::Number)
+            if lookup_key in metadata:
+                tax_status = metadata[lookup_key]['tax_status']
+                group_name = metadata[lookup_key].get('group_name')
+            # 2. Try just the Group ID (wildcard for all accounts in that file)
+            elif group_id in metadata:
+                 tax_status = metadata[group_id]['tax_status']
+                 group_name = metadata[group_id].get('group_name')
+            # 3. Case-insensitive fallback
+            else:
+                 for m_id, m_data in metadata.items():
+                     if m_id.strip().lower() == lookup_key.strip().lower() or m_id.strip().lower() == group_id.strip().lower():
+                         tax_status = m_data['tax_status']
+                         group_name = m_data.get('group_name')
+                         break
+            
+            # If no manual group name override, use the import account_id as the group
+            final_group_id = group_name if group_name else group_id
+            
+            display_name = f"{final_group_id} - {acc_num}" if acc_num else final_group_id
+
+            accounts[key] = {
+                "account_id": display_name,
+                "group_id": final_group_id,
+                "account_number": acc_num,
+                "lookup_key": lookup_key,
+                "tax_status": tax_status,
+                "group_name": group_name,
+                "total_market_value": 0.0,
+                "total_cost_basis": 0.0
+            }
+        
+        accounts[key]["total_market_value"] += (h['market_value'] or 0.0)
+        accounts[key]["total_cost_basis"] += (h['cost_basis'] or 0.0)
+
+    # Calculate Gains and Format
+    result = []
+    for acc in accounts.values():
+        mv = acc['total_market_value']
+        cb = acc['total_cost_basis']
+        gain = mv - cb
+        gain_pct = (gain / cb) * 100 if cb != 0 else 0.0
+        
+        acc['total_gain'] = round(gain, 2)
+        acc['total_gain_percent'] = round(gain_pct, 2)
+        acc['total_market_value'] = round(mv, 2)
+        acc['total_cost_basis'] = round(cb, 2)
+        result.append(acc)
+        
+    # Sort by Group ID, then Market Value desc
+    return sorted(result, key=lambda x: (x['group_id'], -x['total_market_value']))
+
 # --- NEW: Layered Returns Calculation ---
 def calculate_layered_returns_summary() -> Dict[str, Any]:
     """

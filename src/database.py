@@ -13,10 +13,6 @@ DB_FILE = (Path(__file__).parent.parent / "data" / "trust.db").resolve()
 _schema_ensured = False
 
 def _ensure_schema(conn: sqlite3.Connection):
-    """
-    Ensures the necessary tables exist in the database and performs migrations.
-    This is designed to be idempotent and safe to call.
-    """
     global _schema_ensured
     if _schema_ensured:
         return
@@ -37,7 +33,10 @@ def _ensure_schema(conn: sqlite3.Connection):
         is_transfer INTEGER,
         asset_id TEXT,
         import_run_id TEXT,
-        raw_data_hash TEXT UNIQUE
+        raw_data_hash TEXT UNIQUE,
+        institution TEXT,
+        original_category TEXT,
+        tags TEXT
     );
     """)
 
@@ -48,7 +47,14 @@ def _ensure_schema(conn: sqlite3.Connection):
         category TEXT NOT NULL,
         cashflow_type TEXT NOT NULL,
         tags TEXT,
-        priority INTEGER DEFAULT 100
+        priority INTEGER DEFAULT 100,
+        case_sensitive INTEGER DEFAULT 0,
+        account_filter_mode TEXT DEFAULT 'include',
+        account_filter_list TEXT,
+        condition_category TEXT,
+        condition_institution TEXT,
+        condition_cashflow_type TEXT,
+        condition_tags TEXT
     );
     """)
 
@@ -62,11 +68,14 @@ def _ensure_schema(conn: sqlite3.Connection):
         market_value REAL, 
         last_price REAL,
         last_price_timestamp TEXT,
-        UNIQUE(account_id, symbol)
+        tags TEXT,
+        asset_type TEXT,
+        last_price_update_failed INTEGER DEFAULT 0,
+        account_number TEXT,
+        UNIQUE(account_id, symbol, account_number)
     );
     """)
 
-    # --- NEW: Properties Table for Real Estate ---
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS properties (
         property_id TEXT PRIMARY KEY,
@@ -109,16 +118,15 @@ def _ensure_schema(conn: sqlite3.Connection):
     );
     """)
     
-    # --- NEW: Account Metadata for Tax Status ---
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS account_metadata (
         account_id TEXT PRIMARY KEY,
         tax_status TEXT NOT NULL DEFAULT 'Taxable', -- 'Taxable', 'Deferred', 'Roth', 'Exempt'
-        notes TEXT
+        notes TEXT,
+        group_name TEXT -- NEW: For manual grouping of sub-accounts
     );
     """)
 
-    # --- NEW: Generic table for application settings ---
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS app_settings (
         key TEXT PRIMARY KEY,
@@ -126,7 +134,6 @@ def _ensure_schema(conn: sqlite3.Connection):
     );
     """)
 
-    # --- NEW: Table for storing annual tax return data (PRS Section 7.1) ---
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS tax_year_facts (
         tax_year INTEGER PRIMARY KEY,
@@ -138,7 +145,6 @@ def _ensure_schema(conn: sqlite3.Connection):
     );
     """)
 
-    # --- NEW: Table for storing future income streams for forecasting (PRS Section 7) ---
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS future_income_streams (
         stream_id TEXT PRIMARY KEY,
@@ -152,7 +158,6 @@ def _ensure_schema(conn: sqlite3.Connection):
     );
     """)
 
-    # --- NEW: Table for storing historical portfolio values ("Operation Snapshot") ---
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS portfolio_value_snapshots (
         snapshot_id TEXT PRIMARY KEY,
@@ -161,7 +166,6 @@ def _ensure_schema(conn: sqlite3.Connection):
     );
     """)
 
-    # --- NEW: Discretionary Budget Items (Phase 9) ---
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS discretionary_budget_items (
         item_id TEXT PRIMARY KEY,
@@ -171,11 +175,12 @@ def _ensure_schema(conn: sqlite3.Connection):
         end_year INTEGER,
         is_recurring INTEGER DEFAULT 0,
         inflation_adjusted INTEGER DEFAULT 1,
-        category TEXT
+        category TEXT,
+        is_enabled INTEGER DEFAULT 1
     );
     """)
 
-    # --- Schema Migrations ---
+    # --- Schema Migrations --- 
     cursor.execute("PRAGMA table_info(holdings)")
     holdings_cols = {row[1] for row in cursor.fetchall()}
     if 'market_value' not in holdings_cols:
@@ -190,6 +195,15 @@ def _ensure_schema(conn: sqlite3.Connection):
     if 'last_price_update_failed' not in holdings_cols:
         print("--- MIGRATING SCHEMA: Adding 'last_price_update_failed' to 'holdings'. ---")
         cursor.execute("ALTER TABLE holdings ADD COLUMN last_price_update_failed INTEGER DEFAULT 0;")
+    if 'account_number' not in holdings_cols:
+        print("--- MIGRATING SCHEMA: Adding 'account_number' to 'holdings'. ---")
+        cursor.execute("ALTER TABLE holdings ADD COLUMN account_number TEXT;")
+
+    cursor.execute("PRAGMA table_info(account_metadata)")
+    meta_cols = {row[1] for row in cursor.fetchall()}
+    if 'group_name' not in meta_cols:
+        print("--- MIGRATING SCHEMA: Adding 'group_name' to 'account_metadata'. ---")
+        cursor.execute("ALTER TABLE account_metadata ADD COLUMN group_name TEXT;")
 
     cursor.execute("PRAGMA table_info(transactions)")
     trans_cols = {row[1] for row in cursor.fetchall()}
@@ -208,7 +222,77 @@ def _ensure_schema(conn: sqlite3.Connection):
     if 'category' not in budget_cols:
         print("--- MIGRATING SCHEMA: Adding 'category' to 'discretionary_budget_items'. ---")
         cursor.execute("ALTER TABLE discretionary_budget_items ADD COLUMN category TEXT;")
+    if 'is_enabled' not in budget_cols:
+        print("--- MIGRATING SCHEMA: Adding 'is_enabled' to 'discretionary_budget_items'. ---")
+        cursor.execute("ALTER TABLE discretionary_budget_items ADD COLUMN is_enabled INTEGER DEFAULT 1;")
 
+    # --- MIGRATING SCHEMA: Constraint Check for 'holdings' ---
+    # Ensure the UNIQUE constraint includes 'account_number'.
+    cursor.execute("PRAGMA index_list('holdings')")
+    indices = cursor.fetchall()
+    needs_rebuild = False
+    
+    found_correct_index = False
+    for idx in indices:
+        if idx['unique']:
+            cursor.execute(f"PRAGMA index_info('{idx['name']}')")
+            cols = cursor.fetchall()
+            col_names = sorted([c['name'] for c in cols])
+            # Check if the unique index covers strictly (account_id, symbol, account_number)
+            if col_names == sorted(['account_id', 'symbol', 'account_number']):
+                found_correct_index = True
+                break
+    
+    # If we didn't find the correct 3-column index, we must rebuild the table
+    if not found_correct_index:
+        needs_rebuild = True
+
+    if needs_rebuild:
+        print("--- MIGRATING SCHEMA: Updating UNIQUE constraint on 'holdings' to include 'account_number'. ---")
+        cursor.execute("PRAGMA foreign_keys=off;")
+        cursor.execute("BEGIN TRANSACTION;")
+        try:
+            cursor.execute("ALTER TABLE holdings RENAME TO _holdings_old;")
+            cursor.execute("""
+            CREATE TABLE holdings (
+                holding_id TEXT PRIMARY KEY,
+                account_id TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                quantity REAL NOT NULL,
+                cost_basis REAL NOT NULL,
+                market_value REAL, 
+                last_price REAL,
+                last_price_timestamp TEXT,
+                tags TEXT,
+                asset_type TEXT,
+                last_price_update_failed INTEGER DEFAULT 0,
+                account_number TEXT,
+                UNIQUE(account_id, symbol, account_number)
+            );
+            """)
+            cursor.execute("""
+            INSERT INTO holdings (
+                holding_id, account_id, symbol, quantity, cost_basis, 
+                market_value, last_price, last_price_timestamp, tags, 
+                asset_type, last_price_update_failed, account_number
+            )
+            SELECT 
+                holding_id, account_id, symbol, quantity, cost_basis, 
+                market_value, last_price, last_price_timestamp, tags, 
+                asset_type, last_price_update_failed, account_number
+            FROM _holdings_old;
+            """)
+            cursor.execute("DROP TABLE _holdings_old;")
+            conn.commit()
+            print("--- MIGRATION COMPLETE: 'holdings' table rebuilt with new constraints. ---")
+        except Exception as e:
+            print(f"ERROR during 'holdings' table migration: {e}. Rolling back.")
+            conn.rollback()
+            raise e
+        finally:
+            cursor.execute("PRAGMA foreign_keys=on;")
+
+    # Rules migration logic
     cursor.execute("PRAGMA foreign_keys=off;")
     cursor.execute("BEGIN TRANSACTION;")
     try:
@@ -276,9 +360,7 @@ def initialize_database():
     conn.close()
     print("--- Database initialization complete. ---")
 
-# --- NEW: Generic settings functions ---
 def get_setting(key: str) -> Any | None:
-    """Fetches a setting value by key and decodes its JSON content."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT value FROM app_settings WHERE key = ?", (key,))
@@ -288,11 +370,10 @@ def get_setting(key: str) -> Any | None:
         try:
             return json.loads(row['value'])
         except json.JSONDecodeError:
-            return row['value'] # Fallback for non-JSON data
+            return row['value']
     return None
 
 def set_setting(key: str, value: Any):
-    """Saves a setting value by key, encoding the value as a JSON string."""
     conn = get_db_connection()
     cursor = conn.cursor()
     json_value = json.dumps(value)
@@ -338,41 +419,45 @@ def save_holdings_snapshot(holdings: List[Holding], account_id: str):
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # --- NEW: Non-destructive import logic --- #
-    # 1. Fetch existing metadata for the account before deleting.
-    cursor.execute("SELECT symbol, tags, asset_type FROM holdings WHERE trim(lower(account_id)) = trim(lower(?))", (cleaned_account_id,))
-    existing_metadata = {row['symbol']: {'tags': [t.strip() for t in row['tags'].split(',')] if row['tags'] else [], 'asset_type': row['asset_type']} for row in cursor.fetchall()}
-    print(f"Found existing metadata for {len(existing_metadata)} symbols in account '{cleaned_account_id}'.")
+    cursor.execute("SELECT symbol, tags, asset_type, account_number FROM holdings WHERE trim(lower(account_id)) = trim(lower(?))", (cleaned_account_id,))
+    existing_metadata = {}
+    for row in cursor.fetchall():
+        if row['symbol'] not in existing_metadata:
+            existing_metadata[row['symbol']] = {
+                'tags': [t.strip() for t in row['tags'].split(',')] if row['tags'] else [],
+                'asset_type': row['asset_type']
+            }
+    print(f"Found existing metadata for {len(existing_metadata)} symbols in account group '{cleaned_account_id}'.")
 
-    # 2. Enrich the new holdings with the existing metadata if the new data is missing it.
     for h in holdings:
         if h.symbol in existing_metadata:
             meta = existing_metadata[h.symbol]
             if not h.tags and meta['tags']:
-                h.tags = meta['tags'] # Preserve old tags if new file has none
+                h.tags = meta['tags'] 
             if not h.asset_type and meta['asset_type']:
-                h.asset_type = meta['asset_type'] # Preserve old asset_type
+                h.asset_type = meta['asset_type']
 
     deleted_count, inserted_count = 0, 0
     try:
-        # 3. Proceed with the atomic delete-and-insert operation.
         cursor.execute("DELETE FROM holdings WHERE trim(lower(account_id)) = trim(lower(?))", (cleaned_account_id,))
         deleted_count = cursor.rowcount
-        print(f"Deleted {deleted_count} stale holdings for account '{cleaned_account_id}'.")
+        print(f"Deleted {deleted_count} stale holdings for account group '{cleaned_account_id}'.")
         
         if holdings:
             sql = """INSERT INTO holdings (
                          holding_id, account_id, symbol, quantity, cost_basis, 
-                         market_value, tags, asset_type
-                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);"""
+                         market_value, tags, asset_type, account_number
+                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);"""
             data_to_insert = [
                 (h.holding_id, h.account_id, h.symbol, float(h.quantity), float(h.cost_basis),
-                 float(h.market_value) if h.market_value is not None else None, ','.join(h.tags) if h.tags else None, h.asset_type) 
+                 float(h.market_value) if h.market_value is not None else None, 
+                 ','.join(h.tags) if h.tags else None, h.asset_type,
+                 getattr(h, 'account_number', None)) 
                 for h in holdings
             ]
             cursor.executemany(sql, data_to_insert)
             inserted_count = cursor.rowcount
-            print(f"Inserted {inserted_count} new holdings for account '{cleaned_account_id}'.")
+            print(f"Inserted {inserted_count} new holdings for account group '{cleaned_account_id}'.")
         
         conn.commit()
     except sqlite3.Error as e:
@@ -394,7 +479,6 @@ def save_import_run(run_data: Dict[str, Any]):
     try:
         cursor.execute(sql, data_tuple)
         conn.commit()
-        print(f"Successfully saved import run {run_data['import_run_id']}.")
     except sqlite3.Error as e:
         print(f"Database error during import run save: {e}")
         conn.rollback()
@@ -409,7 +493,6 @@ def _build_where_clause(filters: Dict, allowed_fields: List[str]) -> Tuple[List[
     for key, value in filters.items():
         if key not in allowed_fields or not value:
             continue
-
         if key == 'category' and value == 'Uncategorized':
             clauses.append("(category IS NULL OR category = '' OR category = ?)")
             params.append('Uncategorized')
@@ -419,7 +502,6 @@ def _build_where_clause(filters: Dict, allowed_fields: List[str]) -> Tuple[List[
         else:
             clauses.append(f"{key} = ?")
             params.append(value)
-            
     return clauses, params
 
 def get_transaction(transaction_id: str) -> Dict[str, Any] | None:
@@ -465,7 +547,7 @@ def get_holdings(filters: Dict[str, Any] = None) -> List[Dict[str, Any]]:
     conn = get_db_connection()
     cursor = conn.cursor()
     filters = filters or {}
-    allowed_fields, period = ['account_id', 'symbol', 'tags', 'asset_type'], filters.pop('period', None)
+    allowed_fields, period = ['account_id', 'symbol', 'tags', 'asset_type', 'account_number'], filters.pop('period', None)
     clauses, params = _build_where_clause(filters, allowed_fields)
     _apply_period_filter_to_query(clauses, params, period, date_column='last_price_timestamp')
     where_str = f"WHERE {' AND '.join(clauses)}" if clauses else ""
@@ -494,7 +576,6 @@ def get_holding(holding_id: str) -> Dict[str, Any] | None:
 def update_holding(holding_id: str, updates: Dict[str, Any]):
     conn = get_db_connection()
     cursor = conn.cursor()
-    
     allowed_fields = ['tags', 'asset_type']
     set_clauses, params = [], []
     for field, value in updates.items():
@@ -506,18 +587,13 @@ def update_holding(holding_id: str, updates: Dict[str, Any]):
         elif field == 'asset_type':
             set_clauses.append("asset_type = ?")
             params.append(value if value and str(value).strip() else None)
-    
     if not set_clauses:
-        print(f"Warning: No valid fields to update for holding {holding_id}.")
         return
-
     sql = f"UPDATE holdings SET {', '.join(set_clauses)} WHERE holding_id = ?"
     params.append(holding_id)
     try:
         cursor.execute(sql, tuple(params))
         conn.commit()
-        if cursor.rowcount == 0:
-            print(f"Warning: Attempted to update holding {holding_id}, but no record was found.")
     except sqlite3.Error as e:
         conn.rollback()
         raise e
@@ -533,7 +609,6 @@ def get_all_import_runs() -> List[Dict[str, Any]]:
     return [dict(row) for row in rows]
 
 def get_income_categories() -> List[str]:
-    """Gets a distinct list of all non-empty categories assigned to Income transactions."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT DISTINCT category FROM transactions WHERE cashflow_type = 'Income' AND category IS NOT NULL AND category != '' ORDER BY category")
@@ -548,8 +623,11 @@ def get_filter_options() -> Dict[str, List[str]]:
     if cursor.fetchone():
         options['categories'].append('Uncategorized')
         options['categories'].sort()
-    cursor.execute("SELECT account_id FROM transactions WHERE account_id IS NOT NULL UNION SELECT account_id FROM holdings WHERE account_id IS NOT NULL ORDER BY account_id ASC")
-    options['accounts'] = [row['account_id'] for row in cursor.fetchall()]
+    cursor.execute("SELECT DISTINCT account_id FROM transactions WHERE account_id IS NOT NULL ORDER BY account_id")
+    options['transaction_accounts'] = [row['account_id'] for row in cursor.fetchall()]
+    cursor.execute("SELECT DISTINCT account_id FROM holdings WHERE account_id IS NOT NULL ORDER BY account_id")
+    options['holding_accounts'] = [row['account_id'] for row in cursor.fetchall()]
+    options['accounts'] = sorted(list(set(options['transaction_accounts'] + options['holding_accounts'])))
     cursor.execute("SELECT DISTINCT institution FROM transactions WHERE institution IS NOT NULL ORDER BY institution")
     options['institutions'] = [row['institution'] for row in cursor.fetchall()]
     cursor.execute("SELECT DISTINCT asset_type FROM holdings WHERE asset_type IS NOT NULL AND asset_type != '' ORDER BY asset_type")
@@ -562,38 +640,25 @@ def get_capital_flow_aggregates(period: str, exclude_invisible: bool = False) ->
     conn = get_db_connection()
     cursor = conn.cursor()
     where_clauses, params = [], []
-
     if exclude_invisible:
         where_clauses.append("t.account_id NOT IN (SELECT account_id FROM account_visibility WHERE is_visible = 0)")
-    
     _apply_period_filter_to_query(where_clauses, params, period, date_column='transaction_date', table_prefix='t.')
-    
     where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
-
-    # CORRECTED QUERY: Separates 'Investment Income' from other 'Income' types to prevent double-counting.
     query = f""" 
-    -- Income by Category (excluding 'Investment Income', handled separately)
     SELECT 'Income' as source_type, category, SUM(amount) as total
     FROM transactions t
     WHERE {where_sql} AND t.cashflow_type = 'Income' AND (t.category IS NULL OR t.category != 'Investment Income')
     GROUP BY category
-
     UNION ALL
-
-    -- Investment Income (a special type of Income, but visualized separately)
     SELECT 'Investment Income' as source_type, 'Investment Income' as category, SUM(amount) as total
     FROM transactions t
     WHERE {where_sql} AND t.cashflow_type = 'Income' AND t.category = 'Investment Income'
-
     UNION ALL
-
-    -- Consumption Expenses
     SELECT 'Expense' as source_type, category, SUM(amount) as total
     FROM transactions t
     WHERE {where_sql} AND t.cashflow_type = 'Expense'
     GROUP BY category
     """
-    
     final_params = params * 3 
     cursor.execute(query, final_params)
     rows = cursor.fetchall()
@@ -801,11 +866,23 @@ def get_all_account_ids() -> List[str]:
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("INSERT OR IGNORE INTO account_visibility (account_id, is_visible) SELECT DISTINCT account_id, 1 FROM transactions WHERE account_id IS NOT NULL;")
+    cursor.execute("INSERT OR IGNORE INTO account_visibility (account_id, is_visible) SELECT DISTINCT account_id, 1 FROM holdings WHERE account_id IS NOT NULL;")
     conn.commit()
-    cursor.execute("SELECT account_id FROM account_visibility ORDER BY account_id ASC")
-    rows = cursor.fetchall()
+    
+    cursor.execute("SELECT account_id FROM transactions WHERE account_id IS NOT NULL UNION SELECT account_id FROM holdings WHERE account_id IS NOT NULL")
+    base_accounts = {row[0] for row in cursor.fetchall()}
+    
+    cursor.execute("SELECT DISTINCT account_id, account_number FROM holdings WHERE account_number IS NOT NULL AND account_number != ''")
+    sub_account_rows = cursor.fetchall()
+    
+    final_list = list(base_accounts)
+    for row in sub_account_rows:
+        composite = f"{row['account_id']}::{row['account_number']}"
+        if composite not in final_list:
+            final_list.append(composite)
+            
     conn.close()
-    return [row['account_id'] for row in rows]
+    return sorted(final_list)
 
 def get_account_visibility() -> Dict[str, bool]:
     conn = get_db_connection()
@@ -822,33 +899,34 @@ def set_account_visibility(settings: Dict[str, bool]):
     try:
         cursor.executemany("INSERT INTO account_visibility (account_id, is_visible) VALUES (?, ?) ON CONFLICT(account_id) DO UPDATE SET is_visible = excluded.is_visible;", data_to_upsert)
         conn.commit()
-        print(f"Updated visibility for {len(data_to_upsert)} accounts.")
     except sqlite3.Error as e:
         conn.rollback()
         raise e
     finally:
         conn.close()
 
-# --- NEW: Account Tax Metadata Functions ---
+# --- NEW: Account Tax Metadata Functions with Group Name --- 
 def get_account_metadata() -> Dict[str, Dict[str, Any]]:
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM account_metadata")
     rows = cursor.fetchall()
     conn.close()
-    return {row['account_id']: {"tax_status": row['tax_status'], "notes": row['notes']} for row in rows}
+    # FIX: Use dictionary key access instead of .get(), as sqlite3.Row does not support .get()
+    return {row['account_id']: {"tax_status": row['tax_status'], "notes": row['notes'], "group_name": row['group_name']} for row in rows}
 
-def set_account_metadata(account_id: str, tax_status: str, notes: str = None):
+def set_account_metadata(account_id: str, tax_status: str, notes: str = None, group_name: str = None):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
         cursor.execute("""
-            INSERT INTO account_metadata (account_id, tax_status, notes)
-            VALUES (?, ?, ?)
+            INSERT INTO account_metadata (account_id, tax_status, notes, group_name)
+            VALUES (?, ?, ?, ?)
             ON CONFLICT(account_id) DO UPDATE SET
                 tax_status = excluded.tax_status,
-                notes = excluded.notes
-        """, (account_id, tax_status, notes))
+                notes = excluded.notes,
+                group_name = excluded.group_name
+        """, (account_id, tax_status, notes, group_name))
         conn.commit()
     except sqlite3.Error as e:
         conn.rollback()
@@ -856,7 +934,7 @@ def set_account_metadata(account_id: str, tax_status: str, notes: str = None):
     finally:
         conn.close()
 
-SAFE_TO_PURGE = ["transactions", "holdings", "properties"]
+SAFE_TO_PURGE = ["transactions", "holdings", "properties", "discretionary_budget_items"]
 
 def purge_table_data(target_table: str) -> dict:
     if target_table not in SAFE_TO_PURGE:
@@ -869,7 +947,6 @@ def purge_table_data(target_table: str) -> dict:
         cursor.execute(f"DELETE FROM {target_table};")
         deleted_count = cursor.rowcount
         conn.commit()
-        print(f"Successfully purged {deleted_count} records from '{target_table}'.")
         return {"table": target_table, "purged_records": deleted_count, "initial_records": initial_count, "status": "success"}
     except sqlite3.Error as e:
         print(f"Database error during purge of '{target_table}': {e}")
@@ -925,7 +1002,6 @@ def mark_holdings_as_failed(symbols: List[str]):
     try:
         cursor.execute(sql, symbols)
         conn.commit()
-        print(f"Marked {cursor.rowcount} holdings as failed for symbols: {symbols}")
     except sqlite3.Error as e:
         print(f"Database error marking holdings as failed: {e}")
         conn.rollback()
@@ -933,7 +1009,6 @@ def mark_holdings_as_failed(symbols: List[str]):
     finally:
         conn.close()
 
-# --- NEW: Functions for Tax Facts --- 
 def get_tax_facts(year: int) -> Dict[str, Any] | None:
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -974,7 +1049,6 @@ def save_tax_facts(year: int, data: Dict[str, Any]):
     try:
         cursor.execute(sql, params)
         conn.commit()
-        print(f"Successfully saved/replaced tax facts for year {year}.")
     except sqlite3.Error as e:
         print(f"Database error saving tax facts for {year}: {e}")
         conn.rollback()
@@ -982,7 +1056,6 @@ def save_tax_facts(year: int, data: Dict[str, Any]):
     finally:
         conn.close()
 
-# --- NEW: CRUD functions for Future Income Streams ---
 def create_future_income_stream(stream: FutureIncomeStream) -> FutureIncomeStream:
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -1003,7 +1076,6 @@ def create_future_income_stream(stream: FutureIncomeStream) -> FutureIncomeStrea
     try:
         cursor.execute(sql, params)
         conn.commit()
-        print(f"Successfully created future income stream {stream.stream_id}.")
     except sqlite3.Error as e:
         print(f"Database error creating income stream: {e}")
         conn.rollback()
@@ -1026,7 +1098,6 @@ def delete_future_income_stream(stream_id: str) -> bool:
     try:
         cursor.execute("DELETE FROM future_income_streams WHERE stream_id = ?", (stream_id,))
         conn.commit()
-        print(f"Deleted income stream {stream_id}. Rows affected: {cursor.rowcount}")
         return cursor.rowcount > 0
     except sqlite3.Error as e:
         print(f"Database error deleting income stream {stream_id}: {e}")
@@ -1035,7 +1106,6 @@ def delete_future_income_stream(stream_id: str) -> bool:
     finally:
         conn.close()
 
-# --- NEW: Functions for Portfolio Value Snapshots ("Operation Snapshot") ---
 def get_closest_snapshot_value_before_date(target_date: str) -> Optional[Dict[str, Any]]:
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -1093,7 +1163,6 @@ def delete_portfolio_snapshot(snapshot_id: str) -> bool:
     conn.close()
     return deleted_count > 0
 
-# --- NEW: CRUD Functions for Real Estate Properties ---
 def get_all_properties() -> List[Dict[str, Any]]:
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -1131,7 +1200,6 @@ def create_property(prop: Property) -> Property:
 def update_property(property_id: str, updates: Dict[str, Any]):
     conn = get_db_connection()
     cursor = conn.cursor()
-    
     allowed_fields = ['name', 'purchase_price', 'mortgage_balance', 'current_value', 'appreciation_rate', 'is_primary']
     set_clauses, params = [], []
     for field, value in updates.items():
@@ -1139,10 +1207,8 @@ def update_property(property_id: str, updates: Dict[str, Any]):
             continue
         set_clauses.append(f"{field} = ?")
         params.append(value)
-    
     if not set_clauses:
         return
-
     sql = f"UPDATE properties SET {', '.join(set_clauses)} WHERE property_id = ?"
     params.append(property_id)
     try:
@@ -1175,18 +1241,13 @@ def get_total_real_estate_equity() -> float:
         return val - debt
     return 0.0
 
-# --- NEW: Phase 9 Forecast Functions ---
-# Scotty Update: Now supports variable lookback years for multi-year averaging.
 def get_base_col_from_actuals(categories: List[str], lookback_years: int = 1) -> float:
     if not categories:
         return 0.0
-    
     if lookback_years < 1: lookback_years = 1
     months = lookback_years * 12
-
     conn = get_db_connection()
     cursor = conn.cursor()
-    
     placeholders = ', '.join('?' for _ in categories)
     query = f"""
         SELECT SUM(amount) as total_expense 
@@ -1195,12 +1256,10 @@ def get_base_col_from_actuals(categories: List[str], lookback_years: int = 1) ->
           AND category IN ({placeholders})
           AND transaction_date >= date('now', '-{months} months')
     """
-    
     try:
         cursor.execute(query, categories)
         result = cursor.fetchone()
         total_sum = result['total_expense'] if result and result['total_expense'] else 0.0
-        # Annualize: Sum of N years divided by N
         return abs(total_sum) / lookback_years
     except sqlite3.Error as e:
         print(f"Error calculating base CoL: {e}")
@@ -1208,14 +1267,11 @@ def get_base_col_from_actuals(categories: List[str], lookback_years: int = 1) ->
     finally:
         conn.close()
 
-# Scotty Update: Now supports variable lookback years for multi-year averaging.
 def get_base_col_breakdown(categories: List[str], lookback_years: int = 1) -> Dict[str, float]:
     if not categories:
         return {}
-    
     if lookback_years < 1: lookback_years = 1
     months = lookback_years * 12
-    
     conn = get_db_connection()
     cursor = conn.cursor()
     placeholders = ', '.join('?' for _ in categories)
@@ -1227,14 +1283,12 @@ def get_base_col_breakdown(categories: List[str], lookback_years: int = 1) -> Di
           AND transaction_date >= date('now', '-{months} months')
         GROUP BY category
     """
-    
     breakdown = {}
     try:
         cursor.execute(query, categories)
         rows = cursor.fetchall()
         for row in rows:
             total_sum = abs(row['total_expense'] or 0.0)
-            # Annualize: Sum of N years divided by N
             breakdown[row['category']] = total_sum / lookback_years
     except sqlite3.Error as e:
         print(f"Error calculating base CoL breakdown: {e}")
@@ -1253,25 +1307,31 @@ def get_discretionary_budget_items() -> List[Dict[str, Any]]:
 def save_discretionary_budget_item(item: Dict[str, Any]):
     conn = get_db_connection()
     cursor = conn.cursor()
+    item_id = item.get('item_id')
+    if not item_id:
+        item_id = str(uuid.uuid4())
+
     sql = """
         INSERT OR REPLACE INTO discretionary_budget_items (
-            item_id, name, amount, start_year, end_year, is_recurring, inflation_adjusted, category
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            item_id, name, amount, start_year, end_year, is_recurring, inflation_adjusted, category, is_enabled
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
     params = (
-        item.get('item_id', str(uuid.uuid4())),
+        item_id,
         item['name'],
         float(item['amount']),
         int(item['start_year']),
         int(item.get('end_year')) if item.get('end_year') else None,
         1 if item.get('is_recurring') else 0,
         1 if item.get('inflation_adjusted') else 0,
-        item.get('category')
+        item.get('category'),
+        1 if item.get('is_enabled', True) else 0
     )
     try:
         cursor.execute(sql, params)
         conn.commit()
     except sqlite3.Error as e:
+        print(f"Database error saving discretionary item: {e}")
         conn.rollback()
         raise e
     finally:
@@ -1280,8 +1340,14 @@ def save_discretionary_budget_item(item: Dict[str, Any]):
 def delete_discretionary_budget_item(item_id: str) -> bool:
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM discretionary_budget_items WHERE item_id = ?", (item_id,))
-    deleted = cursor.rowcount
-    conn.commit()
-    conn.close()
-    return deleted > 0
+    try:
+        cursor.execute("DELETE FROM discretionary_budget_items WHERE item_id = ?", (item_id,))
+        deleted = cursor.rowcount
+        conn.commit()
+        return deleted > 0
+    except sqlite3.Error as e:
+        print(f"Database error deleting discretionary item {item_id}: {e}")
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()

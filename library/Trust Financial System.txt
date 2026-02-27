@@ -1,4 +1,4 @@
-Curie Trust Financial Control Center — Project Requirements Specification (PRS) v1.7
+Curie Trust Financial Control Center — Project Requirements Specification (PRS) v1.9
 
 1) Mission
 
@@ -6,86 +6,66 @@ Build a local-first financial control center for the Curie Trust that continuous
 	1.	What is our latest net worth (right now)?
 	2.	Where did our income go (by top budget category and projects/tags)?
 	3.	What rate of return are we getting on our investments (before fees, after fees, after taxes)?
-	4.	(New) Will our capital last until age 95?
+	4.	(Forecast) Will our capital last, and are we tax-optimized?
 
 The system ingests periodic CSV/spreadsheet uploads from multiple financial institutions, normalizes them into Curie Trust’s internal data model, and keeps market values fresh via API “drip” updates.
 
 ⸻
 
 2) Core UX Requirements (Sankey-forward)
-
-2.1 Required Sankey Diagrams
-[... unchanged from v1.5 ...]
-
-⸻
-
-3) Financial Semantics
-[... unchanged from v1.5 ...]
+[... unchanged ...]
 
 ⸻
 
 4) Screens (UI Requirements Summary)
 
-4.1 Home (Command Center)
-	•	Latest Net Worth Hero
-	•	Capital Flow Sankey
-	•	Portfolio Allocation
+4.1 - 4.5 [... unchanged ...]
 
-4.2 - 4.5
-[... unchanged ...]
-
-4.6 Forecast (The Time Machine) - REVISED v1.7
+4.6 Forecast (The Time Machine) - UPGRADED v1.9
 	•	Global Settings:
-		•	Birth Year: Used to calculate current age and the horizon line (Age 95).
-		•	Inflation Rate %: User entered (default 3.0%). Applies to all expenses annually.
-		•	Assumed Portfolio Return %: User entered (default 5.0%). Applies to liquid assets annually.
-	•	Base Cost of Living (CoL) Engine:
-		•	Selector: Collapsible list of all expense categories.
-		•	Calculation: System sums the *last 12 months of actuals* for checked categories to establish "Year 0 Base CoL".
-		•	Projection: This base amount grows annually by the Inflation Rate.
-	•	Discretionary Budget Table:
-		•	Table for future one-off or recurring large expenses (e.g., "World Tour").
-		•	"Replicate Forward": Option to repeat an expense annually until age 95, adjusting for inflation.
+		•	Birth Year, Inflation Rate, Return Rate.
+		•	Tax Filing Status (Single/Joint).
+	•	Strategy Configuration:
+		•	Withdrawal Order: Standard (Taxable -> Deferred -> Roth) vs. Legacy Saver (Deferred -> Taxable -> Roth).
+		•	Roth Conversion Strategy: "Fill to Bracket Top" (converting Deferred to Roth up to the 22% or 24% tax ceiling).
 	•	The Simulation (Runway Logic):
-		•	System calculates year-over-year Net Worth:
-			`Next_NW = (Current_NW * (1 + Return_Rate)) + (Future_Income - (Base_CoL + Discretionary))`
-		•	Real Estate values grow separately by their specific Appreciation Rates.
-	•	Visualization (The Runway Graph):
-		•	Primary View: A Line Graph of **Projected Total Net Worth** from now until Age 95.
-		•	Goal: Visual confirmation of whether assets are exhausted (line hits zero) or sustained (line stays positive).
-		•	Secondary View (Tooltip/Overlay): Show the "Annual Deficit/Surplus" for any hovered year.
+		•	Calculates RMDs (Required Minimum Distributions) starting at age 75.
+		•	Applies progressive tax brackets to RMDs and Withdrawals.
+		•	Models the "Tax Drag" on the portfolio over time.
+	•	Visualization:
+		•	Runway Graph (Net Worth).
+		•	Tax Exposure Graph: Income vs. Tax Brackets over time.
 
 ⸻
 
-5) Data Ingestion & Rules
-[... unchanged ...]
+8) Internal Data Model (Additions for v1.9)
+	•	`app_settings` (KV store additions):
+		•	`forecast_tax_filing_status`: 'single' | 'joint'
+		•	`forecast_withdrawal_strategy`: 'standard' | 'legacy_optimize'
+		•	`forecast_roth_conversion_target`: integer (amount to convert annually)
+		•	`forecast_tax_bracket_ceiling`: integer (e.g., 190000 for the 22% bracket)
 
 ⸻
 
-6) Market Data & Returns
-[... unchanged ...]
+10) Phased Delivery
 
-⸻
+[... Phases 0-9 Completed ...]
 
-8) Internal Data Model (Additions for v1.7)
-	•	...existing entities...
-	•	`app_settings` (KV store): Stores `forecast_inflation_rate`, `forecast_birth_year`, `forecast_return_rate`, `base_col_categories`.
-	•	`discretionary_budget_item`:
-		•	item_id (PK)
-		•	name, amount, start_year
-		•	is_recurring, inflation_adjusted (booleans)
-
-⸻
-
-10) Phased Delivery (User-Feature Centric)
-
-[... Phases 0-8 Completed/Stable ...]
-
-Phase 9: The Forecast Planner (Next)
-	•	Goal: Visualize capital longevity and drawdown trajectory.
+Phase 10: The Strategic Tax Engine (Next)
+	•	Goal: Optimize pre-tax retirement accounts using progressive tax logic.
 	•	Features:
-		•	Forecast Settings (Birth Year, Inflation, Return Rate).
-		•	Base CoL Calculator (Actuals-based).
-		•	Discretionary Budget Editor.
-		•	Simulation Engine (Year-over-Year Net Worth calculation).
-		•	Runway Graph (Projected Net Worth vs. Time).
+		•	Implement 2024 Federal/State Tax Brackets (Simplified).
+		•	Calculate RMDs (Age 75 rule).
+		•	Simulate "Tax Bracket Filling" via Roth Conversions.
+		•	Visualize the "Tax Bomb" (RMD impact on future tax rates).
+
+Phase 11: Legacy & Liquidation View (Thereafter)
+	•	Goal: Show the "True" value of the estate after estimated liquidation taxes.
+	•	Features:
+		•	Calculate "Liquidation Value" (Net Worth minus embedded capital gains/income tax).
+		•	Compare "Step-Up Basis" value (Taxable accounts) vs. "Tax-Free" value (Roth) vs. "Tax-Heavy" value (Deferred).
+
+11) Deferred / "Maybe Someday" (Low Priority)
+	•	Complex Housing Scenarios (CCRC entrance fees): Use Discretionary Budget manual entries instead.
+	•	Survivor Modeling: Too much variance; stick to Joint for now.
+	•	Specific Tax Lot Selling: Average cost basis is sufficient for strategic forecasting.

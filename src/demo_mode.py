@@ -50,7 +50,7 @@ def _apply_demo_to_property(prop: Dict[str, Any]) -> Dict[str, Any]:
 def process_for_demo_mode(data: Any) -> Any:
     """
     Recursively processes a data structure to apply demo mode transformations.
-    Intelligently detects if data is Real Estate or Portfolio based on keys.
+    Intelligently detects if data is Real Estate, Portfolio, or Forecast Simulation based on keys.
     """
     if isinstance(data, list):
         if not data:
@@ -71,7 +71,52 @@ def process_for_demo_mode(data: Any) -> Any:
     if isinstance(data, dict):
         # Handle specific, known data structures
         
-        # 1. Portfolio Allocation (Pie Chart & Table)
+        # 1. Forecast Simulation Result (Wrapper)
+        if 'simulation_series' in data:
+            demo_data = data.copy()
+            demo_data['simulation_series'] = [
+                process_for_demo_mode(year_data) for year_data in data['simulation_series']
+            ]
+            if 'settings' in demo_data:
+                 # Obscure the starting points summary
+                 s = demo_data['settings']
+                 if 'starting_nw' in s:
+                      s['starting_nw'] = s['starting_nw'] / float(PORTFOLIO_DIVISOR)
+                 if 'starting_base_col' in s:
+                      s['starting_base_col'] = s['starting_base_col'] / float(PORTFOLIO_DIVISOR)
+            return demo_data
+
+        # 2. Forecast Year Data (Simulation Row)
+        # We scale assets/expenses/income to obscure magnitude.
+        if 'liquid_assets' in data and 'total_net_worth' in data:
+            demo_row = data.copy()
+            
+            # Scale Portfolio-like items
+            port_keys = ['liquid_assets', 'bucket_taxable', 'bucket_deferred', 'bucket_roth', 
+                         'total_income', 'total_expenses', 'base_col_expense', 'discretionary_expense',
+                         'net_cashflow', 'investment_growth', 'rmd_event']
+            
+            for k in port_keys:
+                if k in demo_row:
+                     demo_row[k] = demo_row[k] / float(PORTFOLIO_DIVISOR)
+            
+            # Scale Real Estate Items
+            if 'real_estate_equity' in demo_row:
+                 demo_row['real_estate_equity'] = demo_row['real_estate_equity'] / float(REAL_ESTATE_DIVISOR)
+
+            # Re-sum Net Worth because components were scaled differently
+            # Note: This changes the math slightly, but visual trend remains roughly similar for demo purposes.
+            demo_row['total_net_worth'] = demo_row['liquid_assets'] + demo_row['real_estate_equity']
+            
+            # Scale the detailed breakdown map
+            if 'expense_breakdown' in demo_row and isinstance(demo_row['expense_breakdown'], dict):
+                 demo_row['expense_breakdown'] = {
+                      k: v / float(PORTFOLIO_DIVISOR) for k, v in demo_row['expense_breakdown'].items()
+                 }
+            
+            return demo_row
+
+        # 3. Portfolio Allocation (Pie Chart & Table)
         # This is purely portfolio data, use standard divisor.
         if all(k in data for k in ['chartData', 'tableData']):
             demo_data = data.copy()
@@ -85,7 +130,7 @@ def process_for_demo_mode(data: Any) -> Any:
             ]
             return demo_data
 
-        # 2. Portfolio Summary / Overall Return (Mix of Liquid and Real Estate)
+        # 4. Portfolio Summary / Overall Return (Mix of Liquid and Real Estate)
         # This requires applying DIFFERENT divisors to different keys and re-summing.
         if 'total_real_estate_equity' in data or 'total_market_value' in data:
             demo_data = data.copy()

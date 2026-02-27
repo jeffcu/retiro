@@ -56,8 +56,8 @@ const FileUploader = ({ title, importType, onUploadSuccess }) => {
             <h3>{title}</h3>
             <form onSubmit={handleSubmit}>
                 <div className="form-group">
-                    <label htmlFor={`${importType}-account-id`}>Account ID</label>
-                    <input type="text" id={`${importType}-account-id`} placeholder="e.g., brokerage, checking" onChange={(e) => setAccountId(e.target.value)} required />
+                    <label htmlFor={`${importType}-account-id`}>Account ID (Group Name)</label>
+                    <input type="text" id={`${importType}-account-id`} placeholder="e.g., Fidelity, Chase" onChange={(e) => setAccountId(e.target.value)} required />
                 </div>
                 <div className="form-group">
                     <label htmlFor={`${importType}-file`}>CSV File</label>
@@ -70,25 +70,46 @@ const FileUploader = ({ title, importType, onUploadSuccess }) => {
     );
 };
 
-// --- NEW: AccountTaxStatusManager ---
+// --- NEW: AccountTaxStatusManager with Asset Totals & Grouping --- //
 const AccountTaxStatusManager = () => {
     const [accounts, setAccounts] = useState([]);
     const [metadata, setMetadata] = useState({});
+    const [performance, setPerformance] = useState({});
     const [isLoading, setIsLoading] = useState(true);
     const [savingId, setSavingId] = useState(null);
+
+    const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
+    }).format(value || 0);
 
     useEffect(() => {
         const fetchData = async () => {
             setIsLoading(true);
             try {
-                const [accRes, metaRes] = await Promise.all([
+                const [accRes, metaRes, perfRes] = await Promise.all([
                     fetch('/api/accounts'),
-                    fetch('/api/accounts/metadata')
+                    fetch('/api/accounts/metadata'),
+                    fetch('/api/accounts/performance')
                 ]);
+                
                 const accData = await accRes.json();
                 const metaData = await metaRes.json();
+                const perfData = await perfRes.json();
+
+                // Create a map of account_id/lookup_key to market value
+                const perfMap = {};
+                perfData.forEach(p => {
+                    perfMap[p.lookup_key] = p.total_market_value;
+                    // Also map the group_id if no specific key exists
+                    if (!perfMap[p.group_id]) perfMap[p.group_id] = 0;
+                });
+
                 setAccounts(accData);
                 setMetadata(metaData);
+                setPerformance(perfMap);
             } catch (error) {
                 console.error("Failed to load account data", error);
             } finally {
@@ -98,9 +119,14 @@ const AccountTaxStatusManager = () => {
         fetchData();
     }, []);
 
-    const handleStatusChange = async (accountId, newStatus) => {
+    const handleStatusChange = async (accountId, newStatus, newGroup = null) => {
         const currentMeta = metadata[accountId] || {};
-        const updatedMeta = { ...currentMeta, tax_status: newStatus };
+        
+        const updatedMeta = { 
+            ...currentMeta, 
+            tax_status: newStatus !== null ? newStatus : currentMeta.tax_status,
+            group_name: newGroup !== null ? newGroup : currentMeta.group_name
+        };
         
         // Optimistic UI update
         setMetadata(prev => ({ ...prev, [accountId]: updatedMeta }));
@@ -110,7 +136,11 @@ const AccountTaxStatusManager = () => {
             await fetch(`/api/accounts/${accountId}/metadata`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ tax_status: newStatus, notes: currentMeta.notes })
+                body: JSON.stringify({ 
+                    tax_status: updatedMeta.tax_status, 
+                    notes: currentMeta.notes,
+                    group_name: updatedMeta.group_name 
+                })
             });
         } catch (error) {
             console.error("Save failed", error);
@@ -122,35 +152,64 @@ const AccountTaxStatusManager = () => {
 
     return (
         <div className="visibility-manager-card" style={{marginTop: '2rem'}}>
-            <h3>Account Tax Status (for RMDs & Forecasting)</h3>
+            <h3>Account Settings & Tax Status</h3>
             {isLoading ? <p>Loading...</p> : (
                 <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '0.9em'}}>
                     <thead>
                         <tr style={{borderBottom: '1px solid #444', textAlign: 'left'}}>
                             <th style={{padding: '8px'}}>Account ID</th>
+                            <th style={{padding: '8px', textAlign: 'right'}}>Asset Value</th>
                             <th style={{padding: '8px'}}>Tax Status</th>
+                            <th style={{padding: '8px'}}>Group Name</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {accounts.map(acc => (
-                            <tr key={acc} style={{borderBottom: '1px solid #444'}}>
-                                <td style={{padding: '8px'}}>{acc}</td>
-                                <td style={{padding: '8px'}}>
-                                    <select 
-                                        value={metadata[acc]?.tax_status || 'Taxable'}
-                                        onChange={(e) => handleStatusChange(acc, e.target.value)}
-                                        style={{padding: '4px', background: '#333', color: '#fff', border: '1px solid #555', borderRadius: '4px'}}
-                                        disabled={savingId === acc}
-                                    >
-                                        <option value="Taxable">Taxable (Standard)</option>
-                                        <option value="Deferred">Tax-Deferred (IRA/401k)</option>
-                                        <option value="Roth">Tax-Free (Roth)</option>
-                                        <option value="Exempt">Exempt (HSA/Other)</option>
-                                    </select>
-                                    {savingId === acc && <span style={{marginLeft: '8px', fontSize: '0.8em', color: '#aaa'}}>Saving...</span>}
-                                </td>
-                            </tr>
-                        ))}
+                        {accounts.map(acc => {
+                            // Determine if this account has assets associated with it
+                            const value = performance[acc] || 0;
+                            const hasAssets = value > 0;
+                            const textColor = hasAssets ? 'var(--gold-accent)' : '#666';
+                            
+                            return (
+                                <tr key={acc} style={{borderBottom: '1px solid #444'}}>
+                                    <td style={{padding: '8px', color: textColor}}>
+                                        {acc}
+                                        {!hasAssets && <span style={{fontSize: '0.8em', marginLeft: '8px', fontStyle: 'italic', opacity: 0.7}}>(No Assets)</span>}
+                                    </td>
+                                    <td style={{padding: '8px', textAlign: 'right', fontFamily: 'monospace', color: textColor}}>
+                                        {formatCurrency(value)}
+                                    </td>
+                                    <td style={{padding: '8px'}}>
+                                        <select 
+                                            value={metadata[acc]?.tax_status || 'Taxable'}
+                                            onChange={(e) => handleStatusChange(acc, e.target.value, null)}
+                                            style={{padding: '4px', background: '#333', color: '#fff', border: '1px solid #555', borderRadius: '4px'}}
+                                            disabled={savingId === acc}
+                                        >
+                                            <option value="Taxable">Taxable (Standard)</option>
+                                            <option value="Deferred">Tax-Deferred (IRA/401k)</option>
+                                            <option value="Roth">Tax-Free (Roth)</option>
+                                            <option value="Exempt">Exempt (HSA/Other)</option>
+                                        </select>
+                                    </td>
+                                    <td style={{padding: '8px'}}>
+                                        <input
+                                            type="text"
+                                            placeholder="Group Name"
+                                            value={metadata[acc]?.group_name || ''}
+                                            onChange={(e) => setMetadata(prev => ({
+                                                ...prev, 
+                                                [acc]: { ...prev[acc], group_name: e.target.value }
+                                            }))}
+                                            onBlur={(e) => handleStatusChange(acc, null, e.target.value)}
+                                            style={{width: '100%', padding: '4px', background: '#333', color: '#fff', border: '1px solid #555', borderRadius: '4px'}}
+                                            disabled={savingId === acc}
+                                        />
+                                        {savingId === acc && <span style={{marginLeft: '8px', fontSize: '0.8em', color: '#aaa'}}>Saving...</span>}
+                                    </td>
+                                </tr>
+                            );
+                        })}
                     </tbody>
                 </table>
             )}

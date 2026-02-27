@@ -2,6 +2,7 @@ from datetime import date
 from decimal import Decimal
 from typing import List, Dict, Any, Optional
 from . import database as db
+from . import analysis # Re-use analysis for account aggregation consistency
 
 # Uniform Lifetime Table for RMD divisors (Simplified)
 # Source: IRS Publication 590-B
@@ -14,36 +15,101 @@ RMD_DIVISORS = {
     98: 7.3, 99: 6.8, 100: 6.4
 }
 
+# 2024 Federal Tax Brackets (Taxable Income)
+# Rate, Single Ceiling, Joint Ceiling
+TAX_BRACKETS_2024 = [
+    (0.10, 11600, 23200),
+    (0.12, 47150, 94300),
+    (0.22, 100525, 201050),
+    (0.24, 191950, 383900),
+    (0.32, 243725, 487450),
+    (0.35, 609350, 1218700),
+    (0.37, float('inf'), float('inf'))
+]
+
+STANDARD_DEDUCTION_2024 = {
+    'single': 14600,
+    'joint': 29200
+}
+
+# Categories to automatically exclude from Base CoL because they are calculated dynamically
+EXCLUDED_EXPENSE_CATEGORIES = ["Taxes", "Federal Tax", "State Tax", "Income Tax"]
+
 def get_rmd_divisor(age: int) -> float:
     # Fallback logic for ages > 100
     if age > 100:
         return max(3.0, 6.4 - (0.3 * (age - 100)))
     return RMD_DIVISORS.get(age, 27.4)
 
+def calculate_progressive_tax(gross_income: float, filing_status: str, state_rate: float) -> Dict[str, float]:
+    """
+    Calculates estimated federal tax (progressive) and state tax (flat effective).
+    Returns tax metrics including room to next bracket.
+    """
+    std_deduction = STANDARD_DEDUCTION_2024.get(filing_status, 14600)
+    taxable_income = max(0, gross_income - std_deduction)
+    
+    fed_tax_bill = 0.0
+    previous_ceiling = 0.0
+    
+    # Calculate Federal Tax
+    for rate, single_ceil, joint_ceil in TAX_BRACKETS_2024:
+        ceiling = joint_ceil if filing_status == 'joint' else single_ceil
+        
+        if taxable_income > ceiling:
+            fed_tax_bill += (ceiling - previous_ceiling) * rate
+            previous_ceiling = ceiling
+        else:
+            fed_tax_bill += (taxable_income - previous_ceiling) * rate
+            break
+            
+    # Calculate State Tax (Simplified Effective Rate on Taxable Income)
+    state_tax_bill = taxable_income * state_rate
+
+    total_tax = fed_tax_bill + state_tax_bill
+    effective_rate = (total_tax / gross_income) if gross_income > 0 else 0.0
+    
+    # Calculate Room to 24% Bracket (Top of 22% bracket)
+    bracket_22_ceiling = TAX_BRACKETS_2024[2][2] if filing_status == 'joint' else TAX_BRACKETS_2024[2][1]
+    dist_to_24 = max(0, bracket_22_ceiling - taxable_income)
+    
+    return {
+        "federal_tax": fed_tax_bill,
+        "state_tax": state_tax_bill,
+        "total_tax": total_tax,
+        "effective_rate": effective_rate,
+        "taxable_income": taxable_income,
+        "headroom_24_pct": dist_to_24
+    }
+
 def calculate_forecast() -> Dict[str, Any]:
     """
     The Time Machine Simulation Engine.
     Projects Net Worth year-over-year from the current year until Age 95.
-    
-    MAJOR UPGRADE (v2.1):
-    - Multi-Bucket Simulation (Taxable, Deferred, Roth).
-    - RMD Logic implementation.
-    - Strategic Withdrawal Order.
-    - Residence Sale Logic Fix.
-    - Restored detailed expense telemetry for UI.
-    - [Scotty] Added Annualized CoL Averaging support.
     """
     
     # 1. Gather Simulation Inputs
     birth_year = db.get_setting('forecast_birth_year')
     inflation_rate = float(db.get_setting('forecast_inflation_rate') or 0.03)
     return_rate = float(db.get_setting('forecast_return_rate') or 0.05)
-    withdrawal_tax_rate = float(db.get_setting('forecast_withdrawal_tax_rate') or 0.15)
+    withdrawal_tax_rate = float(db.get_setting('forecast_withdrawal_tax_rate') or 0.15) # For gross-up estimation
+    
+    state_tax_rate = float(db.get_setting('forecast_state_tax_rate') or 0.0) 
+    if state_tax_rate > 0.5:
+        print(f"Warning: State Tax Rate {state_tax_rate} seems high. Dividing by 100.")
+        state_tax_rate = state_tax_rate / 100.0
+    
+    filing_status = db.get_setting('forecast_tax_filing_status') or 'single'
+    if filing_status not in ['single', 'joint']: filing_status = 'single'
+
+    tax_drag_rate = float(db.get_setting('forecast_tax_drag_rate') or 0.005) 
     
     retirement_age = int(db.get_setting('forecast_retirement_age') or 65)
     nogo_age = int(db.get_setting('forecast_nogo_age') or 80)
     
-    # Residence Sale Strategy
+    withdrawal_strategy = db.get_setting('forecast_withdrawal_strategy') or 'standard'
+    roth_conversion_target = db.get_setting('forecast_roth_conversion_target') or 'none'
+    
     residence_sale_enabled = bool(db.get_setting('forecast_residence_sale_enabled') or False)
     residence_sale_year = db.get_setting('forecast_residence_sale_year')
     try:
@@ -56,18 +122,15 @@ def calculate_forecast() -> Dict[str, Any]:
 
     phase_multipliers = db.get_setting('forecast_phase_multipliers') or {}
     base_col_categories = db.get_setting('forecast_base_col_categories') or []
-    
-    # Scotty: Get the lookback averaging setting (default 1 year)
     lookback_years = int(db.get_setting('forecast_base_col_lookback_years') or 1)
 
     if not birth_year:
         return {"error": "Birth Year not set. Please configure settings."}
 
     # 2. Establish Starting State (Buckets)
-    account_metadata = db.get_account_metadata()
-    holdings = db.get_holdings()
+    # --- CRITICAL UPDATE v1.9.3: Use shared analysis function for bucket consistency with Home View ---
+    account_summaries = analysis.get_account_performance_summary()
     
-    # Bucketize Holdings
     buckets = {
         "Taxable": 0.0,
         "Deferred": 0.0,
@@ -75,18 +138,36 @@ def calculate_forecast() -> Dict[str, Any]:
         "Exempt": 0.0
     }
     
-    # Group by tax status
-    for h in holdings:
-        if h.get('market_value'):
-            acct_id = h['account_id']
-            # Default to 'Taxable' if not set
-            status = account_metadata.get(acct_id, {}).get('tax_status', 'Taxable')
-            buckets[status] += float(h['market_value'])
+    unconfigured_accounts = set()
+    alerts = []
+
+    for acc in account_summaries:
+        status = acc['tax_status']
+        val = acc['total_market_value']
+        if val <= 0: continue
+
+        # Map tax status string to bucket key safely
+        norm_status = status.strip().lower()
+        if 'deferred' in norm_status or 'ira' in norm_status or '401' in norm_status:
+            buckets['Deferred'] += val
+        elif 'roth' in norm_status:
+            buckets['Roth'] += val
+        elif 'exempt' in norm_status:
+            buckets['Exempt'] += val
+        else:
+            buckets['Taxable'] += val
+            # If status is the default 'Taxable' but maybe shouldn't be, we can't easily detect that here without more logic.
+            # But if the account metadata was missing, analysis.py defaults to Taxable. 
+            # We can check if metadata exists in analysis.py, but for now we rely on the user checking the Home Page table.
+
+    print(f"Forecast Engine Initialized with Buckets: {buckets}")
 
     properties = db.get_all_properties()
     
-    # Scotty: Pass the lookback years to the breakdown function
-    base_col_breakdown = db.get_base_col_breakdown(base_col_categories, lookback_years)
+    # --- Filter Excluded Categories from Base CoL ---
+    filtered_col_categories = [c for c in base_col_categories if c not in EXCLUDED_EXPENSE_CATEGORIES]
+    
+    base_col_breakdown = db.get_base_col_breakdown(filtered_col_categories, lookback_years)
     base_col_total_initial = sum(base_col_breakdown.values())
     
     discretionary_items = db.get_discretionary_budget_items()
@@ -96,13 +177,17 @@ def calculate_forecast() -> Dict[str, Any]:
     current_year = date.today().year
     end_year = birth_year + 95
     simulation_data = []
-    alerts = []
+    
+    previous_net_worth = 0.0
 
-    # Alert Check for Residence Sale
+    # Alert Checks
     if residence_sale_enabled and residence_sale_year:
         has_primary = any(p['is_primary'] for p in properties)
         if not has_primary:
-            alerts.append("Residence Sale Strategy is enabled, but no property is marked as 'Principal Residence'. No sale will occur.")
+            alerts.append("Residence Sale Strategy is enabled, but no property is marked as 'Principal Residence'.")
+    
+    if buckets['Deferred'] == 0 and buckets['Roth'] == 0 and sum(buckets.values()) > 0:
+         alerts.append("System Alert: All assets are classified as 'Taxable'. Verify your Account Settings if you have IRAs/401ks.")
 
     working_properties = [
         {
@@ -129,6 +214,9 @@ def calculate_forecast() -> Dict[str, Any]:
         age = year - birth_year
         phase_key = "no" if age >= nogo_age else ("slow" if age >= retirement_age else "go")
         
+        # Track events that add to Ordinary Income (Streams, RMDs, Conversions, Deferred Withdrawals)
+        ordinary_income_events = 0.0
+
         # --- 1. Calculate Income (Non-Portfolio) ---
         year_income = 0.0
         for stream in future_income_streams:
@@ -140,48 +228,63 @@ def calculate_forecast() -> Dict[str, Any]:
                 increase_rate = stream['annual_increase_rate']
                 adjusted_amount = annual_amount * ((1 + increase_rate) ** (year - start.year))
                 year_income += adjusted_amount
+                ordinary_income_events += adjusted_amount
 
-        # --- 2. Calculate RMDs (Required Minimum Distributions) ---
-        # RMDs apply to Deferred buckets starting age 75 (simplified SECURE 2.0)
+        # --- 2. Calculate RMDs ---
         year_rmd = 0.0
         if age >= 75 and buckets['Deferred'] > 0:
             divisor = get_rmd_divisor(age)
             year_rmd = buckets['Deferred'] / divisor
-            # RMD is forced out of Deferred
             buckets['Deferred'] -= year_rmd
-            # Logic: RMDs are taxable income. We treat them as cashflow inflow (income),
-            # but we must account for taxes on them immediately.
-            # For simplicity, we add to year_income, and the net cashflow logic handles the tax drag
-            # if we end up saving it (taxable bucket) or spending it.
-            # HOWEVER, RMDs *force* a tax event. 
-            # We will assume RMD is added to 'year_income' but it carries a tax liability.
-            # To keep the model simple: Add to income. If expenses < income, it goes to Taxable Bucket.
             year_income += year_rmd
+            ordinary_income_events += year_rmd
 
-        # --- 3. Calculate Expenses ---
+        # --- 3. Calculate Living Expenses (Excluding Tax) ---
         years_from_start = year - current_year
         inflation_factor = (1 + inflation_rate) ** years_from_start
         
-        year_base_col = 0.0
+        year_living_expenses = 0.0
+        expense_breakdown = {}
+
         for cat, amount in base_col_breakdown.items():
             multiplier = get_phase_multiplier(cat, phase_key)
-            year_base_col += (amount * inflation_factor * multiplier)
+            cost = (amount * inflation_factor * multiplier)
+            year_living_expenses += cost
+            expense_breakdown[cat] = round(cost, 2)
         
         year_discretionary = 0.0
         for item in discretionary_items:
+            if not item.get('is_enabled', True): continue
             item_start = item['start_year']
             item_end = item['end_year'] if item['end_year'] else (9999 if item['is_recurring'] else item_start)
             if item_start <= year <= item_end:
                 item_amount = item['amount']
                 phase_mult = get_phase_multiplier(item.get('category'), phase_key)
                 item_amount = item_amount * phase_mult
-                if item['inflation_adjusted']:
-                    item_amount = item_amount * inflation_factor
+                if item['inflation_adjusted']: item_amount = item_amount * inflation_factor
                 year_discretionary += item_amount
+                expense_breakdown[item['name']] = round(item_amount, 2)
 
-        total_expenses = year_base_col + year_discretionary
+        # --- 4. Preliminary Tax Check (Pre-Withdrawal/Conversion) ---
+        tax_metrics_pre = calculate_progressive_tax(ordinary_income_events, filing_status, state_tax_rate)
 
-        # --- 4. Sale of Residence Logic ---
+        # --- 5. ROTH CONVERSION STRATEGY (Phase 10) ---
+        conversion_amount = 0.0
+        if roth_conversion_target == 'fill_22' or roth_conversion_target == 'fill_24':
+            # Determine ceiling based on target
+            # Using 2024 brackets: 22% ends at 100k/201k. 24% ends at 191k/383k.
+            # We use the generic 'headroom_24_pct' from our function which calculates distance to end of 22% (start of 24%)
+            # If user wants to fill 24%, we need logic for that. For now, we support 'Fill to Top of 22%' which is common.
+            
+            if roth_conversion_target == 'fill_22':
+                room = tax_metrics_pre['headroom_24_pct'] # This is distance to 24%
+                if room > 0 and buckets['Deferred'] > 0:
+                    conversion_amount = min(buckets['Deferred'], room)
+                    buckets['Deferred'] -= conversion_amount
+                    buckets['Roth'] += conversion_amount
+                    ordinary_income_events += conversion_amount
+
+        # --- 6. Residence Sale ---
         sale_proceeds = 0.0
         sale_event_triggered = False
         if residence_sale_enabled and residence_sale_year and year == residence_sale_year:
@@ -192,68 +295,83 @@ def calculate_forecast() -> Dict[str, Any]:
                 working_properties.remove(prop)
                 sale_event_triggered = True
 
-        # --- 5. Net Cashflow & Strategic Withdrawal ---
-        # Logic: 
-        #   Net = Income (incl RMDs) + Sale Proceeds - Expenses
-        #   If Net > 0: Surplus -> Invest in Taxable
-        #   If Net < 0: Deficit -> Withdraw from Taxable -> Deferred -> Roth
-        
+        # --- 7. Net Cashflow & Strategic Withdrawal ---
+        # We must recalculate tax because of Conversions
+        tax_metrics_post_conversion = calculate_progressive_tax(ordinary_income_events, filing_status, state_tax_rate)
+        annual_tax_bill = tax_metrics_post_conversion['total_tax']
+        expense_breakdown['Est. Income Tax'] = round(annual_tax_bill, 2)
+
+        total_expenses = year_living_expenses + year_discretionary + annual_tax_bill
+
         net_cashflow = year_income + sale_proceeds - total_expenses
-        
-        tax_drag = 0.0
+        strategy_executed = "Standard"
+        deferred_withdrawals_for_spend = 0.0
 
         if net_cashflow > 0:
-            # SURPLUS: Add to Taxable Bucket
-            # Note: We already paid tax on RMDs implicitly by not having a 100% tax drag here.
-            # Ideally, we'd subtract tax from RMD before adding to surplus.
-            # Simplified: Surplus goes to Taxable.
+            strategy_executed = "Accumulation"
             buckets['Taxable'] += net_cashflow
         else:
-            # DEFICIT: Need to withdraw
             amount_needed = abs(net_cashflow)
             
-            # A. Try Taxable first
-            from_taxable = min(buckets['Taxable'], amount_needed)
-            buckets['Taxable'] -= from_taxable
-            amount_needed -= from_taxable
-            
-            # B. Try Roth next (Tax Free)
-            # (Strategic change: Roth is usually last to preserve tax-free growth, 
-            # but some strategies use it to fill low tax brackets. We'll put it LAST for standard advice).
-            
-            # B. Try Deferred (Taxable Withdrawal)
-            if amount_needed > 0:
-                # We need to withdraw enough to cover amount_needed PLUS taxes.
-                # Gross_Withdrawal = Amount / (1 - Tax_Rate)
-                gross_withdrawal_needed = amount_needed / (1.0 - withdrawal_tax_rate)
-                from_deferred = min(buckets['Deferred'], gross_withdrawal_needed)
+            if withdrawal_strategy == 'deferred_first' and age >= 60:
+                strategy_executed = "Deferred First"
+                if amount_needed > 0:
+                    # Gross up using estimated marginal rate
+                    gross_needed = amount_needed / (1.0 - withdrawal_tax_rate)
+                    from_deferred = min(buckets['Deferred'], gross_needed)
+                    buckets['Deferred'] -= from_deferred
+                    net_from_deferred = from_deferred * (1.0 - withdrawal_tax_rate)
+                    deferred_withdrawals_for_spend += from_deferred
+                    amount_needed -= net_from_deferred
+
+                if amount_needed > 0:
+                    from_taxable = min(buckets['Taxable'], amount_needed)
+                    buckets['Taxable'] -= from_taxable
+                    amount_needed -= from_taxable
+
+                if amount_needed > 0:
+                    from_roth = min(buckets['Roth'], amount_needed)
+                    buckets['Roth'] -= from_roth
+                    amount_needed -= from_roth
+
+            else:
+                strategy_executed = "Standard"
+                from_taxable = min(buckets['Taxable'], amount_needed)
+                buckets['Taxable'] -= from_taxable
+                amount_needed -= from_taxable
                 
-                buckets['Deferred'] -= from_deferred
-                
-                # Net cash realized is what we actually spend
-                net_from_deferred = from_deferred * (1.0 - withdrawal_tax_rate)
-                amount_needed -= net_from_deferred
-                tax_drag += (from_deferred - net_from_deferred)
+                if amount_needed > 0:
+                    gross_needed = amount_needed / (1.0 - withdrawal_tax_rate)
+                    from_deferred = min(buckets['Deferred'], gross_needed)
+                    buckets['Deferred'] -= from_deferred
+                    net_from_deferred = from_deferred * (1.0 - withdrawal_tax_rate)
+                    deferred_withdrawals_for_spend += from_deferred
+                    amount_needed -= net_from_deferred
 
-            # C. Try Roth (Tax Free) - Last Resort
-            if amount_needed > 0:
-                from_roth = min(buckets['Roth'], amount_needed)
-                buckets['Roth'] -= from_roth
-                amount_needed -= from_roth
+                if amount_needed > 0:
+                    from_roth = min(buckets['Roth'], amount_needed)
+                    buckets['Roth'] -= from_roth
+                    amount_needed -= from_roth
+        
+        # --- 8. Final Tax Recalculation (Post-Withdrawal) ---
+        # If we pulled more from deferred to pay bills, we owe more tax.
+        ordinary_income_events += deferred_withdrawals_for_spend
+        final_tax_metrics = calculate_progressive_tax(ordinary_income_events, filing_status, state_tax_rate)
 
-            # If amount_needed > 0 here, we are bankrupt for this year.
+        # --- 9. Investment Growth ---
+        taxable_return = return_rate - tax_drag_rate
+        if taxable_return < 0: taxable_return = 0
 
-        # --- 6. Investment Growth (End of Year) ---
-        # Grow all buckets
-        # Note: We apply growth AFTER withdrawals to be conservative (withdraw at start of year)
-        buckets['Taxable'] *= (1 + return_rate)
+        buckets['Taxable'] *= (1 + taxable_return)
         buckets['Deferred'] *= (1 + return_rate)
         buckets['Roth'] *= (1 + return_rate)
         buckets['Exempt'] *= (1 + return_rate)
         
-        total_investment_growth = (buckets['Taxable'] + buckets['Deferred'] + buckets['Roth'] + buckets['Exempt']) * (return_rate / (1+return_rate))
+        total_investment_growth = \
+            (buckets['Taxable'] * (taxable_return / (1+taxable_return))) + \
+            ((buckets['Deferred'] + buckets['Roth'] + buckets['Exempt']) * (return_rate / (1+return_rate)))
 
-        # --- 7. Real Estate Growth ---
+        # --- 10. Real Estate Growth ---
         year_re_value = 0.0
         year_re_debt = 0.0
         for prop in working_properties:
@@ -263,6 +381,11 @@ def calculate_forecast() -> Dict[str, Any]:
 
         total_liquid = sum(buckets.values())
         total_net_worth = total_liquid + (year_re_value - year_re_debt)
+        
+        nw_delta = 0
+        if year > current_year:
+            nw_delta = total_net_worth - previous_net_worth
+        previous_net_worth = total_net_worth
 
         simulation_data.append({
             "year": year,
@@ -273,15 +396,25 @@ def calculate_forecast() -> Dict[str, Any]:
             "bucket_deferred": round(buckets['Deferred'], 2),
             "bucket_roth": round(buckets['Roth'], 2),
             "rmd_event": round(year_rmd, 2),
+            "roth_conversion": round(conversion_amount, 2),
             "real_estate_equity": round(year_re_value - year_re_debt, 2),
             "total_net_worth": round(total_net_worth, 2),
+            "nw_delta": round(nw_delta, 2),
             "total_income": round(year_income, 2),
             "total_expenses": round(total_expenses, 2),
-            "base_col_expense": round(year_base_col, 2), # RESTORED
-            "discretionary_expense": round(year_discretionary, 2), # RESTORED
+            "base_col_expense": round(year_living_expenses, 2),
+            "discretionary_expense": round(year_discretionary, 2),
+            "expense_breakdown": expense_breakdown,
             "net_cashflow": round(year_income - total_expenses + sale_proceeds, 2),
             "investment_growth": round(total_investment_growth, 2),
-            "sale_event": sale_event_triggered
+            "sale_event": sale_event_triggered,
+            "strategy_executed": strategy_executed,
+            "tax_metrics": {
+                "taxable_income": round(final_tax_metrics['taxable_income'], 2),
+                "effective_rate": round(final_tax_metrics['effective_rate'] * 100, 2),
+                "headroom_24_pct": round(final_tax_metrics['headroom_24_pct'], 2),
+                "total_tax": round(final_tax_metrics['total_tax'], 2)
+            }
         })
         
     return {
@@ -290,6 +423,7 @@ def calculate_forecast() -> Dict[str, Any]:
         "settings": {
             "birth_year": birth_year,
             "starting_nw": total_liquid + (year_re_value - year_re_debt if 'year_re_value' in locals() else 0),
-            "starting_base_col": round(base_col_total_initial, 2)
+            "starting_base_col": round(base_col_total_initial, 2),
+            "withdrawal_strategy": withdrawal_strategy
         }
     }

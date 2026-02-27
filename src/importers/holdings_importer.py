@@ -59,8 +59,9 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Hold
         'quantity': ['quantity', 'shares', 'units'],
         'cost_basis': ['costbasis', 'cost', 'totalcost', 'costbasis($)'],
         'market_value': ['marketvalue', 'value', 'totalvalue', 'value($)'],
-        'tags': ['tags', 'group', 'category'],
-        'asset_type': ['assettype', 'type', 'assetclass', 'securitytypedescription'],
+        'tags': ['tags', 'group', 'category', 'accountname'], # Added Account Name to tags for visibility
+        'asset_type': ['assettype', 'type', 'assetclass', 'securitytypedescription', 'description'],
+        'account_number': ['accountnumber', 'account#', 'accountno', 'accountid', 'account'],
     }
 
     header_map = {}
@@ -104,7 +105,7 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Hold
 
         # A row is only skipped if its identifier (symbol) is missing.
         if not symbol_key or not row.get(symbol_key) or not row.get(symbol_key).strip():
-            skipped_rows.append({"row_number": row_num, "row_data": row, "reason": "Symbol is missing or empty."})
+            skipped_rows.append({"row_number": row_num, "row_data": row, "reason": "Symbol is missing or empty."}) 
             continue
 
         symbol = row[symbol_key].strip().upper()
@@ -123,17 +124,32 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Hold
         tags = []
         tags_key = header_map.get('tags')
         if tags_key and row.get(tags_key):
-            tags = [t.strip() for t in row[tags_key].split(',') if t.strip()]
+            # Split by comma if it looks like a list, otherwise just add the value
+            val = row[tags_key].strip()
+            if ',' in val:
+                tags = [t.strip() for t in val.split(',') if t.strip()]
+            else:
+                tags = [val]
 
         asset_type = None
         asset_type_key = header_map.get('asset_type')
         if asset_type_key and row.get(asset_type_key):
             asset_type = row[asset_type_key].strip()
 
+        account_number = None
+        acc_num_key = header_map.get('account_number')
+        if acc_num_key and row.get(acc_num_key):
+            account_number = row[acc_num_key].strip()
+            # Mask account number for privacy if needed, but for local trust we keep it.
+
         # --- AGGREGATION LOGIC ---
-        if symbol in holdings_map:
+        # We aggregate based on Symbol AND Account Number to prevent merging distinct sub-accounts.
+        # If account_number is None (file didn't have it), it falls back to 'main' bucket.
+        agg_key = (symbol, account_number)
+
+        if agg_key in holdings_map:
             # Aggregate data for the existing symbol
-            existing_holding = holdings_map[symbol]
+            existing_holding = holdings_map[agg_key]
             existing_holding.quantity += quantity
             existing_holding.cost_basis += cost_basis
             if existing_holding.market_value is not None and market_value is not None:
@@ -151,14 +167,15 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Hold
                 "row_number": row_num,
                 "field": "symbol",
                 "value": symbol,
-                "message": "Duplicate symbol found; values were aggregated."
+                "message": "Duplicate symbol (per account) found; values were aggregated."
             })
         else:
             # Create a new holding entry
-            raw_id = f"{account_id}-{symbol}"
+            # ID must be unique per account_id + symbol + account_number
+            raw_id = f"{account_id}-{symbol}-{account_number or 'main'}"
             holding_id = hashlib.sha256(raw_id.encode('utf-8')).hexdigest()
             
-            holdings_map[symbol] = Holding(
+            h = Holding(
                 holding_id=holding_id,
                 account_id=account_id,
                 symbol=symbol,
@@ -168,6 +185,11 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Hold
                 tags=tags,
                 asset_type=asset_type
             )
+            # Manually attach account_number since it's not in the original dataclass constructor (unless updated)
+            # The database saver (database.py) looks for this attribute specifically.
+            h.account_number = account_number
+            
+            holdings_map[agg_key] = h
 
     holdings = list(holdings_map.values())
     

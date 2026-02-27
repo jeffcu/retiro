@@ -1,0 +1,72 @@
+.account-summary-card {
+    /* Standard Card styles from App.css apply */
+}
+
+.account-summary-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1rem;
+    font-size: 0.9em;
+}
+
+.account-summary-table th,
+.account-summary-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color);
+    text-align: left;
+}
+
+.account-summary-table thead th {
+    background-color: var(--light-bg);
+    font-weight: 500;
+    color: #ccc;
+}
+
+.account-summary-table td:nth-child(3), /* Value */
+.account-summary-table td:nth-child(4), /* Cost */
+.account-summary-table td:nth-child(5) /* Gain */ {
+    text-align: right;
+    font-family: monospace;
+    font-size: 1.1em;
+}
+
+.gain-positive {
+    color: var(--gold-accent);
+}
+
+.gain-negative {
+    color: #ff6b6b;
+}
+
+.tax-status-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.85em;
+    font-weight: 500;
+    text-transform: uppercase;
+}
+
+.status-taxable {
+    background-color: rgba(0, 242, 254, 0.2);
+    color: #00f2fe;
+    border: 1px solid rgba(0, 242, 254, 0.4);
+}
+
+.status-deferred {
+    background-color: rgba(254, 202, 87, 0.2);
+    color: #feca57;
+    border: 1px solid rgba(254, 202, 87, 0.4);
+}
+
+.status-roth {
+    background-color: rgba(255, 159, 243, 0.2);
+    color: #ff9ff3;
+    border: 1px solid rgba(255, 159, 243, 0.4);
+}
+
+.status-exempt {
+    background-color: rgba(5, 196, 107, 0.2);
+    color: #05c46b;
+    border: 1px solid rgba(5, 196, 107, 0.4);
+}

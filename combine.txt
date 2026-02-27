@@ -279,68 +279,72 @@ export default defineConfig({
 --- FILE: projects/trust/docs/Master_Design_Specification.md ---
 
 # Curie Trust Financial Control Center
-## Master Design Specification (MDS) v1.5
+## Master Design Specification (MDS) v1.9
 
 ---
 
 ### 1. Overview
-[... Unchanged ...]
+The Curie Trust Financial Control Center is a local-first, privacy-centric application designed to aggregate, visualize, and forecast the financial health of the Curie Trust. It operates on a Python/FastAPI backend with a React/Vite frontend, storing data in a local SQLite database.
 
 ### 2. System Architecture
-[... Unchanged ...]
+*   **Backend:** Python 3.11+ (FastAPI, Pandas, SQLite).
+*   **Frontend:** React 18 (Vite, Nivo Charts).
+*   **Data Store:** `data/trust.db` (SQLite).
+*   **Market Data:** Massive (Primary), AlphaVantage (Secondary).
 
 ### 3. Core Modules
 
-*   `src/data_model.py`: [...]
-*   `src/database.py`: [...]
-*   `src/importers/`: [...]
-*   `src/rules_engine.py`: [...]
-*   `src/market_data/`: [...]
-*   `src/analysis.py`: Enhanced in v1.4.
-*   `src/forecast.py`: **New Module**. Encapsulates the "Time Machine" simulation logic.
-    *   `calculate_forecast()`: The core loop. Takes current NW, settings, and budget items. Returns a year-by-year list of projected values.
+*   `src/data_model.py`: Defines core data classes (Transaction, Holding, Property).
+*   `src/database.py`: Handles all SQL operations, schema migrations, and JSON settings.
+*   `src/forecast.py`: **Major Upgrade in Phase 10**.
+    *   `TaxEngine` Class: Handles progressive tax calculations (Fed + State).
+    *   `RMDCalculator` Class: Determines mandatory withdrawals based on IRS tables.
+    *   `SimulationEngine`: Now includes configurable withdrawal order strategies.
 
 ### 4. Data Model & Storage
 
 *   **Database:** SQLite `data/trust.db`
 
-**New Tables (v1.5):**
-*   `discretionary_budget_items`:
-    *   `item_id` (TEXT PK)
-    *   `name` (TEXT)
-    *   `amount` (REAL)
-    *   `start_year` (INTEGER)
-    *   `is_recurring` (INTEGER/BOOL)
-    *   `inflation_adjusted` (INTEGER/BOOL)
-*   `app_settings` (Existing): Will now store:
-    *   `forecast_inflation_rate` (REAL, default 0.03)
-    *   `forecast_return_rate` (REAL, default 0.05) - *New in v1.5*
-    *   `forecast_birth_year` (INTEGER)
-    *   `forecast_col_categories` (JSON list of category names)
+**New Settings Keys (v1.9):**
+*   `forecast_tax_filing_status`: 'single' | 'joint'
+*   `forecast_withdrawal_strategy`: 'standard' | 'deferred_first' (Added in v1.9.1)
+*   `forecast_roth_conversion_target`: 'none' | 'fill_12' | 'fill_22' | 'fill_24' | 'fill_32'
+*   `forecast_rmd_start_age`: INTEGER (Default 75)
 
 ### 5. API Interfaces
 
-#### 5.3 Forecast API (New)
-*   `GET /api/forecast/config`: Get inflation, birth year, return rate.
-*   `PUT /api/forecast/config`: Update settings.
-*   `GET /api/forecast/base-col`: Returns the calculated "Year 0" cost based on last 12 months of selected categories.
-*   `POST /api/forecast/discretionary`: CRUD for budget items.
-*   `GET /api/forecast/simulation`: Returns the projection series:
-    *   `year`: 2024, 2025...
-    *   `age`: 50, 51...
-    *   `starting_net_worth`: Value at start of year.
-    *   `income`: Total income for year (from Future Streams).
-    *   `expenses`: Base CoL + Discretionary for year.
-    *   `investment_growth`: Calculated growth on liquid assets.
-    *   `ending_net_worth`: Value at end of year.
+#### 5.3 Forecast API (Updated for Phase 10)
+*   `GET /api/forecast/simulation`: Returns `simulation_series` with new fields:
+    *   `taxable_income`: Total income subject to tax (RMDs + SS + Withdrawals + Conversions).
+    *   `federal_tax_paid`: Estimated federal tax bill.
+    *   `effective_tax_rate`: `federal_tax_paid / taxable_income`.
+    *   `rmd_amount`: The mandatory distribution amount for that year.
+    *   `withdrawal_strategy_used`: The logic applied for that year (e.g. "IRA First").
 
 ### 6. Security
-[... Unchanged ...]
+*   Local-only access.
+*   API Keys stored in `.env`.
 
 ### 7. Phased Implementation Plan
 
-*   **Phase 8:** Data Protection (Completed).
-*   **Phase 9:** Forecast Planner (Next).
+*   **Phase 9:** Forecast Planner (Base Simulation) - **Completed/Stable**.
+
+*   **Phase 10:** The Strategic Tax Engine (UI Specification) - **Next**.
+    
+    **A. New UI Component: `TaxStrategyConfig`**
+    *   **Location:** Forecast View Grid.
+    *   **Inputs:**
+        1.  **Filing Status:** Toggle [Single | Joint].
+        2.  **Withdrawal Order:** [Standard (Taxable First) | Legacy Saver (IRA First)].
+        3.  **Strategy:** Dropdown for Roth Conversions.
+    
+    **B. New Visualization: `TaxExposureChart`**
+    *   Visualizes Income vs. Tax Brackets over time.
+
+*   **Phase 11:** Legacy & Liquidation View.
+    1.  Add "After-Tax Net Worth" calculation.
+    2.  Visualize the efficiency of different asset buckets for heirs.
+
 
 --- FILE: projects/trust/library/Phase9_Forecast_Checklist.md ---
 
@@ -392,7 +396,7 @@ Use this checklist to manually verify the calculation engine of the "Time Machin
 
 --- FILE: projects/trust/library/Trust Financial System.txt ---
 
-Curie Trust Financial Control Center — Project Requirements Specification (PRS) v1.7
+Curie Trust Financial Control Center — Project Requirements Specification (PRS) v1.9
 
 1) Mission
 
@@ -400,129 +404,111 @@ Build a local-first financial control center for the Curie Trust that continuous
 	1.	What is our latest net worth (right now)?
 	2.	Where did our income go (by top budget category and projects/tags)?
 	3.	What rate of return are we getting on our investments (before fees, after fees, after taxes)?
-	4.	(New) Will our capital last until age 95?
+	4.	(Forecast) Will our capital last, and are we tax-optimized?
 
 The system ingests periodic CSV/spreadsheet uploads from multiple financial institutions, normalizes them into Curie Trust’s internal data model, and keeps market values fresh via API “drip” updates.
 
 ⸻
 
 2) Core UX Requirements (Sankey-forward)
-
-2.1 Required Sankey Diagrams
-[... unchanged from v1.5 ...]
-
-⸻
-
-3) Financial Semantics
-[... unchanged from v1.5 ...]
+[... unchanged ...]
 
 ⸻
 
 4) Screens (UI Requirements Summary)
 
-4.1 Home (Command Center)
-	•	Latest Net Worth Hero
-	•	Capital Flow Sankey
-	•	Portfolio Allocation
+4.1 - 4.5 [... unchanged ...]
 
-4.2 - 4.5
-[... unchanged ...]
-
-4.6 Forecast (The Time Machine) - REVISED v1.7
+4.6 Forecast (The Time Machine) - UPGRADED v1.9
 	•	Global Settings:
-		•	Birth Year: Used to calculate current age and the horizon line (Age 95).
-		•	Inflation Rate %: User entered (default 3.0%). Applies to all expenses annually.
-		•	Assumed Portfolio Return %: User entered (default 5.0%). Applies to liquid assets annually.
-	•	Base Cost of Living (CoL) Engine:
-		•	Selector: Collapsible list of all expense categories.
-		•	Calculation: System sums the *last 12 months of actuals* for checked categories to establish "Year 0 Base CoL".
-		•	Projection: This base amount grows annually by the Inflation Rate.
-	•	Discretionary Budget Table:
-		•	Table for future one-off or recurring large expenses (e.g., "World Tour").
-		•	"Replicate Forward": Option to repeat an expense annually until age 95, adjusting for inflation.
+		•	Birth Year, Inflation Rate, Return Rate.
+		•	Tax Filing Status (Single/Joint).
+	•	Strategy Configuration:
+		•	Withdrawal Order: Standard (Taxable -> Deferred -> Roth) vs. Legacy Saver (Deferred -> Taxable -> Roth).
+		•	Roth Conversion Strategy: "Fill to Bracket Top" (converting Deferred to Roth up to the 22% or 24% tax ceiling).
 	•	The Simulation (Runway Logic):
-		•	System calculates year-over-year Net Worth:
-			`Next_NW = (Current_NW * (1 + Return_Rate)) + (Future_Income - (Base_CoL + Discretionary))`
-		•	Real Estate values grow separately by their specific Appreciation Rates.
-	•	Visualization (The Runway Graph):
-		•	Primary View: A Line Graph of **Projected Total Net Worth** from now until Age 95.
-		•	Goal: Visual confirmation of whether assets are exhausted (line hits zero) or sustained (line stays positive).
-		•	Secondary View (Tooltip/Overlay): Show the "Annual Deficit/Surplus" for any hovered year.
+		•	Calculates RMDs (Required Minimum Distributions) starting at age 75.
+		•	Applies progressive tax brackets to RMDs and Withdrawals.
+		•	Models the "Tax Drag" on the portfolio over time.
+	•	Visualization:
+		•	Runway Graph (Net Worth).
+		•	Tax Exposure Graph: Income vs. Tax Brackets over time.
 
 ⸻
 
-5) Data Ingestion & Rules
-[... unchanged ...]
+8) Internal Data Model (Additions for v1.9)
+	•	`app_settings` (KV store additions):
+		•	`forecast_tax_filing_status`: 'single' | 'joint'
+		•	`forecast_withdrawal_strategy`: 'standard' | 'legacy_optimize'
+		•	`forecast_roth_conversion_target`: integer (amount to convert annually)
+		•	`forecast_tax_bracket_ceiling`: integer (e.g., 190000 for the 22% bracket)
 
 ⸻
 
-6) Market Data & Returns
-[... unchanged ...]
+10) Phased Delivery
 
-⸻
+[... Phases 0-9 Completed ...]
 
-8) Internal Data Model (Additions for v1.7)
-	•	...existing entities...
-	•	`app_settings` (KV store): Stores `forecast_inflation_rate`, `forecast_birth_year`, `forecast_return_rate`, `base_col_categories`.
-	•	`discretionary_budget_item`:
-		•	item_id (PK)
-		•	name, amount, start_year
-		•	is_recurring, inflation_adjusted (booleans)
-
-⸻
-
-10) Phased Delivery (User-Feature Centric)
-
-[... Phases 0-8 Completed/Stable ...]
-
-Phase 9: The Forecast Planner (Next)
-	•	Goal: Visualize capital longevity and drawdown trajectory.
+Phase 10: The Strategic Tax Engine (Next)
+	•	Goal: Optimize pre-tax retirement accounts using progressive tax logic.
 	•	Features:
-		•	Forecast Settings (Birth Year, Inflation, Return Rate).
-		•	Base CoL Calculator (Actuals-based).
-		•	Discretionary Budget Editor.
-		•	Simulation Engine (Year-over-Year Net Worth calculation).
-		•	Runway Graph (Projected Net Worth vs. Time).
+		•	Implement 2024 Federal/State Tax Brackets (Simplified).
+		•	Calculate RMDs (Age 75 rule).
+		•	Simulate "Tax Bracket Filling" via Roth Conversions.
+		•	Visualize the "Tax Bomb" (RMD impact on future tax rates).
+
+Phase 11: Legacy & Liquidation View (Thereafter)
+	•	Goal: Show the "True" value of the estate after estimated liquidation taxes.
+	•	Features:
+		•	Calculate "Liquidation Value" (Net Worth minus embedded capital gains/income tax).
+		•	Compare "Step-Up Basis" value (Taxable accounts) vs. "Tax-Free" value (Roth) vs. "Tax-Heavy" value (Deferred).
+
+11) Deferred / "Maybe Someday" (Low Priority)
+	•	Complex Housing Scenarios (CCRC entrance fees): Use Discretionary Budget manual entries instead.
+	•	Survivor Modeling: Too much variance; stick to Joint for now.
+	•	Specific Tax Lot Selling: Average cost basis is sufficient for strategic forecasting.
 
 --- FILE: projects/trust/library/acceptance_test.md.txt ---
 
-# Curie Trust - Acceptance Test Plan v1.7
+# Curie Trust - Acceptance Test Plan v1.9
 
 ## 1. Introduction
 This document outlines the acceptance criteria for the Curie Trust Financial Control Center.
 
 ---
 
-## 2. Phase 0-8: Core Functionality (Completed)
+## 2. Phase 0-9: Core Functionality (Completed)
 All previous phases are stable.
 
 ---
 
-## 3. Phase 9: Forecast Planner (Next)
+## 3. Phase 10: The Strategic Tax Engine (Next)
 
-**Objective**: Provide a simulation of Net Worth trajectory up to age 95.
+**Objective**: Transform the forecast from a simple growth model to a tax-aware optimization engine.
 
-### 9.1 Forecast Settings
+### 10.1 Progressive Tax Logic
 **Acceptance Criteria**:
-- [ ] **Birth Year**: User can enter birth year; system accurately calculates current and future age.
-- [ ] **Rates**: User can set Inflation Rate and Investment Return Rate. Changes to these immediately affect the graph.
+- [ ] **Bracket Calculation**: Verify that $100k income results in a lower effective rate than $300k income (progressive vs flat).
+- [ ] **Standard Deduction**: Verify that the first ~$29k (Joint) or ~$14k (Single) of income is tax-free.
 
-### 9.2 Base Cost of Living (CoL)
+### 10.2 RMDs (Required Minimum Distributions)
 **Acceptance Criteria**:
-- [ ] **Actuals Driven**: Checking a category (e.g., "Groceries") adds the sum of the *last 12 months* of that category to the Base CoL.
-- [ ] **No Manual Override**: The Base CoL is strictly derived from the selected categories' actual data.
+- [ ] **Age Trigger**: Verify RMDs begin automatically at age 75 (or configured age).
+- [ ] **Forced Withdrawal**: Verify that even if spending needs are met by Cash/Yield, the RMD is still withdrawn from the Deferred bucket and added to Taxable Income.
 
-### 9.3 The Simulation (The Runway)
+### 10.3 Roth Conversions (Bracket Filling)
 **Acceptance Criteria**:
-- [ ] **Logic Accuracy**: Verify calculation: `Next_Year_NW = (Assets * (1 + Return)) + Income - Expenses`.
-- [ ] **Drawdown Visualization**: If Expenses > (Income + Growth), the Net Worth line should visibly decline.
-- [ ] **Compounding**: Verify that positive savings result in exponential growth (compounding returns).
+- [ ] **Filling the Bucket**: If the user sets a "Top of 22% Bracket" target, verify the system converts just enough Deferred assets to hit that limit, but no more.
+- [ ] **Tax Impact**: Verify that taxes on the conversion are paid in the current year (ideally from Taxable brokerage).
 
-### 9.4 The Graph
+---
+
+## 4. Phase 11: Legacy & Liquidation (Future)
+
+### 11.1 Liquidation Value
 **Acceptance Criteria**:
-- [ ] **X-Axis**: Years/Age (e.g., "2025 (Age 50)").
-- [ ] **Y-Axis**: Net Worth (Currency).
-- [ ] **Visibility**: The chart clearly shows if/when the Net Worth line crosses zero (exhaustion of assets).
+- [ ] **Embedded Tax**: Verify the system displays a "Liquidation Value" that subtracts estimated taxes from the Deferred bucket (Ordinary Income) and Taxable bucket (Capital Gains).
+- [ ] **Roth Premium**: Verify that $1 in Roth contributes exactly $1 to Liquidation Value, while $1 in Deferred contributes less (e.g., $0.76).
 
 --- FILE: projects/trust/scripts/refresh_eod.sh ---
 
@@ -876,6 +862,83 @@ def run_test():
 if __name__ == "__main__":
     run_test()
 
+
+--- FILE: projects/trust/scripts/verify_forecast_logic.py ---
+
+import sys
+import os
+from datetime import date
+
+# Add project root to path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+# Mock the database module to isolate the engine logic
+class MockDB:
+    def __init__(self):
+        self.settings = {
+            'forecast_birth_year': 1960,  # Age 66 in 2026
+            'forecast_inflation_rate': 0.03,
+            'forecast_return_rate': 0.05,
+            'forecast_withdrawal_strategy': 'deferred_first', # TEST TARGET
+            'forecast_withdrawal_tax_rate': 0.15,
+            'forecast_base_col_lookback_years': 1,
+            'forecast_base_col_categories': []
+        }
+    
+    def get_setting(self, key):
+        return self.settings.get(key)
+
+    def get_discretionary_budget_items(self):
+        return []
+
+    def get_all_future_income_streams(self):
+        return []
+
+    def get_account_metadata(self):
+        return {}
+
+    def get_holdings(self):
+        # SCENARIO: We have money in both buckets
+        return [
+            {'account_id': 'brokerage', 'market_value': 100000, 'symbol': 'VTSAX'},
+            {'account_id': 'ira', 'market_value': 100000, 'symbol': 'VTIAX'}
+        ]
+
+    def get_all_properties(self):
+        return []
+    
+    def get_base_col_breakdown(self, cats, lookback):
+        return {'Groceries': 50000.0} # $50k annual expense
+
+# Monkey patch the database module in src.forecast
+import src.forecast
+src.forecast.db = MockDB()
+
+def run_verification():
+    print("--- Running Forecast Logic Verification ---")
+    print(f"Test Settings: Birth Year={src.forecast.db.settings['forecast_birth_year']}")
+    print(f"Test Settings: Strategy={src.forecast.db.settings['forecast_withdrawal_strategy']}")
+    
+    # Run Simulation
+    result = src.forecast.calculate_forecast()
+    series = result['simulation_series']
+    
+    # Check Year 1 (2026, Age 66)
+    year_1 = series[0]
+    print(f"\n[Year {year_1['year']} | Age {year_1['age']}]")
+    print(f"Income: ${year_1['total_income']}")
+    print(f"Expenses: ${year_1['total_expenses']}")
+    print(f"Net Cashflow: ${year_1['net_cashflow']}")
+    print(f"Strategy Executed: {year_1['strategy_executed']}")
+    
+    # Verification Logic
+    if year_1['strategy_executed'] == "Deferred First":
+        print("\n✅ SUCCESS: Engine correctly applied 'Deferred First' strategy.")
+    else:
+        print(f"\n❌ FAILURE: Engine applied '{year_1['strategy_executed']}' instead of 'Deferred First'.")
+
+if __name__ == "__main__":
+    run_verification()
 
 --- FILE: projects/trust/src/App.css ---
 
@@ -1400,6 +1463,93 @@ def calculate_portfolio_summary_metrics() -> Dict[str, Any]:
         "notes": "Calculated since inception (Total Market Value vs. Total Cost Basis). This is not a time-weighted return."
     }
 
+# --- NEW: Account Performance Summary (Source of Truth for Forecast) ---
+def get_account_performance_summary() -> List[Dict[str, Any]]:
+    """
+    Aggregates holdings by account (and sub-account/number) to provide a clear view 
+    of where assets live and how they are taxed. This data drives the Forecast engine's 
+    starting buckets and the Account Summary table on the Home Page.
+    """
+    # Get all holdings
+    holdings = db.get_holdings()
+    # Get metadata
+    metadata = db.get_account_metadata() # returns dict {account_id: {tax_status, notes, group_name}}
+
+    # Group by (account_id, account_number)
+    accounts = {}
+    for h in holdings:
+        # Group ID is the high-level import batch (e.g. "Fidelity")
+        group_id = h['account_id'] 
+        # Sub-Account Number (e.g. "123456789")
+        acc_num = h.get('account_number')
+        
+        # Create a unique key for aggregation
+        # If no account number, we fall back to just the group ID
+        key = (group_id, acc_num) if acc_num else (group_id, None)
+        
+        if key not in accounts:
+            # Determine display name and metadata lookup key
+            if acc_num:
+                lookup_key = f"{group_id}::{acc_num}"
+            else:
+                lookup_key = group_id
+
+            # Determine tax status AND group name via hierarchical lookup
+            tax_status = "Taxable" # Default
+            group_name = None
+            
+            # 1. Try specific composite key (Group::Number)
+            if lookup_key in metadata:
+                tax_status = metadata[lookup_key]['tax_status']
+                group_name = metadata[lookup_key].get('group_name')
+            # 2. Try just the Group ID (wildcard for all accounts in that file)
+            elif group_id in metadata:
+                 tax_status = metadata[group_id]['tax_status']
+                 group_name = metadata[group_id].get('group_name')
+            # 3. Case-insensitive fallback
+            else:
+                 for m_id, m_data in metadata.items():
+                     if m_id.strip().lower() == lookup_key.strip().lower() or m_id.strip().lower() == group_id.strip().lower():
+                         tax_status = m_data['tax_status']
+                         group_name = m_data.get('group_name')
+                         break
+            
+            # If no manual group name override, use the import account_id as the group
+            final_group_id = group_name if group_name else group_id
+            
+            display_name = f"{final_group_id} - {acc_num}" if acc_num else final_group_id
+
+            accounts[key] = {
+                "account_id": display_name,
+                "group_id": final_group_id,
+                "account_number": acc_num,
+                "lookup_key": lookup_key,
+                "tax_status": tax_status,
+                "group_name": group_name,
+                "total_market_value": 0.0,
+                "total_cost_basis": 0.0
+            }
+        
+        accounts[key]["total_market_value"] += (h['market_value'] or 0.0)
+        accounts[key]["total_cost_basis"] += (h['cost_basis'] or 0.0)
+
+    # Calculate Gains and Format
+    result = []
+    for acc in accounts.values():
+        mv = acc['total_market_value']
+        cb = acc['total_cost_basis']
+        gain = mv - cb
+        gain_pct = (gain / cb) * 100 if cb != 0 else 0.0
+        
+        acc['total_gain'] = round(gain, 2)
+        acc['total_gain_percent'] = round(gain_pct, 2)
+        acc['total_market_value'] = round(mv, 2)
+        acc['total_cost_basis'] = round(cb, 2)
+        result.append(acc)
+        
+    # Sort by Group ID, then Market Value desc
+    return sorted(result, key=lambda x: (x['group_id'], -x['total_market_value']))
+
 # --- NEW: Layered Returns Calculation ---
 def calculate_layered_returns_summary() -> Dict[str, Any]:
     """
@@ -1553,7 +1703,6 @@ def calculate_portfolio_waterfall(period: str) -> Dict[str, Any]:
         "notes": " ".join(notes)
     }
 
-
 --- FILE: projects/trust/src/data_model.py ---
 
 from __future__ import annotations
@@ -1671,10 +1820,6 @@ DB_FILE = (Path(__file__).parent.parent / "data" / "trust.db").resolve()
 _schema_ensured = False
 
 def _ensure_schema(conn: sqlite3.Connection):
-    """
-    Ensures the necessary tables exist in the database and performs migrations.
-    This is designed to be idempotent and safe to call.
-    """
     global _schema_ensured
     if _schema_ensured:
         return
@@ -1695,7 +1840,10 @@ def _ensure_schema(conn: sqlite3.Connection):
         is_transfer INTEGER,
         asset_id TEXT,
         import_run_id TEXT,
-        raw_data_hash TEXT UNIQUE
+        raw_data_hash TEXT UNIQUE,
+        institution TEXT,
+        original_category TEXT,
+        tags TEXT
     );
     """)
 
@@ -1706,7 +1854,14 @@ def _ensure_schema(conn: sqlite3.Connection):
         category TEXT NOT NULL,
         cashflow_type TEXT NOT NULL,
         tags TEXT,
-        priority INTEGER DEFAULT 100
+        priority INTEGER DEFAULT 100,
+        case_sensitive INTEGER DEFAULT 0,
+        account_filter_mode TEXT DEFAULT 'include',
+        account_filter_list TEXT,
+        condition_category TEXT,
+        condition_institution TEXT,
+        condition_cashflow_type TEXT,
+        condition_tags TEXT
     );
     """)
 
@@ -1720,11 +1875,14 @@ def _ensure_schema(conn: sqlite3.Connection):
         market_value REAL, 
         last_price REAL,
         last_price_timestamp TEXT,
-        UNIQUE(account_id, symbol)
+        tags TEXT,
+        asset_type TEXT,
+        last_price_update_failed INTEGER DEFAULT 0,
+        account_number TEXT,
+        UNIQUE(account_id, symbol, account_number)
     );
     """)
 
-    # --- NEW: Properties Table for Real Estate ---
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS properties (
         property_id TEXT PRIMARY KEY,
@@ -1767,16 +1925,15 @@ def _ensure_schema(conn: sqlite3.Connection):
     );
     """)
     
-    # --- NEW: Account Metadata for Tax Status ---
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS account_metadata (
         account_id TEXT PRIMARY KEY,
         tax_status TEXT NOT NULL DEFAULT 'Taxable', -- 'Taxable', 'Deferred', 'Roth', 'Exempt'
-        notes TEXT
+        notes TEXT,
+        group_name TEXT -- NEW: For manual grouping of sub-accounts
     );
     """)
 
-    # --- NEW: Generic table for application settings ---
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS app_settings (
         key TEXT PRIMARY KEY,
@@ -1784,7 +1941,6 @@ def _ensure_schema(conn: sqlite3.Connection):
     );
     """)
 
-    # --- NEW: Table for storing annual tax return data (PRS Section 7.1) ---
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS tax_year_facts (
         tax_year INTEGER PRIMARY KEY,
@@ -1796,7 +1952,6 @@ def _ensure_schema(conn: sqlite3.Connection):
     );
     """)
 
-    # --- NEW: Table for storing future income streams for forecasting (PRS Section 7) ---
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS future_income_streams (
         stream_id TEXT PRIMARY KEY,
@@ -1810,7 +1965,6 @@ def _ensure_schema(conn: sqlite3.Connection):
     );
     """)
 
-    # --- NEW: Table for storing historical portfolio values ("Operation Snapshot") ---
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS portfolio_value_snapshots (
         snapshot_id TEXT PRIMARY KEY,
@@ -1819,7 +1973,6 @@ def _ensure_schema(conn: sqlite3.Connection):
     );
     """)
 
-    # --- NEW: Discretionary Budget Items (Phase 9) ---
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS discretionary_budget_items (
         item_id TEXT PRIMARY KEY,
@@ -1829,11 +1982,12 @@ def _ensure_schema(conn: sqlite3.Connection):
         end_year INTEGER,
         is_recurring INTEGER DEFAULT 0,
         inflation_adjusted INTEGER DEFAULT 1,
-        category TEXT
+        category TEXT,
+        is_enabled INTEGER DEFAULT 1
     );
     """)
 
-    # --- Schema Migrations ---
+    # --- Schema Migrations --- 
     cursor.execute("PRAGMA table_info(holdings)")
     holdings_cols = {row[1] for row in cursor.fetchall()}
     if 'market_value' not in holdings_cols:
@@ -1848,6 +2002,15 @@ def _ensure_schema(conn: sqlite3.Connection):
     if 'last_price_update_failed' not in holdings_cols:
         print("--- MIGRATING SCHEMA: Adding 'last_price_update_failed' to 'holdings'. ---")
         cursor.execute("ALTER TABLE holdings ADD COLUMN last_price_update_failed INTEGER DEFAULT 0;")
+    if 'account_number' not in holdings_cols:
+        print("--- MIGRATING SCHEMA: Adding 'account_number' to 'holdings'. ---")
+        cursor.execute("ALTER TABLE holdings ADD COLUMN account_number TEXT;")
+
+    cursor.execute("PRAGMA table_info(account_metadata)")
+    meta_cols = {row[1] for row in cursor.fetchall()}
+    if 'group_name' not in meta_cols:
+        print("--- MIGRATING SCHEMA: Adding 'group_name' to 'account_metadata'. ---")
+        cursor.execute("ALTER TABLE account_metadata ADD COLUMN group_name TEXT;")
 
     cursor.execute("PRAGMA table_info(transactions)")
     trans_cols = {row[1] for row in cursor.fetchall()}
@@ -1866,7 +2029,77 @@ def _ensure_schema(conn: sqlite3.Connection):
     if 'category' not in budget_cols:
         print("--- MIGRATING SCHEMA: Adding 'category' to 'discretionary_budget_items'. ---")
         cursor.execute("ALTER TABLE discretionary_budget_items ADD COLUMN category TEXT;")
+    if 'is_enabled' not in budget_cols:
+        print("--- MIGRATING SCHEMA: Adding 'is_enabled' to 'discretionary_budget_items'. ---")
+        cursor.execute("ALTER TABLE discretionary_budget_items ADD COLUMN is_enabled INTEGER DEFAULT 1;")
 
+    # --- MIGRATING SCHEMA: Constraint Check for 'holdings' ---
+    # Ensure the UNIQUE constraint includes 'account_number'.
+    cursor.execute("PRAGMA index_list('holdings')")
+    indices = cursor.fetchall()
+    needs_rebuild = False
+    
+    found_correct_index = False
+    for idx in indices:
+        if idx['unique']:
+            cursor.execute(f"PRAGMA index_info('{idx['name']}')")
+            cols = cursor.fetchall()
+            col_names = sorted([c['name'] for c in cols])
+            # Check if the unique index covers strictly (account_id, symbol, account_number)
+            if col_names == sorted(['account_id', 'symbol', 'account_number']):
+                found_correct_index = True
+                break
+    
+    # If we didn't find the correct 3-column index, we must rebuild the table
+    if not found_correct_index:
+        needs_rebuild = True
+
+    if needs_rebuild:
+        print("--- MIGRATING SCHEMA: Updating UNIQUE constraint on 'holdings' to include 'account_number'. ---")
+        cursor.execute("PRAGMA foreign_keys=off;")
+        cursor.execute("BEGIN TRANSACTION;")
+        try:
+            cursor.execute("ALTER TABLE holdings RENAME TO _holdings_old;")
+            cursor.execute("""
+            CREATE TABLE holdings (
+                holding_id TEXT PRIMARY KEY,
+                account_id TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                quantity REAL NOT NULL,
+                cost_basis REAL NOT NULL,
+                market_value REAL, 
+                last_price REAL,
+                last_price_timestamp TEXT,
+                tags TEXT,
+                asset_type TEXT,
+                last_price_update_failed INTEGER DEFAULT 0,
+                account_number TEXT,
+                UNIQUE(account_id, symbol, account_number)
+            );
+            """)
+            cursor.execute("""
+            INSERT INTO holdings (
+                holding_id, account_id, symbol, quantity, cost_basis, 
+                market_value, last_price, last_price_timestamp, tags, 
+                asset_type, last_price_update_failed, account_number
+            )
+            SELECT 
+                holding_id, account_id, symbol, quantity, cost_basis, 
+                market_value, last_price, last_price_timestamp, tags, 
+                asset_type, last_price_update_failed, account_number
+            FROM _holdings_old;
+            """)
+            cursor.execute("DROP TABLE _holdings_old;")
+            conn.commit()
+            print("--- MIGRATION COMPLETE: 'holdings' table rebuilt with new constraints. ---")
+        except Exception as e:
+            print(f"ERROR during 'holdings' table migration: {e}. Rolling back.")
+            conn.rollback()
+            raise e
+        finally:
+            cursor.execute("PRAGMA foreign_keys=on;")
+
+    # Rules migration logic
     cursor.execute("PRAGMA foreign_keys=off;")
     cursor.execute("BEGIN TRANSACTION;")
     try:
@@ -1934,9 +2167,7 @@ def initialize_database():
     conn.close()
     print("--- Database initialization complete. ---")
 
-# --- NEW: Generic settings functions ---
 def get_setting(key: str) -> Any | None:
-    """Fetches a setting value by key and decodes its JSON content."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT value FROM app_settings WHERE key = ?", (key,))
@@ -1946,11 +2177,10 @@ def get_setting(key: str) -> Any | None:
         try:
             return json.loads(row['value'])
         except json.JSONDecodeError:
-            return row['value'] # Fallback for non-JSON data
+            return row['value']
     return None
 
 def set_setting(key: str, value: Any):
-    """Saves a setting value by key, encoding the value as a JSON string."""
     conn = get_db_connection()
     cursor = conn.cursor()
     json_value = json.dumps(value)
@@ -1996,41 +2226,45 @@ def save_holdings_snapshot(holdings: List[Holding], account_id: str):
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # --- NEW: Non-destructive import logic --- #
-    # 1. Fetch existing metadata for the account before deleting.
-    cursor.execute("SELECT symbol, tags, asset_type FROM holdings WHERE trim(lower(account_id)) = trim(lower(?))", (cleaned_account_id,))
-    existing_metadata = {row['symbol']: {'tags': [t.strip() for t in row['tags'].split(',')] if row['tags'] else [], 'asset_type': row['asset_type']} for row in cursor.fetchall()}
-    print(f"Found existing metadata for {len(existing_metadata)} symbols in account '{cleaned_account_id}'.")
+    cursor.execute("SELECT symbol, tags, asset_type, account_number FROM holdings WHERE trim(lower(account_id)) = trim(lower(?))", (cleaned_account_id,))
+    existing_metadata = {}
+    for row in cursor.fetchall():
+        if row['symbol'] not in existing_metadata:
+            existing_metadata[row['symbol']] = {
+                'tags': [t.strip() for t in row['tags'].split(',')] if row['tags'] else [],
+                'asset_type': row['asset_type']
+            }
+    print(f"Found existing metadata for {len(existing_metadata)} symbols in account group '{cleaned_account_id}'.")
 
-    # 2. Enrich the new holdings with the existing metadata if the new data is missing it.
     for h in holdings:
         if h.symbol in existing_metadata:
             meta = existing_metadata[h.symbol]
             if not h.tags and meta['tags']:
-                h.tags = meta['tags'] # Preserve old tags if new file has none
+                h.tags = meta['tags'] 
             if not h.asset_type and meta['asset_type']:
-                h.asset_type = meta['asset_type'] # Preserve old asset_type
+                h.asset_type = meta['asset_type']
 
     deleted_count, inserted_count = 0, 0
     try:
-        # 3. Proceed with the atomic delete-and-insert operation.
         cursor.execute("DELETE FROM holdings WHERE trim(lower(account_id)) = trim(lower(?))", (cleaned_account_id,))
         deleted_count = cursor.rowcount
-        print(f"Deleted {deleted_count} stale holdings for account '{cleaned_account_id}'.")
+        print(f"Deleted {deleted_count} stale holdings for account group '{cleaned_account_id}'.")
         
         if holdings:
             sql = """INSERT INTO holdings (
                          holding_id, account_id, symbol, quantity, cost_basis, 
-                         market_value, tags, asset_type
-                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);"""
+                         market_value, tags, asset_type, account_number
+                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);"""
             data_to_insert = [
                 (h.holding_id, h.account_id, h.symbol, float(h.quantity), float(h.cost_basis),
-                 float(h.market_value) if h.market_value is not None else None, ','.join(h.tags) if h.tags else None, h.asset_type) 
+                 float(h.market_value) if h.market_value is not None else None, 
+                 ','.join(h.tags) if h.tags else None, h.asset_type,
+                 getattr(h, 'account_number', None)) 
                 for h in holdings
             ]
             cursor.executemany(sql, data_to_insert)
             inserted_count = cursor.rowcount
-            print(f"Inserted {inserted_count} new holdings for account '{cleaned_account_id}'.")
+            print(f"Inserted {inserted_count} new holdings for account group '{cleaned_account_id}'.")
         
         conn.commit()
     except sqlite3.Error as e:
@@ -2052,7 +2286,6 @@ def save_import_run(run_data: Dict[str, Any]):
     try:
         cursor.execute(sql, data_tuple)
         conn.commit()
-        print(f"Successfully saved import run {run_data['import_run_id']}.")
     except sqlite3.Error as e:
         print(f"Database error during import run save: {e}")
         conn.rollback()
@@ -2067,7 +2300,6 @@ def _build_where_clause(filters: Dict, allowed_fields: List[str]) -> Tuple[List[
     for key, value in filters.items():
         if key not in allowed_fields or not value:
             continue
-
         if key == 'category' and value == 'Uncategorized':
             clauses.append("(category IS NULL OR category = '' OR category = ?)")
             params.append('Uncategorized')
@@ -2077,7 +2309,6 @@ def _build_where_clause(filters: Dict, allowed_fields: List[str]) -> Tuple[List[
         else:
             clauses.append(f"{key} = ?")
             params.append(value)
-            
     return clauses, params
 
 def get_transaction(transaction_id: str) -> Dict[str, Any] | None:
@@ -2123,7 +2354,7 @@ def get_holdings(filters: Dict[str, Any] = None) -> List[Dict[str, Any]]:
     conn = get_db_connection()
     cursor = conn.cursor()
     filters = filters or {}
-    allowed_fields, period = ['account_id', 'symbol', 'tags', 'asset_type'], filters.pop('period', None)
+    allowed_fields, period = ['account_id', 'symbol', 'tags', 'asset_type', 'account_number'], filters.pop('period', None)
     clauses, params = _build_where_clause(filters, allowed_fields)
     _apply_period_filter_to_query(clauses, params, period, date_column='last_price_timestamp')
     where_str = f"WHERE {' AND '.join(clauses)}" if clauses else ""
@@ -2152,7 +2383,6 @@ def get_holding(holding_id: str) -> Dict[str, Any] | None:
 def update_holding(holding_id: str, updates: Dict[str, Any]):
     conn = get_db_connection()
     cursor = conn.cursor()
-    
     allowed_fields = ['tags', 'asset_type']
     set_clauses, params = [], []
     for field, value in updates.items():
@@ -2164,18 +2394,13 @@ def update_holding(holding_id: str, updates: Dict[str, Any]):
         elif field == 'asset_type':
             set_clauses.append("asset_type = ?")
             params.append(value if value and str(value).strip() else None)
-    
     if not set_clauses:
-        print(f"Warning: No valid fields to update for holding {holding_id}.")
         return
-
     sql = f"UPDATE holdings SET {', '.join(set_clauses)} WHERE holding_id = ?"
     params.append(holding_id)
     try:
         cursor.execute(sql, tuple(params))
         conn.commit()
-        if cursor.rowcount == 0:
-            print(f"Warning: Attempted to update holding {holding_id}, but no record was found.")
     except sqlite3.Error as e:
         conn.rollback()
         raise e
@@ -2191,7 +2416,6 @@ def get_all_import_runs() -> List[Dict[str, Any]]:
     return [dict(row) for row in rows]
 
 def get_income_categories() -> List[str]:
-    """Gets a distinct list of all non-empty categories assigned to Income transactions."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT DISTINCT category FROM transactions WHERE cashflow_type = 'Income' AND category IS NOT NULL AND category != '' ORDER BY category")
@@ -2206,8 +2430,11 @@ def get_filter_options() -> Dict[str, List[str]]:
     if cursor.fetchone():
         options['categories'].append('Uncategorized')
         options['categories'].sort()
-    cursor.execute("SELECT account_id FROM transactions WHERE account_id IS NOT NULL UNION SELECT account_id FROM holdings WHERE account_id IS NOT NULL ORDER BY account_id ASC")
-    options['accounts'] = [row['account_id'] for row in cursor.fetchall()]
+    cursor.execute("SELECT DISTINCT account_id FROM transactions WHERE account_id IS NOT NULL ORDER BY account_id")
+    options['transaction_accounts'] = [row['account_id'] for row in cursor.fetchall()]
+    cursor.execute("SELECT DISTINCT account_id FROM holdings WHERE account_id IS NOT NULL ORDER BY account_id")
+    options['holding_accounts'] = [row['account_id'] for row in cursor.fetchall()]
+    options['accounts'] = sorted(list(set(options['transaction_accounts'] + options['holding_accounts'])))
     cursor.execute("SELECT DISTINCT institution FROM transactions WHERE institution IS NOT NULL ORDER BY institution")
     options['institutions'] = [row['institution'] for row in cursor.fetchall()]
     cursor.execute("SELECT DISTINCT asset_type FROM holdings WHERE asset_type IS NOT NULL AND asset_type != '' ORDER BY asset_type")
@@ -2220,38 +2447,25 @@ def get_capital_flow_aggregates(period: str, exclude_invisible: bool = False) ->
     conn = get_db_connection()
     cursor = conn.cursor()
     where_clauses, params = [], []
-
     if exclude_invisible:
         where_clauses.append("t.account_id NOT IN (SELECT account_id FROM account_visibility WHERE is_visible = 0)")
-    
     _apply_period_filter_to_query(where_clauses, params, period, date_column='transaction_date', table_prefix='t.')
-    
     where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
-
-    # CORRECTED QUERY: Separates 'Investment Income' from other 'Income' types to prevent double-counting.
     query = f""" 
-    -- Income by Category (excluding 'Investment Income', handled separately)
     SELECT 'Income' as source_type, category, SUM(amount) as total
     FROM transactions t
     WHERE {where_sql} AND t.cashflow_type = 'Income' AND (t.category IS NULL OR t.category != 'Investment Income')
     GROUP BY category
-
     UNION ALL
-
-    -- Investment Income (a special type of Income, but visualized separately)
     SELECT 'Investment Income' as source_type, 'Investment Income' as category, SUM(amount) as total
     FROM transactions t
     WHERE {where_sql} AND t.cashflow_type = 'Income' AND t.category = 'Investment Income'
-
     UNION ALL
-
-    -- Consumption Expenses
     SELECT 'Expense' as source_type, category, SUM(amount) as total
     FROM transactions t
     WHERE {where_sql} AND t.cashflow_type = 'Expense'
     GROUP BY category
     """
-    
     final_params = params * 3 
     cursor.execute(query, final_params)
     rows = cursor.fetchall()
@@ -2459,11 +2673,23 @@ def get_all_account_ids() -> List[str]:
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("INSERT OR IGNORE INTO account_visibility (account_id, is_visible) SELECT DISTINCT account_id, 1 FROM transactions WHERE account_id IS NOT NULL;")
+    cursor.execute("INSERT OR IGNORE INTO account_visibility (account_id, is_visible) SELECT DISTINCT account_id, 1 FROM holdings WHERE account_id IS NOT NULL;")
     conn.commit()
-    cursor.execute("SELECT account_id FROM account_visibility ORDER BY account_id ASC")
-    rows = cursor.fetchall()
+    
+    cursor.execute("SELECT account_id FROM transactions WHERE account_id IS NOT NULL UNION SELECT account_id FROM holdings WHERE account_id IS NOT NULL")
+    base_accounts = {row[0] for row in cursor.fetchall()}
+    
+    cursor.execute("SELECT DISTINCT account_id, account_number FROM holdings WHERE account_number IS NOT NULL AND account_number != ''")
+    sub_account_rows = cursor.fetchall()
+    
+    final_list = list(base_accounts)
+    for row in sub_account_rows:
+        composite = f"{row['account_id']}::{row['account_number']}"
+        if composite not in final_list:
+            final_list.append(composite)
+            
     conn.close()
-    return [row['account_id'] for row in rows]
+    return sorted(final_list)
 
 def get_account_visibility() -> Dict[str, bool]:
     conn = get_db_connection()
@@ -2480,33 +2706,34 @@ def set_account_visibility(settings: Dict[str, bool]):
     try:
         cursor.executemany("INSERT INTO account_visibility (account_id, is_visible) VALUES (?, ?) ON CONFLICT(account_id) DO UPDATE SET is_visible = excluded.is_visible;", data_to_upsert)
         conn.commit()
-        print(f"Updated visibility for {len(data_to_upsert)} accounts.")
     except sqlite3.Error as e:
         conn.rollback()
         raise e
     finally:
         conn.close()
 
-# --- NEW: Account Tax Metadata Functions ---
+# --- NEW: Account Tax Metadata Functions with Group Name --- 
 def get_account_metadata() -> Dict[str, Dict[str, Any]]:
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM account_metadata")
     rows = cursor.fetchall()
     conn.close()
-    return {row['account_id']: {"tax_status": row['tax_status'], "notes": row['notes']} for row in rows}
+    # FIX: Use dictionary key access instead of .get(), as sqlite3.Row does not support .get()
+    return {row['account_id']: {"tax_status": row['tax_status'], "notes": row['notes'], "group_name": row['group_name']} for row in rows}
 
-def set_account_metadata(account_id: str, tax_status: str, notes: str = None):
+def set_account_metadata(account_id: str, tax_status: str, notes: str = None, group_name: str = None):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
         cursor.execute("""
-            INSERT INTO account_metadata (account_id, tax_status, notes)
-            VALUES (?, ?, ?)
+            INSERT INTO account_metadata (account_id, tax_status, notes, group_name)
+            VALUES (?, ?, ?, ?)
             ON CONFLICT(account_id) DO UPDATE SET
                 tax_status = excluded.tax_status,
-                notes = excluded.notes
-        """, (account_id, tax_status, notes))
+                notes = excluded.notes,
+                group_name = excluded.group_name
+        """, (account_id, tax_status, notes, group_name))
         conn.commit()
     except sqlite3.Error as e:
         conn.rollback()
@@ -2514,7 +2741,7 @@ def set_account_metadata(account_id: str, tax_status: str, notes: str = None):
     finally:
         conn.close()
 
-SAFE_TO_PURGE = ["transactions", "holdings", "properties"]
+SAFE_TO_PURGE = ["transactions", "holdings", "properties", "discretionary_budget_items"]
 
 def purge_table_data(target_table: str) -> dict:
     if target_table not in SAFE_TO_PURGE:
@@ -2527,7 +2754,6 @@ def purge_table_data(target_table: str) -> dict:
         cursor.execute(f"DELETE FROM {target_table};")
         deleted_count = cursor.rowcount
         conn.commit()
-        print(f"Successfully purged {deleted_count} records from '{target_table}'.")
         return {"table": target_table, "purged_records": deleted_count, "initial_records": initial_count, "status": "success"}
     except sqlite3.Error as e:
         print(f"Database error during purge of '{target_table}': {e}")
@@ -2583,7 +2809,6 @@ def mark_holdings_as_failed(symbols: List[str]):
     try:
         cursor.execute(sql, symbols)
         conn.commit()
-        print(f"Marked {cursor.rowcount} holdings as failed for symbols: {symbols}")
     except sqlite3.Error as e:
         print(f"Database error marking holdings as failed: {e}")
         conn.rollback()
@@ -2591,7 +2816,6 @@ def mark_holdings_as_failed(symbols: List[str]):
     finally:
         conn.close()
 
-# --- NEW: Functions for Tax Facts --- 
 def get_tax_facts(year: int) -> Dict[str, Any] | None:
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -2632,7 +2856,6 @@ def save_tax_facts(year: int, data: Dict[str, Any]):
     try:
         cursor.execute(sql, params)
         conn.commit()
-        print(f"Successfully saved/replaced tax facts for year {year}.")
     except sqlite3.Error as e:
         print(f"Database error saving tax facts for {year}: {e}")
         conn.rollback()
@@ -2640,7 +2863,6 @@ def save_tax_facts(year: int, data: Dict[str, Any]):
     finally:
         conn.close()
 
-# --- NEW: CRUD functions for Future Income Streams ---
 def create_future_income_stream(stream: FutureIncomeStream) -> FutureIncomeStream:
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -2661,7 +2883,6 @@ def create_future_income_stream(stream: FutureIncomeStream) -> FutureIncomeStrea
     try:
         cursor.execute(sql, params)
         conn.commit()
-        print(f"Successfully created future income stream {stream.stream_id}.")
     except sqlite3.Error as e:
         print(f"Database error creating income stream: {e}")
         conn.rollback()
@@ -2684,7 +2905,6 @@ def delete_future_income_stream(stream_id: str) -> bool:
     try:
         cursor.execute("DELETE FROM future_income_streams WHERE stream_id = ?", (stream_id,))
         conn.commit()
-        print(f"Deleted income stream {stream_id}. Rows affected: {cursor.rowcount}")
         return cursor.rowcount > 0
     except sqlite3.Error as e:
         print(f"Database error deleting income stream {stream_id}: {e}")
@@ -2693,7 +2913,6 @@ def delete_future_income_stream(stream_id: str) -> bool:
     finally:
         conn.close()
 
-# --- NEW: Functions for Portfolio Value Snapshots ("Operation Snapshot") ---
 def get_closest_snapshot_value_before_date(target_date: str) -> Optional[Dict[str, Any]]:
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -2751,7 +2970,6 @@ def delete_portfolio_snapshot(snapshot_id: str) -> bool:
     conn.close()
     return deleted_count > 0
 
-# --- NEW: CRUD Functions for Real Estate Properties ---
 def get_all_properties() -> List[Dict[str, Any]]:
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -2789,7 +3007,6 @@ def create_property(prop: Property) -> Property:
 def update_property(property_id: str, updates: Dict[str, Any]):
     conn = get_db_connection()
     cursor = conn.cursor()
-    
     allowed_fields = ['name', 'purchase_price', 'mortgage_balance', 'current_value', 'appreciation_rate', 'is_primary']
     set_clauses, params = [], []
     for field, value in updates.items():
@@ -2797,10 +3014,8 @@ def update_property(property_id: str, updates: Dict[str, Any]):
             continue
         set_clauses.append(f"{field} = ?")
         params.append(value)
-    
     if not set_clauses:
         return
-
     sql = f"UPDATE properties SET {', '.join(set_clauses)} WHERE property_id = ?"
     params.append(property_id)
     try:
@@ -2833,18 +3048,13 @@ def get_total_real_estate_equity() -> float:
         return val - debt
     return 0.0
 
-# --- NEW: Phase 9 Forecast Functions ---
-# Scotty Update: Now supports variable lookback years for multi-year averaging.
 def get_base_col_from_actuals(categories: List[str], lookback_years: int = 1) -> float:
     if not categories:
         return 0.0
-    
     if lookback_years < 1: lookback_years = 1
     months = lookback_years * 12
-
     conn = get_db_connection()
     cursor = conn.cursor()
-    
     placeholders = ', '.join('?' for _ in categories)
     query = f"""
         SELECT SUM(amount) as total_expense 
@@ -2853,12 +3063,10 @@ def get_base_col_from_actuals(categories: List[str], lookback_years: int = 1) ->
           AND category IN ({placeholders})
           AND transaction_date >= date('now', '-{months} months')
     """
-    
     try:
         cursor.execute(query, categories)
         result = cursor.fetchone()
         total_sum = result['total_expense'] if result and result['total_expense'] else 0.0
-        # Annualize: Sum of N years divided by N
         return abs(total_sum) / lookback_years
     except sqlite3.Error as e:
         print(f"Error calculating base CoL: {e}")
@@ -2866,14 +3074,11 @@ def get_base_col_from_actuals(categories: List[str], lookback_years: int = 1) ->
     finally:
         conn.close()
 
-# Scotty Update: Now supports variable lookback years for multi-year averaging.
 def get_base_col_breakdown(categories: List[str], lookback_years: int = 1) -> Dict[str, float]:
     if not categories:
         return {}
-    
     if lookback_years < 1: lookback_years = 1
     months = lookback_years * 12
-    
     conn = get_db_connection()
     cursor = conn.cursor()
     placeholders = ', '.join('?' for _ in categories)
@@ -2885,14 +3090,12 @@ def get_base_col_breakdown(categories: List[str], lookback_years: int = 1) -> Di
           AND transaction_date >= date('now', '-{months} months')
         GROUP BY category
     """
-    
     breakdown = {}
     try:
         cursor.execute(query, categories)
         rows = cursor.fetchall()
         for row in rows:
             total_sum = abs(row['total_expense'] or 0.0)
-            # Annualize: Sum of N years divided by N
             breakdown[row['category']] = total_sum / lookback_years
     except sqlite3.Error as e:
         print(f"Error calculating base CoL breakdown: {e}")
@@ -2911,25 +3114,31 @@ def get_discretionary_budget_items() -> List[Dict[str, Any]]:
 def save_discretionary_budget_item(item: Dict[str, Any]):
     conn = get_db_connection()
     cursor = conn.cursor()
+    item_id = item.get('item_id')
+    if not item_id:
+        item_id = str(uuid.uuid4())
+
     sql = """
         INSERT OR REPLACE INTO discretionary_budget_items (
-            item_id, name, amount, start_year, end_year, is_recurring, inflation_adjusted, category
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            item_id, name, amount, start_year, end_year, is_recurring, inflation_adjusted, category, is_enabled
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
     params = (
-        item.get('item_id', str(uuid.uuid4())),
+        item_id,
         item['name'],
         float(item['amount']),
         int(item['start_year']),
         int(item.get('end_year')) if item.get('end_year') else None,
         1 if item.get('is_recurring') else 0,
         1 if item.get('inflation_adjusted') else 0,
-        item.get('category')
+        item.get('category'),
+        1 if item.get('is_enabled', True) else 0
     )
     try:
         cursor.execute(sql, params)
         conn.commit()
     except sqlite3.Error as e:
+        print(f"Database error saving discretionary item: {e}")
         conn.rollback()
         raise e
     finally:
@@ -2938,11 +3147,17 @@ def save_discretionary_budget_item(item: Dict[str, Any]):
 def delete_discretionary_budget_item(item_id: str) -> bool:
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM discretionary_budget_items WHERE item_id = ?", (item_id,))
-    deleted = cursor.rowcount
-    conn.commit()
-    conn.close()
-    return deleted > 0
+    try:
+        cursor.execute("DELETE FROM discretionary_budget_items WHERE item_id = ?", (item_id,))
+        deleted = cursor.rowcount
+        conn.commit()
+        return deleted > 0
+    except sqlite3.Error as e:
+        print(f"Database error deleting discretionary item {item_id}: {e}")
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
 
 
 --- FILE: projects/trust/src/demo_mode.py ---
@@ -2999,7 +3214,7 @@ def _apply_demo_to_property(prop: Dict[str, Any]) -> Dict[str, Any]:
 def process_for_demo_mode(data: Any) -> Any:
     """
     Recursively processes a data structure to apply demo mode transformations.
-    Intelligently detects if data is Real Estate or Portfolio based on keys.
+    Intelligently detects if data is Real Estate, Portfolio, or Forecast Simulation based on keys.
     """
     if isinstance(data, list):
         if not data:
@@ -3020,7 +3235,52 @@ def process_for_demo_mode(data: Any) -> Any:
     if isinstance(data, dict):
         # Handle specific, known data structures
         
-        # 1. Portfolio Allocation (Pie Chart & Table)
+        # 1. Forecast Simulation Result (Wrapper)
+        if 'simulation_series' in data:
+            demo_data = data.copy()
+            demo_data['simulation_series'] = [
+                process_for_demo_mode(year_data) for year_data in data['simulation_series']
+            ]
+            if 'settings' in demo_data:
+                 # Obscure the starting points summary
+                 s = demo_data['settings']
+                 if 'starting_nw' in s:
+                      s['starting_nw'] = s['starting_nw'] / float(PORTFOLIO_DIVISOR)
+                 if 'starting_base_col' in s:
+                      s['starting_base_col'] = s['starting_base_col'] / float(PORTFOLIO_DIVISOR)
+            return demo_data
+
+        # 2. Forecast Year Data (Simulation Row)
+        # We scale assets/expenses/income to obscure magnitude.
+        if 'liquid_assets' in data and 'total_net_worth' in data:
+            demo_row = data.copy()
+            
+            # Scale Portfolio-like items
+            port_keys = ['liquid_assets', 'bucket_taxable', 'bucket_deferred', 'bucket_roth', 
+                         'total_income', 'total_expenses', 'base_col_expense', 'discretionary_expense',
+                         'net_cashflow', 'investment_growth', 'rmd_event']
+            
+            for k in port_keys:
+                if k in demo_row:
+                     demo_row[k] = demo_row[k] / float(PORTFOLIO_DIVISOR)
+            
+            # Scale Real Estate Items
+            if 'real_estate_equity' in demo_row:
+                 demo_row['real_estate_equity'] = demo_row['real_estate_equity'] / float(REAL_ESTATE_DIVISOR)
+
+            # Re-sum Net Worth because components were scaled differently
+            # Note: This changes the math slightly, but visual trend remains roughly similar for demo purposes.
+            demo_row['total_net_worth'] = demo_row['liquid_assets'] + demo_row['real_estate_equity']
+            
+            # Scale the detailed breakdown map
+            if 'expense_breakdown' in demo_row and isinstance(demo_row['expense_breakdown'], dict):
+                 demo_row['expense_breakdown'] = {
+                      k: v / float(PORTFOLIO_DIVISOR) for k, v in demo_row['expense_breakdown'].items()
+                 }
+            
+            return demo_row
+
+        # 3. Portfolio Allocation (Pie Chart & Table)
         # This is purely portfolio data, use standard divisor.
         if all(k in data for k in ['chartData', 'tableData']):
             demo_data = data.copy()
@@ -3034,7 +3294,7 @@ def process_for_demo_mode(data: Any) -> Any:
             ]
             return demo_data
 
-        # 2. Portfolio Summary / Overall Return (Mix of Liquid and Real Estate)
+        # 4. Portfolio Summary / Overall Return (Mix of Liquid and Real Estate)
         # This requires applying DIFFERENT divisors to different keys and re-summing.
         if 'total_real_estate_equity' in data or 'total_market_value' in data:
             demo_data = data.copy()
@@ -3080,6 +3340,7 @@ from datetime import date
 from decimal import Decimal
 from typing import List, Dict, Any, Optional
 from . import database as db
+from . import analysis # Re-use analysis for account aggregation consistency
 
 # Uniform Lifetime Table for RMD divisors (Simplified)
 # Source: IRS Publication 590-B
@@ -3092,36 +3353,101 @@ RMD_DIVISORS = {
     98: 7.3, 99: 6.8, 100: 6.4
 }
 
+# 2024 Federal Tax Brackets (Taxable Income)
+# Rate, Single Ceiling, Joint Ceiling
+TAX_BRACKETS_2024 = [
+    (0.10, 11600, 23200),
+    (0.12, 47150, 94300),
+    (0.22, 100525, 201050),
+    (0.24, 191950, 383900),
+    (0.32, 243725, 487450),
+    (0.35, 609350, 1218700),
+    (0.37, float('inf'), float('inf'))
+]
+
+STANDARD_DEDUCTION_2024 = {
+    'single': 14600,
+    'joint': 29200
+}
+
+# Categories to automatically exclude from Base CoL because they are calculated dynamically
+EXCLUDED_EXPENSE_CATEGORIES = ["Taxes", "Federal Tax", "State Tax", "Income Tax"]
+
 def get_rmd_divisor(age: int) -> float:
     # Fallback logic for ages > 100
     if age > 100:
         return max(3.0, 6.4 - (0.3 * (age - 100)))
     return RMD_DIVISORS.get(age, 27.4)
 
+def calculate_progressive_tax(gross_income: float, filing_status: str, state_rate: float) -> Dict[str, float]:
+    """
+    Calculates estimated federal tax (progressive) and state tax (flat effective).
+    Returns tax metrics including room to next bracket.
+    """
+    std_deduction = STANDARD_DEDUCTION_2024.get(filing_status, 14600)
+    taxable_income = max(0, gross_income - std_deduction)
+    
+    fed_tax_bill = 0.0
+    previous_ceiling = 0.0
+    
+    # Calculate Federal Tax
+    for rate, single_ceil, joint_ceil in TAX_BRACKETS_2024:
+        ceiling = joint_ceil if filing_status == 'joint' else single_ceil
+        
+        if taxable_income > ceiling:
+            fed_tax_bill += (ceiling - previous_ceiling) * rate
+            previous_ceiling = ceiling
+        else:
+            fed_tax_bill += (taxable_income - previous_ceiling) * rate
+            break
+            
+    # Calculate State Tax (Simplified Effective Rate on Taxable Income)
+    state_tax_bill = taxable_income * state_rate
+
+    total_tax = fed_tax_bill + state_tax_bill
+    effective_rate = (total_tax / gross_income) if gross_income > 0 else 0.0
+    
+    # Calculate Room to 24% Bracket (Top of 22% bracket)
+    bracket_22_ceiling = TAX_BRACKETS_2024[2][2] if filing_status == 'joint' else TAX_BRACKETS_2024[2][1]
+    dist_to_24 = max(0, bracket_22_ceiling - taxable_income)
+    
+    return {
+        "federal_tax": fed_tax_bill,
+        "state_tax": state_tax_bill,
+        "total_tax": total_tax,
+        "effective_rate": effective_rate,
+        "taxable_income": taxable_income,
+        "headroom_24_pct": dist_to_24
+    }
+
 def calculate_forecast() -> Dict[str, Any]:
     """
     The Time Machine Simulation Engine.
     Projects Net Worth year-over-year from the current year until Age 95.
-    
-    MAJOR UPGRADE (v2.1):
-    - Multi-Bucket Simulation (Taxable, Deferred, Roth).
-    - RMD Logic implementation.
-    - Strategic Withdrawal Order.
-    - Residence Sale Logic Fix.
-    - Restored detailed expense telemetry for UI.
-    - [Scotty] Added Annualized CoL Averaging support.
     """
     
     # 1. Gather Simulation Inputs
     birth_year = db.get_setting('forecast_birth_year')
     inflation_rate = float(db.get_setting('forecast_inflation_rate') or 0.03)
     return_rate = float(db.get_setting('forecast_return_rate') or 0.05)
-    withdrawal_tax_rate = float(db.get_setting('forecast_withdrawal_tax_rate') or 0.15)
+    withdrawal_tax_rate = float(db.get_setting('forecast_withdrawal_tax_rate') or 0.15) # For gross-up estimation
+    
+    state_tax_rate = float(db.get_setting('forecast_state_tax_rate') or 0.0) 
+    if state_tax_rate > 0.5:
+        print(f"Warning: State Tax Rate {state_tax_rate} seems high. Dividing by 100.")
+        state_tax_rate = state_tax_rate / 100.0
+    
+    filing_status = db.get_setting('forecast_tax_filing_status') or 'single'
+    if filing_status not in ['single', 'joint']: filing_status = 'single'
+
+    tax_drag_rate = float(db.get_setting('forecast_tax_drag_rate') or 0.005) 
     
     retirement_age = int(db.get_setting('forecast_retirement_age') or 65)
     nogo_age = int(db.get_setting('forecast_nogo_age') or 80)
     
-    # Residence Sale Strategy
+    withdrawal_strategy = db.get_setting('forecast_withdrawal_strategy') or 'standard'
+    roth_conversion_target = db.get_setting('forecast_roth_conversion_target') or 'none'
+    
     residence_sale_enabled = bool(db.get_setting('forecast_residence_sale_enabled') or False)
     residence_sale_year = db.get_setting('forecast_residence_sale_year')
     try:
@@ -3134,18 +3460,15 @@ def calculate_forecast() -> Dict[str, Any]:
 
     phase_multipliers = db.get_setting('forecast_phase_multipliers') or {}
     base_col_categories = db.get_setting('forecast_base_col_categories') or []
-    
-    # Scotty: Get the lookback averaging setting (default 1 year)
     lookback_years = int(db.get_setting('forecast_base_col_lookback_years') or 1)
 
     if not birth_year:
         return {"error": "Birth Year not set. Please configure settings."}
 
     # 2. Establish Starting State (Buckets)
-    account_metadata = db.get_account_metadata()
-    holdings = db.get_holdings()
+    # --- CRITICAL UPDATE v1.9.3: Use shared analysis function for bucket consistency with Home View ---
+    account_summaries = analysis.get_account_performance_summary()
     
-    # Bucketize Holdings
     buckets = {
         "Taxable": 0.0,
         "Deferred": 0.0,
@@ -3153,18 +3476,36 @@ def calculate_forecast() -> Dict[str, Any]:
         "Exempt": 0.0
     }
     
-    # Group by tax status
-    for h in holdings:
-        if h.get('market_value'):
-            acct_id = h['account_id']
-            # Default to 'Taxable' if not set
-            status = account_metadata.get(acct_id, {}).get('tax_status', 'Taxable')
-            buckets[status] += float(h['market_value'])
+    unconfigured_accounts = set()
+    alerts = []
+
+    for acc in account_summaries:
+        status = acc['tax_status']
+        val = acc['total_market_value']
+        if val <= 0: continue
+
+        # Map tax status string to bucket key safely
+        norm_status = status.strip().lower()
+        if 'deferred' in norm_status or 'ira' in norm_status or '401' in norm_status:
+            buckets['Deferred'] += val
+        elif 'roth' in norm_status:
+            buckets['Roth'] += val
+        elif 'exempt' in norm_status:
+            buckets['Exempt'] += val
+        else:
+            buckets['Taxable'] += val
+            # If status is the default 'Taxable' but maybe shouldn't be, we can't easily detect that here without more logic.
+            # But if the account metadata was missing, analysis.py defaults to Taxable. 
+            # We can check if metadata exists in analysis.py, but for now we rely on the user checking the Home Page table.
+
+    print(f"Forecast Engine Initialized with Buckets: {buckets}")
 
     properties = db.get_all_properties()
     
-    # Scotty: Pass the lookback years to the breakdown function
-    base_col_breakdown = db.get_base_col_breakdown(base_col_categories, lookback_years)
+    # --- Filter Excluded Categories from Base CoL ---
+    filtered_col_categories = [c for c in base_col_categories if c not in EXCLUDED_EXPENSE_CATEGORIES]
+    
+    base_col_breakdown = db.get_base_col_breakdown(filtered_col_categories, lookback_years)
     base_col_total_initial = sum(base_col_breakdown.values())
     
     discretionary_items = db.get_discretionary_budget_items()
@@ -3174,13 +3515,17 @@ def calculate_forecast() -> Dict[str, Any]:
     current_year = date.today().year
     end_year = birth_year + 95
     simulation_data = []
-    alerts = []
+    
+    previous_net_worth = 0.0
 
-    # Alert Check for Residence Sale
+    # Alert Checks
     if residence_sale_enabled and residence_sale_year:
         has_primary = any(p['is_primary'] for p in properties)
         if not has_primary:
-            alerts.append("Residence Sale Strategy is enabled, but no property is marked as 'Principal Residence'. No sale will occur.")
+            alerts.append("Residence Sale Strategy is enabled, but no property is marked as 'Principal Residence'.")
+    
+    if buckets['Deferred'] == 0 and buckets['Roth'] == 0 and sum(buckets.values()) > 0:
+         alerts.append("System Alert: All assets are classified as 'Taxable'. Verify your Account Settings if you have IRAs/401ks.")
 
     working_properties = [
         {
@@ -3207,6 +3552,9 @@ def calculate_forecast() -> Dict[str, Any]:
         age = year - birth_year
         phase_key = "no" if age >= nogo_age else ("slow" if age >= retirement_age else "go")
         
+        # Track events that add to Ordinary Income (Streams, RMDs, Conversions, Deferred Withdrawals)
+        ordinary_income_events = 0.0
+
         # --- 1. Calculate Income (Non-Portfolio) ---
         year_income = 0.0
         for stream in future_income_streams:
@@ -3218,48 +3566,63 @@ def calculate_forecast() -> Dict[str, Any]:
                 increase_rate = stream['annual_increase_rate']
                 adjusted_amount = annual_amount * ((1 + increase_rate) ** (year - start.year))
                 year_income += adjusted_amount
+                ordinary_income_events += adjusted_amount
 
-        # --- 2. Calculate RMDs (Required Minimum Distributions) ---
-        # RMDs apply to Deferred buckets starting age 75 (simplified SECURE 2.0)
+        # --- 2. Calculate RMDs ---
         year_rmd = 0.0
         if age >= 75 and buckets['Deferred'] > 0:
             divisor = get_rmd_divisor(age)
             year_rmd = buckets['Deferred'] / divisor
-            # RMD is forced out of Deferred
             buckets['Deferred'] -= year_rmd
-            # Logic: RMDs are taxable income. We treat them as cashflow inflow (income),
-            # but we must account for taxes on them immediately.
-            # For simplicity, we add to year_income, and the net cashflow logic handles the tax drag
-            # if we end up saving it (taxable bucket) or spending it.
-            # HOWEVER, RMDs *force* a tax event. 
-            # We will assume RMD is added to 'year_income' but it carries a tax liability.
-            # To keep the model simple: Add to income. If expenses < income, it goes to Taxable Bucket.
             year_income += year_rmd
+            ordinary_income_events += year_rmd
 
-        # --- 3. Calculate Expenses ---
+        # --- 3. Calculate Living Expenses (Excluding Tax) ---
         years_from_start = year - current_year
         inflation_factor = (1 + inflation_rate) ** years_from_start
         
-        year_base_col = 0.0
+        year_living_expenses = 0.0
+        expense_breakdown = {}
+
         for cat, amount in base_col_breakdown.items():
             multiplier = get_phase_multiplier(cat, phase_key)
-            year_base_col += (amount * inflation_factor * multiplier)
+            cost = (amount * inflation_factor * multiplier)
+            year_living_expenses += cost
+            expense_breakdown[cat] = round(cost, 2)
         
         year_discretionary = 0.0
         for item in discretionary_items:
+            if not item.get('is_enabled', True): continue
             item_start = item['start_year']
             item_end = item['end_year'] if item['end_year'] else (9999 if item['is_recurring'] else item_start)
             if item_start <= year <= item_end:
                 item_amount = item['amount']
                 phase_mult = get_phase_multiplier(item.get('category'), phase_key)
                 item_amount = item_amount * phase_mult
-                if item['inflation_adjusted']:
-                    item_amount = item_amount * inflation_factor
+                if item['inflation_adjusted']: item_amount = item_amount * inflation_factor
                 year_discretionary += item_amount
+                expense_breakdown[item['name']] = round(item_amount, 2)
 
-        total_expenses = year_base_col + year_discretionary
+        # --- 4. Preliminary Tax Check (Pre-Withdrawal/Conversion) ---
+        tax_metrics_pre = calculate_progressive_tax(ordinary_income_events, filing_status, state_tax_rate)
 
-        # --- 4. Sale of Residence Logic ---
+        # --- 5. ROTH CONVERSION STRATEGY (Phase 10) ---
+        conversion_amount = 0.0
+        if roth_conversion_target == 'fill_22' or roth_conversion_target == 'fill_24':
+            # Determine ceiling based on target
+            # Using 2024 brackets: 22% ends at 100k/201k. 24% ends at 191k/383k.
+            # We use the generic 'headroom_24_pct' from our function which calculates distance to end of 22% (start of 24%)
+            # If user wants to fill 24%, we need logic for that. For now, we support 'Fill to Top of 22%' which is common.
+            
+            if roth_conversion_target == 'fill_22':
+                room = tax_metrics_pre['headroom_24_pct'] # This is distance to 24%
+                if room > 0 and buckets['Deferred'] > 0:
+                    conversion_amount = min(buckets['Deferred'], room)
+                    buckets['Deferred'] -= conversion_amount
+                    buckets['Roth'] += conversion_amount
+                    ordinary_income_events += conversion_amount
+
+        # --- 6. Residence Sale ---
         sale_proceeds = 0.0
         sale_event_triggered = False
         if residence_sale_enabled and residence_sale_year and year == residence_sale_year:
@@ -3270,68 +3633,83 @@ def calculate_forecast() -> Dict[str, Any]:
                 working_properties.remove(prop)
                 sale_event_triggered = True
 
-        # --- 5. Net Cashflow & Strategic Withdrawal ---
-        # Logic: 
-        #   Net = Income (incl RMDs) + Sale Proceeds - Expenses
-        #   If Net > 0: Surplus -> Invest in Taxable
-        #   If Net < 0: Deficit -> Withdraw from Taxable -> Deferred -> Roth
-        
+        # --- 7. Net Cashflow & Strategic Withdrawal ---
+        # We must recalculate tax because of Conversions
+        tax_metrics_post_conversion = calculate_progressive_tax(ordinary_income_events, filing_status, state_tax_rate)
+        annual_tax_bill = tax_metrics_post_conversion['total_tax']
+        expense_breakdown['Est. Income Tax'] = round(annual_tax_bill, 2)
+
+        total_expenses = year_living_expenses + year_discretionary + annual_tax_bill
+
         net_cashflow = year_income + sale_proceeds - total_expenses
-        
-        tax_drag = 0.0
+        strategy_executed = "Standard"
+        deferred_withdrawals_for_spend = 0.0
 
         if net_cashflow > 0:
-            # SURPLUS: Add to Taxable Bucket
-            # Note: We already paid tax on RMDs implicitly by not having a 100% tax drag here.
-            # Ideally, we'd subtract tax from RMD before adding to surplus.
-            # Simplified: Surplus goes to Taxable.
+            strategy_executed = "Accumulation"
             buckets['Taxable'] += net_cashflow
         else:
-            # DEFICIT: Need to withdraw
             amount_needed = abs(net_cashflow)
             
-            # A. Try Taxable first
-            from_taxable = min(buckets['Taxable'], amount_needed)
-            buckets['Taxable'] -= from_taxable
-            amount_needed -= from_taxable
-            
-            # B. Try Roth next (Tax Free)
-            # (Strategic change: Roth is usually last to preserve tax-free growth, 
-            # but some strategies use it to fill low tax brackets. We'll put it LAST for standard advice).
-            
-            # B. Try Deferred (Taxable Withdrawal)
-            if amount_needed > 0:
-                # We need to withdraw enough to cover amount_needed PLUS taxes.
-                # Gross_Withdrawal = Amount / (1 - Tax_Rate)
-                gross_withdrawal_needed = amount_needed / (1.0 - withdrawal_tax_rate)
-                from_deferred = min(buckets['Deferred'], gross_withdrawal_needed)
+            if withdrawal_strategy == 'deferred_first' and age >= 60:
+                strategy_executed = "Deferred First"
+                if amount_needed > 0:
+                    # Gross up using estimated marginal rate
+                    gross_needed = amount_needed / (1.0 - withdrawal_tax_rate)
+                    from_deferred = min(buckets['Deferred'], gross_needed)
+                    buckets['Deferred'] -= from_deferred
+                    net_from_deferred = from_deferred * (1.0 - withdrawal_tax_rate)
+                    deferred_withdrawals_for_spend += from_deferred
+                    amount_needed -= net_from_deferred
+
+                if amount_needed > 0:
+                    from_taxable = min(buckets['Taxable'], amount_needed)
+                    buckets['Taxable'] -= from_taxable
+                    amount_needed -= from_taxable
+
+                if amount_needed > 0:
+                    from_roth = min(buckets['Roth'], amount_needed)
+                    buckets['Roth'] -= from_roth
+                    amount_needed -= from_roth
+
+            else:
+                strategy_executed = "Standard"
+                from_taxable = min(buckets['Taxable'], amount_needed)
+                buckets['Taxable'] -= from_taxable
+                amount_needed -= from_taxable
                 
-                buckets['Deferred'] -= from_deferred
-                
-                # Net cash realized is what we actually spend
-                net_from_deferred = from_deferred * (1.0 - withdrawal_tax_rate)
-                amount_needed -= net_from_deferred
-                tax_drag += (from_deferred - net_from_deferred)
+                if amount_needed > 0:
+                    gross_needed = amount_needed / (1.0 - withdrawal_tax_rate)
+                    from_deferred = min(buckets['Deferred'], gross_needed)
+                    buckets['Deferred'] -= from_deferred
+                    net_from_deferred = from_deferred * (1.0 - withdrawal_tax_rate)
+                    deferred_withdrawals_for_spend += from_deferred
+                    amount_needed -= net_from_deferred
 
-            # C. Try Roth (Tax Free) - Last Resort
-            if amount_needed > 0:
-                from_roth = min(buckets['Roth'], amount_needed)
-                buckets['Roth'] -= from_roth
-                amount_needed -= from_roth
+                if amount_needed > 0:
+                    from_roth = min(buckets['Roth'], amount_needed)
+                    buckets['Roth'] -= from_roth
+                    amount_needed -= from_roth
+        
+        # --- 8. Final Tax Recalculation (Post-Withdrawal) ---
+        # If we pulled more from deferred to pay bills, we owe more tax.
+        ordinary_income_events += deferred_withdrawals_for_spend
+        final_tax_metrics = calculate_progressive_tax(ordinary_income_events, filing_status, state_tax_rate)
 
-            # If amount_needed > 0 here, we are bankrupt for this year.
+        # --- 9. Investment Growth ---
+        taxable_return = return_rate - tax_drag_rate
+        if taxable_return < 0: taxable_return = 0
 
-        # --- 6. Investment Growth (End of Year) ---
-        # Grow all buckets
-        # Note: We apply growth AFTER withdrawals to be conservative (withdraw at start of year)
-        buckets['Taxable'] *= (1 + return_rate)
+        buckets['Taxable'] *= (1 + taxable_return)
         buckets['Deferred'] *= (1 + return_rate)
         buckets['Roth'] *= (1 + return_rate)
         buckets['Exempt'] *= (1 + return_rate)
         
-        total_investment_growth = (buckets['Taxable'] + buckets['Deferred'] + buckets['Roth'] + buckets['Exempt']) * (return_rate / (1+return_rate))
+        total_investment_growth = \
+            (buckets['Taxable'] * (taxable_return / (1+taxable_return))) + \
+            ((buckets['Deferred'] + buckets['Roth'] + buckets['Exempt']) * (return_rate / (1+return_rate)))
 
-        # --- 7. Real Estate Growth ---
+        # --- 10. Real Estate Growth ---
         year_re_value = 0.0
         year_re_debt = 0.0
         for prop in working_properties:
@@ -3341,6 +3719,11 @@ def calculate_forecast() -> Dict[str, Any]:
 
         total_liquid = sum(buckets.values())
         total_net_worth = total_liquid + (year_re_value - year_re_debt)
+        
+        nw_delta = 0
+        if year > current_year:
+            nw_delta = total_net_worth - previous_net_worth
+        previous_net_worth = total_net_worth
 
         simulation_data.append({
             "year": year,
@@ -3351,15 +3734,25 @@ def calculate_forecast() -> Dict[str, Any]:
             "bucket_deferred": round(buckets['Deferred'], 2),
             "bucket_roth": round(buckets['Roth'], 2),
             "rmd_event": round(year_rmd, 2),
+            "roth_conversion": round(conversion_amount, 2),
             "real_estate_equity": round(year_re_value - year_re_debt, 2),
             "total_net_worth": round(total_net_worth, 2),
+            "nw_delta": round(nw_delta, 2),
             "total_income": round(year_income, 2),
             "total_expenses": round(total_expenses, 2),
-            "base_col_expense": round(year_base_col, 2), # RESTORED
-            "discretionary_expense": round(year_discretionary, 2), # RESTORED
+            "base_col_expense": round(year_living_expenses, 2),
+            "discretionary_expense": round(year_discretionary, 2),
+            "expense_breakdown": expense_breakdown,
             "net_cashflow": round(year_income - total_expenses + sale_proceeds, 2),
             "investment_growth": round(total_investment_growth, 2),
-            "sale_event": sale_event_triggered
+            "sale_event": sale_event_triggered,
+            "strategy_executed": strategy_executed,
+            "tax_metrics": {
+                "taxable_income": round(final_tax_metrics['taxable_income'], 2),
+                "effective_rate": round(final_tax_metrics['effective_rate'] * 100, 2),
+                "headroom_24_pct": round(final_tax_metrics['headroom_24_pct'], 2),
+                "total_tax": round(final_tax_metrics['total_tax'], 2)
+            }
         })
         
     return {
@@ -3368,7 +3761,8 @@ def calculate_forecast() -> Dict[str, Any]:
         "settings": {
             "birth_year": birth_year,
             "starting_nw": total_liquid + (year_re_value - year_re_debt if 'year_re_value' in locals() else 0),
-            "starting_base_col": round(base_col_total_initial, 2)
+            "starting_base_col": round(base_col_total_initial, 2),
+            "withdrawal_strategy": withdrawal_strategy
         }
     }
 
@@ -3607,6 +4001,7 @@ class ForecastConfig(BaseModel):
     inflation_rate: Optional[float]
     return_rate: Optional[float]
     withdrawal_tax_rate: Optional[float]
+    state_tax_rate: Optional[float] # NEW
     retirement_age: Optional[int]
     nogo_age: Optional[int]
     base_col_categories: Optional[List[str]]
@@ -3617,8 +4012,15 @@ class ForecastConfig(BaseModel):
     residence_sale_year: Optional[int] = None
     # --- NEW: CoL Lookback ---
     base_col_lookback_years: Optional[int] = 1
+    # --- NEW: Withdrawal Strategy (v1.9.1) ---
+    withdrawal_strategy: Optional[str] = 'standard'
+    # --- NEW: Fix for Tax Filing Status (v1.9.2) ---
+    tax_filing_status: Optional[str] = 'single'
+    # --- NEW: Roth Conversion Strategy (Phase 10) ---
+    roth_conversion_target: Optional[str] = 'none'
 
 class DiscretionaryItemCreate(BaseModel):
+    item_id: Optional[str] = None # Allow ID to be passed for updates
     name: str
     amount: float
     start_year: int
@@ -3626,6 +4028,7 @@ class DiscretionaryItemCreate(BaseModel):
     is_recurring: bool = False
     inflation_adjusted: bool = True
     category: Optional[str] = None
+    is_enabled: Optional[bool] = True # NEW
 
 # --- NEW: Account Metadata Pydantic ---
 class AccountMetadataUpdate(BaseModel):
@@ -3834,6 +4237,16 @@ async def get_portfolio_waterfall(period: str = Query("all", description="Time p
     """
     return analysis.calculate_portfolio_waterfall(period)
 
+# --- NEW: Account Performance Summary Endpoint (v1.9.3) ---
+@app.get("/api/accounts/performance", tags=["Analysis"])
+async def get_account_performance(mode: str = Query("actuals")):
+    """
+    Returns aggregated performance metrics per account (value, cost basis, gain, tax status).
+    """
+    data = analysis.get_account_performance_summary()
+    if mode == 'demo':
+        return demo_mode.process_for_demo_mode(data)
+    return data
 
 # --- Data & Filter Endpoints ---
 @app.get("/api/transactions", tags=["Data"])
@@ -4072,13 +4485,17 @@ async def get_forecast_config():
         "inflation_rate": db.get_setting('forecast_inflation_rate') or 0.03,
         "return_rate": db.get_setting('forecast_return_rate') or 0.05,
         "withdrawal_tax_rate": db.get_setting('forecast_withdrawal_tax_rate') or 0.15,
+        "state_tax_rate": db.get_setting('forecast_state_tax_rate') or 0.0,
         "retirement_age": db.get_setting('forecast_retirement_age') or 65,
         "nogo_age": db.get_setting('forecast_nogo_age') or 80,
         "base_col_categories": db.get_setting('forecast_base_col_categories') or [],
         "phase_multipliers": db.get_setting('forecast_phase_multipliers') or {},
         "residence_sale_enabled": db.get_setting('forecast_residence_sale_enabled') or False,
         "residence_sale_year": db.get_setting('forecast_residence_sale_year'),
-        "base_col_lookback_years": db.get_setting('forecast_base_col_lookback_years') or 1
+        "base_col_lookback_years": db.get_setting('forecast_base_col_lookback_years') or 1,
+        "withdrawal_strategy": db.get_setting('forecast_withdrawal_strategy') or 'standard',
+        "tax_filing_status": db.get_setting('forecast_tax_filing_status') or 'single',
+        "roth_conversion_target": db.get_setting('forecast_roth_conversion_target') or 'none'
     }
 
 @app.put("/api/forecast/config", status_code=204, tags=["Forecast"])
@@ -4087,6 +4504,7 @@ async def update_forecast_config(config: ForecastConfig):
     # This allows us to handle explicit nulls (clearing a value) vs missing fields (no update).
     
     fields_set = config.__fields_set__
+    print(f"DEBUG: Received forecast config update. Fields: {fields_set}")
 
     if 'birth_year' in fields_set: 
         db.set_setting('forecast_birth_year', config.birth_year)
@@ -4099,6 +4517,9 @@ async def update_forecast_config(config: ForecastConfig):
     
     if 'withdrawal_tax_rate' in fields_set: 
         db.set_setting('forecast_withdrawal_tax_rate', config.withdrawal_tax_rate)
+
+    if 'state_tax_rate' in fields_set: 
+        db.set_setting('forecast_state_tax_rate', config.state_tax_rate)
     
     if 'retirement_age' in fields_set: 
         db.set_setting('forecast_retirement_age', config.retirement_age)
@@ -4119,8 +4540,20 @@ async def update_forecast_config(config: ForecastConfig):
     if 'residence_sale_year' in fields_set: 
         db.set_setting('forecast_residence_sale_year', config.residence_sale_year)
     
-    if 'base_col_lookback_years' in fields_set:
+    if 'base_col_lookback_years' in fields_set: 
         db.set_setting('forecast_base_col_lookback_years', config.base_col_lookback_years)
+
+    # --- NEW: Withdrawal Strategy ---
+    if 'withdrawal_strategy' in fields_set:
+        db.set_setting('forecast_withdrawal_strategy', config.withdrawal_strategy)
+        
+    # --- NEW: Tax Filing Status ---
+    if 'tax_filing_status' in fields_set:
+        db.set_setting('forecast_tax_filing_status', config.tax_filing_status)
+
+    # --- NEW: Roth Conversion Strategy ---
+    if 'roth_conversion_target' in fields_set:
+        db.set_setting('forecast_roth_conversion_target', config.roth_conversion_target)
 
     return Response(status_code=204)
 
@@ -4131,8 +4564,11 @@ async def get_calculated_base_col(categories: Optional[List[str]] = Query(None),
     return {"base_col": total}
 
 @app.get("/api/forecast/simulation", tags=["Forecast"])
-async def run_forecast_simulation():
-    return forecast.calculate_forecast()
+async def run_forecast_simulation(mode: str = Query("actuals")):
+    result = forecast.calculate_forecast()
+    if mode == 'demo':
+        return demo_mode.process_for_demo_mode(result)
+    return result
 
 @app.get("/api/forecast/discretionary", tags=["Forecast"])
 async def get_discretionary_items():
@@ -4402,6 +4838,183 @@ def recategorize_all_transactions() -> int:
     
     print(f"--- Re-categorization complete. Processed {len(updated_transactions)} transactions. ---")
     return len(updated_transactions)
+
+
+--- FILE: projects/trust/src/components/AccountSummaryTable.css ---
+
+.account-summary-card {
+    /* Standard Card styles from App.css apply */
+}
+
+.account-summary-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1rem;
+    font-size: 0.9em;
+}
+
+.account-summary-table th,
+.account-summary-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color);
+    text-align: left;
+}
+
+.account-summary-table thead th {
+    background-color: var(--light-bg);
+    font-weight: 500;
+    color: #ccc;
+}
+
+.account-summary-table td:nth-child(3), /* Value */
+.account-summary-table td:nth-child(4), /* Cost */
+.account-summary-table td:nth-child(5) /* Gain */ {
+    text-align: right;
+    font-family: monospace;
+    font-size: 1.1em;
+}
+
+.gain-positive {
+    color: var(--gold-accent);
+}
+
+.gain-negative {
+    color: #ff6b6b;
+}
+
+.tax-status-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.85em;
+    font-weight: 500;
+    text-transform: uppercase;
+}
+
+.status-taxable {
+    background-color: rgba(0, 242, 254, 0.2);
+    color: #00f2fe;
+    border: 1px solid rgba(0, 242, 254, 0.4);
+}
+
+.status-deferred {
+    background-color: rgba(254, 202, 87, 0.2);
+    color: #feca57;
+    border: 1px solid rgba(254, 202, 87, 0.4);
+}
+
+.status-roth {
+    background-color: rgba(255, 159, 243, 0.2);
+    color: #ff9ff3;
+    border: 1px solid rgba(255, 159, 243, 0.4);
+}
+
+.status-exempt {
+    background-color: rgba(5, 196, 107, 0.2);
+    color: #05c46b;
+    border: 1px solid rgba(5, 196, 107, 0.4);
+}
+
+
+--- FILE: projects/trust/src/components/AccountSummaryTable.jsx ---
+
+import { useState, useEffect } from 'react';
+import './AccountSummaryTable.css';
+import { useMode } from '../context/ModeContext';
+
+const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+}).format(value || 0);
+
+const AccountSummaryTable = () => {
+    const { mode } = useMode();
+    const [data, setData] = useState([]);
+    const [isLoading, setIsLoading] = useState(true);
+
+    useEffect(() => {
+        const fetchData = async () => {
+            setIsLoading(true);
+            try {
+                const response = await fetch(`/api/accounts/performance?mode=${mode}`);
+                if (!response.ok) throw new Error('Failed to fetch account summary');
+                const result = await response.json();
+                setData(result);
+            } catch (error) {
+                console.error("Error fetching account summary:", error);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        fetchData();
+    }, [mode]);
+
+    const getStatusClass = (status) => {
+        const s = (status || '').toLowerCase();
+        if (s.includes('deferred') || s.includes('ira') || s.includes('401')) return 'status-deferred';
+        if (s.includes('roth')) return 'status-roth';
+        if (s.includes('exempt')) return 'status-exempt';
+        return 'status-taxable';
+    };
+
+    // Helper to group by Institution/Group ID for display if needed
+    // Currently API returns flat list sorted by group. 
+    // We'll just render flat for now but with visual distinction for sub-accounts.
+    
+    return (
+        <div className="card account-summary-card">
+            <h2>Investment Accounts Summary</h2>
+            {isLoading ? <p>Loading account data...</p> : (
+                <table className="account-summary-table">
+                    <thead>
+                        <tr>
+                            <th>Account Name</th>
+                            <th>Tax Setting</th>
+                            <th>Total Value</th>
+                            <th>Cost Basis</th>
+                            <th>Total Gain/Loss</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {data.length === 0 ? (
+                            <tr><td colSpan="5">No investment accounts found.</td></tr>
+                        ) : data.map(acc => (
+                            <tr key={acc.lookup_key}>
+                                <td>
+                                    {/* Indent if it's a sub-account (has an account number) */}
+                                    {acc.account_number ? (
+                                        <span style={{paddingLeft: '1.5rem', color: '#ccc', fontSize: '0.9em'}}>
+                                            ↳ {acc.account_number}
+                                        </span>
+                                    ) : (
+                                        <span style={{fontWeight: '500'}}>{acc.group_id}</span>
+                                    )}
+                                </td>
+                                <td>
+                                    <span className={`tax-status-badge ${getStatusClass(acc.tax_status)}`}>
+                                        {acc.tax_status}
+                                    </span>
+                                </td>
+                                <td>{formatCurrency(acc.total_market_value)}</td>
+                                <td>{formatCurrency(acc.total_cost_basis)}</td>
+                                <td className={acc.total_gain >= 0 ? 'gain-positive' : 'gain-negative'}>
+                                    {formatCurrency(acc.total_gain)} 
+                                    <span style={{fontSize:'0.8em', marginLeft:'5px', opacity:0.8}}>
+                                        ({acc.total_gain_percent.toFixed(1)}%)
+                                    </span>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            )}
+        </div>
+    );
+};
+
+export default AccountSummaryTable;
 
 
 --- FILE: projects/trust/src/components/BarChart.jsx ---
@@ -4938,8 +5551,8 @@ const FileUploader = ({ title, importType, onUploadSuccess }) => {
             <h3>{title}</h3>
             <form onSubmit={handleSubmit}>
                 <div className="form-group">
-                    <label htmlFor={`${importType}-account-id`}>Account ID</label>
-                    <input type="text" id={`${importType}-account-id`} placeholder="e.g., brokerage, checking" onChange={(e) => setAccountId(e.target.value)} required />
+                    <label htmlFor={`${importType}-account-id`}>Account ID (Group Name)</label>
+                    <input type="text" id={`${importType}-account-id`} placeholder="e.g., Fidelity, Chase" onChange={(e) => setAccountId(e.target.value)} required />
                 </div>
                 <div className="form-group">
                     <label htmlFor={`${importType}-file`}>CSV File</label>
@@ -4952,25 +5565,46 @@ const FileUploader = ({ title, importType, onUploadSuccess }) => {
     );
 };
 
-// --- NEW: AccountTaxStatusManager ---
+// --- NEW: AccountTaxStatusManager with Asset Totals & Grouping --- //
 const AccountTaxStatusManager = () => {
     const [accounts, setAccounts] = useState([]);
     const [metadata, setMetadata] = useState({});
+    const [performance, setPerformance] = useState({});
     const [isLoading, setIsLoading] = useState(true);
     const [savingId, setSavingId] = useState(null);
+
+    const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
+    }).format(value || 0);
 
     useEffect(() => {
         const fetchData = async () => {
             setIsLoading(true);
             try {
-                const [accRes, metaRes] = await Promise.all([
+                const [accRes, metaRes, perfRes] = await Promise.all([
                     fetch('/api/accounts'),
-                    fetch('/api/accounts/metadata')
+                    fetch('/api/accounts/metadata'),
+                    fetch('/api/accounts/performance')
                 ]);
+                
                 const accData = await accRes.json();
                 const metaData = await metaRes.json();
+                const perfData = await perfRes.json();
+
+                // Create a map of account_id/lookup_key to market value
+                const perfMap = {};
+                perfData.forEach(p => {
+                    perfMap[p.lookup_key] = p.total_market_value;
+                    // Also map the group_id if no specific key exists
+                    if (!perfMap[p.group_id]) perfMap[p.group_id] = 0;
+                });
+
                 setAccounts(accData);
                 setMetadata(metaData);
+                setPerformance(perfMap);
             } catch (error) {
                 console.error("Failed to load account data", error);
             } finally {
@@ -4980,9 +5614,14 @@ const AccountTaxStatusManager = () => {
         fetchData();
     }, []);
 
-    const handleStatusChange = async (accountId, newStatus) => {
+    const handleStatusChange = async (accountId, newStatus, newGroup = null) => {
         const currentMeta = metadata[accountId] || {};
-        const updatedMeta = { ...currentMeta, tax_status: newStatus };
+        
+        const updatedMeta = { 
+            ...currentMeta, 
+            tax_status: newStatus !== null ? newStatus : currentMeta.tax_status,
+            group_name: newGroup !== null ? newGroup : currentMeta.group_name
+        };
         
         // Optimistic UI update
         setMetadata(prev => ({ ...prev, [accountId]: updatedMeta }));
@@ -4992,7 +5631,11 @@ const AccountTaxStatusManager = () => {
             await fetch(`/api/accounts/${accountId}/metadata`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ tax_status: newStatus, notes: currentMeta.notes })
+                body: JSON.stringify({ 
+                    tax_status: updatedMeta.tax_status, 
+                    notes: currentMeta.notes,
+                    group_name: updatedMeta.group_name 
+                })
             });
         } catch (error) {
             console.error("Save failed", error);
@@ -5004,35 +5647,64 @@ const AccountTaxStatusManager = () => {
 
     return (
         <div className="visibility-manager-card" style={{marginTop: '2rem'}}>
-            <h3>Account Tax Status (for RMDs & Forecasting)</h3>
+            <h3>Account Settings & Tax Status</h3>
             {isLoading ? <p>Loading...</p> : (
                 <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '0.9em'}}>
                     <thead>
                         <tr style={{borderBottom: '1px solid #444', textAlign: 'left'}}>
                             <th style={{padding: '8px'}}>Account ID</th>
+                            <th style={{padding: '8px', textAlign: 'right'}}>Asset Value</th>
                             <th style={{padding: '8px'}}>Tax Status</th>
+                            <th style={{padding: '8px'}}>Group Name</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {accounts.map(acc => (
-                            <tr key={acc} style={{borderBottom: '1px solid #444'}}>
-                                <td style={{padding: '8px'}}>{acc}</td>
-                                <td style={{padding: '8px'}}>
-                                    <select 
-                                        value={metadata[acc]?.tax_status || 'Taxable'}
-                                        onChange={(e) => handleStatusChange(acc, e.target.value)}
-                                        style={{padding: '4px', background: '#333', color: '#fff', border: '1px solid #555', borderRadius: '4px'}}
-                                        disabled={savingId === acc}
-                                    >
-                                        <option value="Taxable">Taxable (Standard)</option>
-                                        <option value="Deferred">Tax-Deferred (IRA/401k)</option>
-                                        <option value="Roth">Tax-Free (Roth)</option>
-                                        <option value="Exempt">Exempt (HSA/Other)</option>
-                                    </select>
-                                    {savingId === acc && <span style={{marginLeft: '8px', fontSize: '0.8em', color: '#aaa'}}>Saving...</span>}
-                                </td>
-                            </tr>
-                        ))}
+                        {accounts.map(acc => {
+                            // Determine if this account has assets associated with it
+                            const value = performance[acc] || 0;
+                            const hasAssets = value > 0;
+                            const textColor = hasAssets ? 'var(--gold-accent)' : '#666';
+                            
+                            return (
+                                <tr key={acc} style={{borderBottom: '1px solid #444'}}>
+                                    <td style={{padding: '8px', color: textColor}}>
+                                        {acc}
+                                        {!hasAssets && <span style={{fontSize: '0.8em', marginLeft: '8px', fontStyle: 'italic', opacity: 0.7}}>(No Assets)</span>}
+                                    </td>
+                                    <td style={{padding: '8px', textAlign: 'right', fontFamily: 'monospace', color: textColor}}>
+                                        {formatCurrency(value)}
+                                    </td>
+                                    <td style={{padding: '8px'}}>
+                                        <select 
+                                            value={metadata[acc]?.tax_status || 'Taxable'}
+                                            onChange={(e) => handleStatusChange(acc, e.target.value, null)}
+                                            style={{padding: '4px', background: '#333', color: '#fff', border: '1px solid #555', borderRadius: '4px'}}
+                                            disabled={savingId === acc}
+                                        >
+                                            <option value="Taxable">Taxable (Standard)</option>
+                                            <option value="Deferred">Tax-Deferred (IRA/401k)</option>
+                                            <option value="Roth">Tax-Free (Roth)</option>
+                                            <option value="Exempt">Exempt (HSA/Other)</option>
+                                        </select>
+                                    </td>
+                                    <td style={{padding: '8px'}}>
+                                        <input
+                                            type="text"
+                                            placeholder="Group Name"
+                                            value={metadata[acc]?.group_name || ''}
+                                            onChange={(e) => setMetadata(prev => ({
+                                                ...prev, 
+                                                [acc]: { ...prev[acc], group_name: e.target.value }
+                                            }))}
+                                            onBlur={(e) => handleStatusChange(acc, null, e.target.value)}
+                                            style={{width: '100%', padding: '4px', background: '#333', color: '#fff', border: '1px solid #555', borderRadius: '4px'}}
+                                            disabled={savingId === acc}
+                                        />
+                                        {savingId === acc && <span style={{marginLeft: '8px', fontSize: '0.8em', color: '#aaa'}}>Saving...</span>}
+                                    </td>
+                                </tr>
+                            );
+                        })}
                     </tbody>
                 </table>
             )}
@@ -5511,19 +6183,49 @@ export default FilterPanel;
 .forecast-view-container {
     display: flex;
     flex-direction: column;
-    gap: 2rem;
+    gap: 1.5rem;
 }
 
-.forecast-grid {
+/* --- The Grid Layout --- */
+.dashboard-grid {
     display: grid;
     grid-template-columns: 1fr;
-    gap: 2rem;
+    gap: 1.5rem;
 }
 
 @media (min-width: 1200px) {
-    .forecast-grid {
-        grid-template-columns: 1fr 2fr;
+    .dashboard-grid {
+        grid-template-columns: 1fr 1fr;
     }
+}
+
+/* Utility classes for grid spanning */
+.grid-full {
+    grid-column: 1 / -1;
+}
+
+.grid-half-left {
+    /* Default placement */
+}
+
+.grid-half-right {
+    /* Default placement */
+}
+
+/* --- Component Specifics --- */
+.chart-panel {
+    background-color: var(--dark-bg);
+    padding: 1.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    min-height: 300px;
+}
+
+.chart-panel h2, .chart-panel h3 {
+    margin-top: 0;
+    color: var(--gold-accent);
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.5rem;
 }
 
 .settings-panel {
@@ -5531,6 +6233,8 @@ export default FilterPanel;
     padding: 1.5rem;
     border-radius: 8px;
     border: 1px solid var(--border-color);
+    height: 100%; /* Fill height of grid cell */
+    box-sizing: border-box;
 }
 
 .settings-panel h3 {
@@ -5540,18 +6244,38 @@ export default FilterPanel;
     padding-bottom: 0.5rem;
 }
 
+/* --- Collapsible Logic --- */
+.collapsible-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+}
+
+.collapsible-header:hover {
+    opacity: 0.8;
+}
+
+/* FIX: Renamed class to prevent conflict with CapitalFlowTable grid layout */
+.forecast-collapsible-content {
+    margin-top: 1rem;
+    animation: slideDown 0.3s ease-out;
+    display: block; /* Ensure it's not a grid */
+}
+
+/* --- Form Inputs --- */
 .setting-group {
-    margin-bottom: 1.5rem;
+    margin-bottom: 1rem;
 }
 
 .setting-group label {
     display: block;
     color: #ccc;
-    font-size: 0.9em;
-    margin-bottom: 0.5rem;
+    font-size: 0.85em;
+    margin-bottom: 0.25rem;
 }
 
-.setting-group input {
+.setting-group input, .setting-group select {
     width: 100%;
     padding: 0.5rem;
     background-color: var(--medium-bg);
@@ -5561,197 +6285,59 @@ export default FilterPanel;
     box-sizing: border-box;
 }
 
-/* --- Hide Number Spinners --- */
-/* Chrome, Safari, Edge, Opera */
-input[type=number]::-webkit-inner-spin-button, 
-input[type=number]::-webkit-outer-spin-button { 
-  -webkit-appearance: none; 
-  margin: 0; 
-}
-/* Firefox */
-input[type=number] {
-  -moz-appearance: textfield;
-}
-
-/* --- Collapsible CoL Styles --- */
-.col-calculator-panel {
-    background-color: var(--light-bg);
-    border-radius: 8px;
-    border: 1px solid var(--border-color);
-    margin-top: 2rem;
-    overflow: hidden;
-}
-
-.col-header {
-    padding: 1rem 1.5rem;
-    background-color: var(--medium-bg);
-    cursor: pointer;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    border-bottom: 1px solid transparent;
-    transition: background-color 0.2s;
-}
-
-.col-header:hover {
-    background-color: #333;
-}
-
-.col-header h3 {
-    margin: 0;
-    font-size: 1em;
-    color: var(--text-color);
-    font-weight: 500;
-}
-
-.col-header .total-badge {
-    font-weight: bold;
-    color: var(--gold-accent);
-    font-size: 1.1em;
-    margin-right: 1rem;
-}
-
-.col-header .toggle-icon {
-    color: #888;
-    font-size: 0.8em;
-    transform: rotate(0deg);
-    transition: transform 0.2s;
-}
-
-.col-header.open .toggle-icon {
-    transform: rotate(180deg);
-}
-
-.col-content {
-    padding: 1rem 1.5rem;
-    border-top: 1px solid var(--border-color);
-    animation: slideDown 0.3s ease-out;
-}
-
-@keyframes slideDown {
-    from { opacity: 0; transform: translateY(-10px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-
-.col-selector-list {
-    max-height: 200px;
-    overflow-y: auto;
-    background-color: var(--dark-bg);
-    padding: 0.5rem;
-    border-radius: 4px;
-    border: 1px solid #444;
-    margin-top: 0.5rem;
-}
-
+/* --- Base CoL Sunset Inputs --- */
 .col-item {
     display: flex;
     align-items: center;
-    padding: 0.25rem 0.5rem;
+    padding: 0.4rem 0.5rem;
+    border-bottom: 1px solid #444;
 }
 
-.col-item:hover {
-    background-color: rgba(255,255,255,0.05);
+.col-item:last-child {
+    border-bottom: none;
 }
 
-.col-item input {
-    width: auto;
-    margin-right: 0.75rem;
-    cursor: pointer;
-}
-
-.col-item label {
-    cursor: pointer;
+.col-label-group {
     flex-grow: 1;
+    display: flex;
+    align-items: center;
+}
+
+.col-end-year {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.col-end-year input {
+    width: 70px;
+    padding: 0.25rem;
     font-size: 0.9em;
 }
 
-/* --- Chart Styles --- */
-.chart-panel {
-    background-color: var(--dark-bg);
-    padding: 1.5rem;
-    border-radius: 8px;
-    border: 1px solid var(--border-color);
-    min-height: 400px;
-    margin-bottom: 2rem;
+.col-end-year span {
+    font-size: 0.8em;
+    color: #aaa;
 }
 
-.chart-panel h2 {
-    margin-top: 0;
-    color: var(--gold-accent);
-    border-bottom: 1px solid var(--border-color);
-    padding-bottom: 0.5rem;
-}
-
-.charts-row {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 2rem;
-    margin-top: 2rem;
-}
-
-@media (min-width: 1200px) {
-    .charts-row {
-        grid-template-columns: 1fr 1fr;
-    }
-}
-
-.chart-sub-panel {
-    background-color: var(--dark-bg);
-    padding: 1rem;
-    border-radius: 8px;
-    border: 1px solid var(--border-color);
-}
-
-.chart-sub-panel h3 {
-    margin-top: 0;
-    font-size: 1.1em;
-    color: #ccc;
-    text-align: center;
-}
-
-/* --- Budget Panel --- */
-.budget-panel {
-    background-color: var(--light-bg);
-    padding: 1.5rem;
-    border-radius: 8px;
-    border: 1px solid var(--border-color);
-}
-
+/* --- Budget & Telemetry Table --- */
 .budget-table {
     width: 100%;
     border-collapse: collapse;
     margin-top: 1rem;
-}
-
-.budget-table th, .budget-table td {
-    padding: 8px 12px;
-    border-bottom: 1px solid var(--border-color);
-    text-align: left;
+    font-size: 0.9em;
 }
 
 .budget-table th {
-    background-color: var(--medium-bg);
+    text-align: left;
     color: #ccc;
+    border-bottom: 1px solid #555;
+    padding: 0.5rem;
 }
 
-.budget-form {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 1rem;
-    margin-bottom: 1rem;
-    padding-bottom: 1rem;
-    border-bottom: 1px solid var(--border-color);
-    align-items: end;
-}
-
-.budget-form button {
-    background-color: var(--gold-accent);
-    color: var(--dark-bg);
-    border: none;
-    padding: 0.6rem 1rem;
-    border-radius: 4px;
-    cursor: pointer;
-    font-weight: bold;
+.budget-table td {
+    padding: 0.5rem;
+    border-bottom: 1px solid #444;
 }
 
 .delete-btn {
@@ -5759,7 +6345,15 @@ input[type=number] {
     border: none;
     color: #ff6b6b;
     cursor: pointer;
+    font-weight: bold;
 }
+
+.toggle-checkbox {
+    cursor: pointer;
+    width: 18px;
+    height: 18px;
+}
+
 
 --- FILE: projects/trust/src/components/ForecastView.jsx ---
 
@@ -5767,6 +6361,7 @@ import { useState, useEffect } from 'react';
 import { ResponsiveLine } from '@nivo/line';
 import { ResponsiveBar } from '@nivo/bar';
 import './ForecastView.css';
+import { useMode } from '../context/ModeContext';
 
 const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
     style: 'currency',
@@ -5786,7 +6381,7 @@ const RunwayChart = ({ data }) => {
     };
 
     return (
-        <div style={{ height: '400px' }}>
+        <div style={{ height: '350px' }}>
             <ResponsiveLine
                 data={[netWorthSeries]}
                 margin={{ top: 20, right: 110, bottom: 50, left: 80 }}
@@ -5797,11 +6392,11 @@ const RunwayChart = ({ data }) => {
                     tickSize: 5, tickPadding: 5 
                 }}
                 axisLeft={{ 
-                    legend: 'Net Worth ($)', legendOffset: -70, legendPosition: 'middle', 
+                    legend: 'Value ($)', legendOffset: -70, legendPosition: 'middle', 
                     format: value => `$${value / 1000000}M`
                 }}
-                colors={['#E2B254']} // Gold for Net Worth
-                lineWidth={3}
+                colors={['#E2B254']} 
+                lineWidth={4}
                 pointSize={4}
                 pointColor={{ theme: 'background' }}
                 pointBorderWidth={2}
@@ -5833,42 +6428,71 @@ const RunwayChart = ({ data }) => {
                     grid: { line: { stroke: '#444' } },
                     tooltip: { container: { background: '#222', color: '#fff' } }
                 }}
+                legends={[
+                    {
+                        anchor: 'bottom-right',
+                        direction: 'column',
+                        justify: false,
+                        translateX: 100,
+                        translateY: 0,
+                        itemsSpacing: 0,
+                        itemDirection: 'left-to-right',
+                        itemWidth: 80,
+                        itemHeight: 20,
+                        itemOpacity: 0.75,
+                        symbolSize: 12,
+                        symbolShape: 'circle',
+                        symbolBorderColor: 'rgba(0, 0, 0, .5)',
+                        effects: [
+                            {
+                                on: 'hover',
+                                style: {
+                                    itemBackground: 'rgba(0, 0, 0, .03)',
+                                    itemOpacity: 1
+                                }
+                            }
+                        ]
+                    }
+                ]}
             />
         </div>
     );
 };
 
 const AssetCompositionChart = ({ data }) => {
-    // Stacked Area Chart for Assets
     if (!data || data.length === 0) return null;
 
+    const realEstateSeries = {
+        id: "Real Estate Equity",
+        data: data.map(d => ({ x: d.age, y: d.real_estate_equity }))
+    };
+    
+    // Break down liquid assets into buckets for v1.9
     const deferredSeries = {
-        id: "Tax-Deferred",
+        id: "Deferred (IRA)",
         data: data.map(d => ({ x: d.age, y: d.bucket_deferred }))
     };
+    
     const taxableSeries = {
         id: "Taxable",
         data: data.map(d => ({ x: d.age, y: d.bucket_taxable }))
     };
+    
     const rothSeries = {
-        id: "Roth/Exempt",
+        id: "Roth",
         data: data.map(d => ({ x: d.age, y: d.bucket_roth }))
-    };
-    const realEstateSeries = {
-        id: "Real Estate",
-        data: data.map(d => ({ x: d.age, y: d.real_estate_equity }))
     };
 
     return (
         <div style={{ height: '300px' }}>
             <ResponsiveLine
-                data={[realEstateSeries, rothSeries, deferredSeries, taxableSeries]}
+                data={[realEstateSeries, taxableSeries, deferredSeries, rothSeries]}
                 margin={{ top: 20, right: 20, bottom: 50, left: 70 }}
                 xScale={{ type: 'linear', min: 'auto', max: 'auto' }}
                 yScale={{ type: 'linear', stacked: true }}
                 axisBottom={{ legend: 'Age', legendOffset: 36, legendPosition: 'middle' }}
                 axisLeft={{ format: value => `$${value / 1000000}M` }}
-                colors={['#00f2fe', '#4facfe', '#05c46b', '#ffc048']} 
+                colors={['#05c46b', '#00f2fe', '#feca57', '#ff9ff3']} 
                 enableArea={true}
                 areaOpacity={0.6}
                 enablePoints={false}
@@ -5900,7 +6524,6 @@ const AssetCompositionChart = ({ data }) => {
 };
 
 const ExpenseCompositionChart = ({ data }) => {
-    // Stacked Bar Chart for Expenses
     if (!data || data.length === 0) return null;
 
     return (
@@ -5935,103 +6558,189 @@ const ExpenseCompositionChart = ({ data }) => {
     );
 };
 
-// --- NEW COMPONENT: Flight Recorder Table ---
-const FlightRecorderTable = ({ data }) => {
-    const [isOpen, setIsOpen] = useState(false);
+// --- INPUT COMPONENTS ---
 
-    if (!data || data.length === 0) return null;
-
+const CollapsibleCard = ({ title, children, defaultOpen = true, className = "" }) => {
+    const [isOpen, setIsOpen] = useState(defaultOpen);
     return (
-        <div className="settings-panel" style={{marginTop: '2rem'}}>
-            <div 
-                style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer'}}
-                onClick={() => setIsOpen(!isOpen)}
-            >
-                <h3>Flight Recorder (Year-by-Year Telemetry)</h3>
+        <div className={`settings-panel ${className}`}>
+            <div className="collapsible-header" onClick={() => setIsOpen(!isOpen)}>
+                <h3>{title}</h3>
                 <span>{isOpen ? '▲' : '▼'}</span>
             </div>
-            
-            {isOpen && (
-                <div style={{maxHeight: '500px', overflow: 'auto', marginTop: '1rem', border: '1px solid #444'}}>
-                    <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '0.85em'}}>
-                        <thead style={{position: 'sticky', top: 0, background: '#333'}}>
-                            <tr>
-                                <th style={{padding: '8px', textAlign: 'left'}}>Year</th>
-                                <th style={{padding: '8px', textAlign: 'left'}}>Age</th>
-                                <th style={{padding: '8px', textAlign: 'right'}}>Total Income</th>
-                                <th style={{padding: '8px', textAlign: 'right'}}>Total Expense</th>
-                                <th style={{padding: '8px', textAlign: 'right', color: '#ccc'}}>RMDs</th>
-                                <th style={{padding: '8px', textAlign: 'right', color: '#ffc048'}}>Taxable Bal</th>
-                                <th style={{padding: '8px', textAlign: 'right', color: '#05c46b'}}>Deferred Bal</th>
-                                <th style={{padding: '8px', textAlign: 'right', color: '#4facfe'}}>Roth Bal</th>
-                                <th style={{padding: '8px', textAlign: 'right'}}>End Net Worth</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {data.map(row => (
-                                <tr key={row.year} style={{borderBottom: '1px solid #444'}}>
-                                    <td style={{padding: '8px'}}>{row.year}</td>
-                                    <td style={{padding: '8px'}}>{row.age}</td>
-                                    <td style={{padding: '8px', textAlign: 'right', fontFamily: 'monospace', color: '#4facfe'}}>
-                                        {formatCurrency(row.total_income)}
-                                    </td>
-                                    <td style={{padding: '8px', textAlign: 'right', fontFamily: 'monospace', color: '#ff6b6b'}}>
-                                        {formatCurrency(row.total_expenses)}
-                                    </td>
-                                    <td style={{padding: '8px', textAlign: 'right', fontFamily: 'monospace', color: row.rmd_event > 0 ? '#E2B254' : '#555'}}>
-                                        {row.rmd_event > 0 ? formatCurrency(row.rmd_event) : '-'}
-                                    </td>
-                                    <td style={{padding: '8px', textAlign: 'right', fontFamily: 'monospace'}}>
-                                        {formatCurrency(row.bucket_taxable)}
-                                    </td>
-                                    <td style={{padding: '8px', textAlign: 'right', fontFamily: 'monospace'}}>
-                                        {formatCurrency(row.bucket_deferred)}
-                                    </td>
-                                    <td style={{padding: '8px', textAlign: 'right', fontFamily: 'monospace'}}>
-                                        {formatCurrency(row.bucket_roth)}
-                                    </td>
-                                    <td style={{padding: '8px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 'bold'}}>
-                                        {formatCurrency(row.total_net_worth)}
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-            )}
+            {isOpen && <div className="forecast-collapsible-content">{children}</div>}
         </div>
     );
 };
 
-// --- COMPONENTS ---
+const BaseColCalculator = ({ selectedCategories, onSelectionChange, calculatedTotal, lookbackYears, onLookbackChange, sunsetDates, onSunsetChange }) => {
+    const [allCategories, setAllCategories] = useState([]);
 
-const ForecastSettings = ({ config, setConfig, onSave }) => {
-    const handleChange = (e) => {
-        const { name, value } = e.target;
-        setConfig(prev => ({ ...prev, [name]: value }));
+    useEffect(() => {
+        fetch('/api/filter-options')
+            .then(r => r.json())
+            .then(d => setAllCategories(d.categories || []));
+    }, []);
+
+    const handleToggle = (cat) => {
+        const newSelection = selectedCategories.includes(cat)
+            ? selectedCategories.filter(c => c !== cat)
+            : [...selectedCategories, cat];
+        onSelectionChange(newSelection);
+    };
+
+    const handleSunsetChange = (cat, year) => {
+        onSunsetChange(cat, year);
     };
 
     return (
-        <div className="settings-panel">
-            <h3>Flight Parameters</h3>
-            <div className="setting-group">
-                <label>Birth Year</label>
-                <input type="number" name="birth_year" value={config.birth_year || ''} onChange={handleChange} onBlur={onSave} />
+        <CollapsibleCard title="6) Base Cost of Living (CoL) Engine" className="grid-half-right">
+            <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom: '1rem', background: '#333', padding: '0.5rem', borderRadius: '4px'}}>
+                 <span style={{color:'#aaa'}}>Year 0 Base:</span>
+                 <span style={{fontWeight:'bold', color:'var(--gold-accent)', fontSize: '1.2em'}}>{formatCurrency(calculatedTotal)}</span>
             </div>
+
             <div className="setting-group">
-                <label>Inflation Rate (0.03 = 3%)</label>
-                <input type="number" name="inflation_rate" step="0.001" value={config.inflation_rate || ''} onChange={handleChange} onBlur={onSave} />
+                 <label>Averaging Period (Lookback)</label>
+                 <select 
+                    value={lookbackYears || 1} 
+                    onChange={(e) => onLookbackChange(parseInt(e.target.value))}
+                 >
+                     <option value={1}>Last 12 Months (1 Year)</option>
+                     <option value={2}>Last 24 Months (2 Year Avg)</option>
+                 </select>
             </div>
-            <div className="setting-group">
-                <label>Portfolio Return Rate (0.05 = 5%)</label>
-                <input type="number" name="return_rate" step="0.001" value={config.return_rate || ''} onChange={handleChange} onBlur={onSave} />
+
+            <p style={{fontSize: '0.8em', color: '#999'}}>Check categories to include. Set an End Year (Sunset) if expenses stop (e.g. Mortgage).</p>
+            
+            <div style={{maxHeight: '300px', overflowY: 'auto', border: '1px solid #444', borderRadius: '4px'}}>
+                {allCategories.map(cat => {
+                    const isChecked = selectedCategories.includes(cat);
+                    return (
+                        <div key={cat} className="col-item" style={{opacity: isChecked ? 1 : 0.6}}>
+                            <div className="col-label-group">
+                                <input 
+                                    type="checkbox" 
+                                    id={`col-${cat}`}
+                                    checked={isChecked}
+                                    onChange={() => handleToggle(cat)}
+                                    style={{width: 'auto', marginRight: '0.5rem'}}
+                                />
+                                <label htmlFor={`col-${cat}`} style={{margin:0, cursor:'pointer'}}>{cat}</label>
+                            </div>
+                            {isChecked && (
+                                <div className="col-end-year">
+                                    <span>Ends:</span>
+                                    <input 
+                                        type="number" 
+                                        placeholder="Never"
+                                        value={sunsetDates?.[cat] || ''}
+                                        onChange={(e) => handleSunsetChange(cat, e.target.value)}
+                                        title="Enter a year (e.g. 2030) when this expense stops."
+                                    />
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
             </div>
-            <div className="setting-group">
-                <label>Est. Withdrawal Tax Rate (0.15 = 15%)</label>
-                <p style={{fontSize:'0.7em', color:'#aaa', margin:'0 0 5px'}}>Accounts for taxes when selling assets to cover deficits.</p>
-                <input type="number" name="withdrawal_tax_rate" step="0.01" value={config.withdrawal_tax_rate !== undefined ? config.withdrawal_tax_rate : 0.15} onChange={handleChange} onBlur={onSave} />
-            </div>
-        </div>
+        </CollapsibleCard>
+    );
+};
+
+const DiscretionaryBudget = ({ items, onAdd, onDelete, onUpdate }) => {
+    const [newItem, setNewItem] = useState({ name: '', amount: '', start_year: new Date().getFullYear(), end_year: '', is_recurring: false, category: '', is_enabled: true });
+    const [categories, setCategories] = useState([]);
+
+    useEffect(() => {
+        fetch('/api/filter-options')
+            .then(r => r.json())
+            .then(d => setCategories(d.categories || []));
+    }, []);
+
+    const handleSubmit = (e) => {
+        e.preventDefault();
+        const payload = { ...newItem };
+        if (!payload.end_year) payload.end_year = null;
+        onAdd(payload);
+        setNewItem({ name: '', amount: '', start_year: new Date().getFullYear(), end_year: '', is_recurring: false, category: '', is_enabled: true });
+    };
+
+    return (
+        <CollapsibleCard title="4) Discretionary Budget (Changes)" className="grid-full">
+            <p style={{fontSize: '0.9em', color: '#ccc'}}>
+                Add large one-off or recurring expenses. <br/>
+                <em>Note: Negative amounts reduce expenses. To end a recurring cost forever, set the End Year (or use Sunset in Base CoL).</em>
+            </p>
+            <form onSubmit={handleSubmit} style={{display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: '1rem'}}>
+                <div className="setting-group" style={{flex: 2}}>
+                    <label>Item Name</label>
+                    <input type="text" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} placeholder="e.g. World Tour" required />
+                </div>
+                <div className="setting-group" style={{flex: 1}}>
+                    <label>Amount</label>
+                    <input type="number" value={newItem.amount} onChange={e => setNewItem({...newItem, amount: e.target.value})} placeholder="20000" required />
+                </div>
+                <div className="setting-group" style={{flex: 1}}>
+                    <label>Start Year</label>
+                    <input type="number" value={newItem.start_year} onChange={e => setNewItem({...newItem, start_year: e.target.value})} placeholder="2025" required />
+                </div>
+                <div className="setting-group" style={{flex: 1}}>
+                    <label>End Year (Opt)</label>
+                    <input type="number" value={newItem.end_year} onChange={e => setNewItem({...newItem, end_year: e.target.value})} placeholder="2030" />
+                </div>
+                <div className="setting-group" style={{flex: 1}}>
+                    <label>Category</label>
+                    <input type="text" list="disc-cat-list" value={newItem.category} onChange={e => setNewItem({...newItem, category: e.target.value})} />
+                    <datalist id="disc-cat-list">{categories.map(c => <option key={c} value={c} />)}</datalist>
+                </div>
+                <div className="setting-group" style={{flex: 0.5, paddingBottom: '0.5rem'}}>
+                    <label style={{display:'flex', alignItems:'center'}}>
+                        <input type="checkbox" checked={newItem.is_recurring} onChange={e => setNewItem({...newItem, is_recurring: e.target.checked})} style={{width:'auto', marginRight:'5px'}} />
+                        Recur?
+                    </label>
+                </div>
+                <div className="setting-group">
+                     <button type="submit" style={{background: 'var(--gold-accent)', border: 'none', padding: '0.6rem', borderRadius: '4px', cursor: 'pointer', fontWeight:'bold', color: '#222'}}>Add</button>
+                </div>
+            </form>
+            
+            <table className="budget-table">
+                <thead>
+                    <tr>
+                        <th>Enable</th>
+                        <th>Name</th>
+                        <th>Amount</th>
+                        <th>Start</th>
+                        <th>End</th>
+                        <th>Recurring</th>
+                        <th>Category</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {items.map(item => (
+                        <tr key={item.item_id || Math.random()} style={{opacity: item.is_enabled !== 0 ? 1 : 0.4}}>
+                            <td>
+                                <input 
+                                    type="checkbox" 
+                                    checked={!!item.is_enabled} 
+                                    onChange={() => onUpdate({...item, is_enabled: !item.is_enabled})}
+                                    className="toggle-checkbox"
+                                />
+                            </td>
+                            <td>{item.name}</td>
+                            <td>{formatCurrency(item.amount)}</td>
+                            <td>{item.start_year}</td>
+                            <td>{item.end_year || (item.is_recurring ? 'Forever' : item.start_year)}</td>
+                            <td>{item.is_recurring ? 'Yes' : 'No'}</td>
+                            <td>{item.category || '-'}</td>
+                            <td><button className="delete-btn" onClick={() => onDelete(item.item_id)}>✕</button></td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </CollapsibleCard>
     );
 };
 
@@ -6045,8 +6754,7 @@ const ResidenceSaleConfig = ({ config, setConfig, onSave }) => {
     };
 
     return (
-        <div className="settings-panel" style={{marginTop: '2rem'}}>
-            <h3>Principal Residence Sale Strategy</h3>
+        <CollapsibleCard title="5) Principal Residence Strategy" className="grid-half-left">
             <p style={{fontSize: '0.8em', color: '#aaa', marginTop: '-0.5rem'}}>
                 Simulate selling your primary home and moving equity into liquid investments.
             </p>
@@ -6076,7 +6784,7 @@ const ResidenceSaleConfig = ({ config, setConfig, onSave }) => {
                     />
                 </div>
             )}
-        </div>
+        </CollapsibleCard>
     );
 };
 
@@ -6089,59 +6797,41 @@ const PhaseConfiguration = ({ config, setConfig, onSave }) => {
             .then(d => setAllCategories(d.categories || []));
     }, []);
 
-    const handleChange = (e) => {
-        const { name, value } = e.target;
-        setConfig(prev => ({ ...prev, [name]: value }));
-    };
-
-    // Helper to update multipliers deeply
-    const updateMultiplier = (category, phase, value) => {
-        const currentMultipliers = config.phase_multipliers || {};
-        const catConfig = currentMultipliers[category] || { go: 100, slow: 80, no: 20 };
-        
-        // Scotty Fix: Allow empty string to pass through so the user can clear the field 
-        // without it snapping to 0. We convert to int only if it's not empty.
-        const valToStore = value === '' ? '' : parseInt(value);
-
-        const updated = {
-            ...currentMultipliers,
-            [category]: { ...catConfig, [phase]: valToStore }
-        };
-        
-        setConfig(prev => ({ ...prev, phase_multipliers: updated }));
-    };
-
-    // Safe getter that respects 0 as a valid value but defaults if undefined
     const getVal = (cat, phase) => {
         const val = config.phase_multipliers?.[cat]?.[phase];
-        // If value is explicitly set (even if it's 0 or empty string), return it.
-        if (val !== undefined && val !== null) {
-            return val;
-        }
-        // Default fallbacks if not set in config yet
+        if (val !== undefined && val !== null) return val;
         if (phase === 'go') return 100;
         if (phase === 'slow') return 80;
         if (phase === 'no') return 20;
         return 100;
     }
 
+    const updateMultiplier = (category, phase, value) => {
+        const currentMultipliers = config.phase_multipliers || {};
+        const catConfig = currentMultipliers[category] || { go: 100, slow: 80, no: 20 };
+        const valToStore = value === '' ? '' : parseInt(value);
+        const updated = {
+            ...currentMultipliers,
+            [category]: { ...catConfig, [phase]: valToStore }
+        };
+        setConfig(prev => ({ ...prev, phase_multipliers: updated }));
+    };
+
     return (
-        <div className="settings-panel" style={{marginTop: '2rem'}}>
-            <h3>"Go Slow No" Phase Config</h3>
+        <CollapsibleCard title="7) Go / Slow / No-Go Phases" className="grid-half-left">
             <div style={{display:'flex', gap:'1rem'}}>
                 <div className="setting-group" style={{flex:1}}>
                     <label>Retirement Age (Start Slow Go)</label>
-                    <input type="number" name="retirement_age" value={config.retirement_age || ''} onChange={handleChange} onBlur={onSave} />
+                    <input type="number" name="retirement_age" value={config.retirement_age || ''} onChange={(e) => setConfig(p => ({...p, [e.target.name]: e.target.value}))} onBlur={onSave} />
                 </div>
                 <div className="setting-group" style={{flex:1}}>
                     <label>No Go Age (Low Energy)</label>
-                    <input type="number" name="nogo_age" value={config.nogo_age || ''} onChange={handleChange} onBlur={onSave} />
+                    <input type="number" name="nogo_age" value={config.nogo_age || ''} onChange={(e) => setConfig(p => ({...p, [e.target.name]: e.target.value}))} onBlur={onSave} />
                 </div>
             </div>
             
-            <h4>Category Consumption Multipliers (%)</h4>
-            <p style={{fontSize: '0.8em', color: '#aaa', marginTop: '-0.5rem'}}>Controls spending intensity in each phase. 100 = 100%.</p>
-            <div style={{maxHeight: '200px', overflowY: 'auto', border: '1px solid #444', borderRadius: '4px'}}>
+            <h4 style={{marginTop: '1rem', borderBottom: '1px solid #444'}}>Spending Intensity (%)</h4>
+            <div style={{maxHeight: '150px', overflowY: 'auto'}}>
                 <table style={{width: '100%', fontSize: '0.9em', borderCollapse: 'collapse'}}>
                     <thead>
                         <tr style={{background: '#333', textAlign: 'left'}}>
@@ -6156,176 +6846,179 @@ const PhaseConfiguration = ({ config, setConfig, onSave }) => {
                             <tr key={cat} style={{borderBottom: '1px solid #444'}}>
                                 <td style={{padding: '5px'}}>{cat}</td>
                                 <td style={{padding: '5px'}}>
-                                    <input 
-                                        type="number" style={{width: '50px', padding: '2px'}} 
-                                        value={getVal(cat, 'go')} 
-                                        onChange={(e) => updateMultiplier(cat, 'go', e.target.value)} 
-                                        onBlur={onSave}
-                                    />
+                                    <input type="number" style={{width: '100%'}} value={getVal(cat, 'go')} onChange={(e) => updateMultiplier(cat, 'go', e.target.value)} onBlur={onSave} />
                                 </td>
                                 <td style={{padding: '5px'}}>
-                                    <input 
-                                        type="number" style={{width: '50px', padding: '2px'}} 
-                                        value={getVal(cat, 'slow')} 
-                                        onChange={(e) => updateMultiplier(cat, 'slow', e.target.value)} 
-                                        onBlur={onSave}
-                                    />
+                                    <input type="number" style={{width: '100%'}} value={getVal(cat, 'slow')} onChange={(e) => updateMultiplier(cat, 'slow', e.target.value)} onBlur={onSave} />
                                 </td>
                                 <td style={{padding: '5px'}}>
-                                    <input 
-                                        type="number" style={{width: '50px', padding: '2px'}} 
-                                        value={getVal(cat, 'no')} 
-                                        onChange={(e) => updateMultiplier(cat, 'no', e.target.value)} 
-                                        onBlur={onSave}
-                                    />
+                                    <input type="number" style={{width: '100%'}} value={getVal(cat, 'no')} onChange={(e) => updateMultiplier(cat, 'no', e.target.value)} onBlur={onSave} />
                                 </td>
                             </tr>
                         ))}
                     </tbody>
                 </table>
             </div>
-        </div>
+        </CollapsibleCard>
     );
 };
 
-const BaseColCalculator = ({ selectedCategories, onSelectionChange, calculatedTotal, lookbackYears, onLookbackChange }) => {
-    const [allCategories, setAllCategories] = useState([]);
-    const [isOpen, setIsOpen] = useState(false);
-
-    useEffect(() => {
-        fetch('/api/filter-options')
-            .then(r => r.json())
-            .then(d => setAllCategories(d.categories || []));
-    }, []);
-
-    const handleToggle = (cat) => {
-        const newSelection = selectedCategories.includes(cat)
-            ? selectedCategories.filter(c => c !== cat)
-            : [...selectedCategories, cat];
-        onSelectionChange(newSelection);
+const ForecastSettings = ({ config, setConfig, onSave, onSettingChange }) => {
+    const handleChange = (e) => {
+        const { name, value } = e.target;
+        setConfig(prev => ({ ...prev, [name]: value }));
     };
+    
+    // Specialized handler for dropdowns to trigger immediate save/recalc
+    const handleImmediateChange = (e) => {
+        const { name, value } = e.target;
+        if (onSettingChange) {
+            onSettingChange(name, value);
+        } else {
+             // Fallback
+             handleChange(e);
+             // We assume onBlur will be called if user clicks away, but we want immediate effect.
+        }
+    }
 
     return (
-        <div className="col-calculator-panel">
-            <div className={`col-header ${isOpen ? 'open' : ''}`} onClick={() => setIsOpen(!isOpen)}>
-                <h3>Base Cost of Living (Year 0)</h3>
-                <div style={{display:'flex', alignItems:'center'}}>
-                    <span className="total-badge">{formatCurrency(calculatedTotal)}</span>
-                    <span className="toggle-icon">▼</span>
-                </div>
+        <CollapsibleCard title="Simulation Constants" className="grid-half-right">
+            <div className="setting-group">
+                <label>Withdrawal Strategy</label>
+                <select 
+                    name="withdrawal_strategy" 
+                    value={config.withdrawal_strategy || 'standard'} 
+                    onChange={handleImmediateChange} 
+                    style={{background: '#444', color: '#fff'}}
+                >
+                    <option value="standard">Standard (Brokerage First)</option>
+                    <option value="deferred_first">Legacy (IRA / Deferred First)</option>
+                </select>
+            </div>
+            <div className="setting-group">
+                <label>Tax Filing Status</label>
+                <select 
+                    name="tax_filing_status" 
+                    value={config.tax_filing_status || 'single'} 
+                    onChange={handleImmediateChange} 
+                    style={{background: '#444', color: '#fff'}}
+                >
+                    <option value="single">Single</option>
+                    <option value="joint">Married Filing Jointly</option>
+                </select>
+            </div>
+
+            <div className="setting-group">
+                <label>Roth Conversion Strategy</label>
+                <select 
+                    name="roth_conversion_target" 
+                    value={config.roth_conversion_target || 'none'} 
+                    onChange={handleImmediateChange} 
+                    style={{background: '#444', color: '#fff'}}
+                >
+                    <option value="none">No Conversions</option>
+                    <option value="fill_22">Fill to Top of 22% Bracket</option>
+                </select>
             </div>
             
-            {isOpen && (
-                <div className="col-content">
-                    <div className="setting-group" style={{marginBottom: '1rem', borderBottom: '1px solid #444', paddingBottom: '1rem'}}>
-                         <label>Averaging Period (Lookback)</label>
-                         <select 
-                            value={lookbackYears || 1} 
-                            onChange={(e) => onLookbackChange(parseInt(e.target.value))}
-                            style={{width: '100%', padding: '0.5rem', background: '#222', color: '#fff', border: '1px solid #666', borderRadius: '4px'}}
-                         >
-                             <option value={1}>Last 12 Months (1 Year)</option>
-                             <option value={2}>Last 24 Months (2 Year Avg)</option>
-                         </select>
-                         <p style={{fontSize: '0.8em', color: '#ff9a9a', marginTop: '0.5rem', fontStyle: 'italic'}}>
-                             * Please don't use partial years. Ensure you have full data for the selected period.
-                         </p>
-                    </div>
-
-                    <p style={{fontSize: '0.9em', color: '#999', marginTop: 0}}>Select categories to include in Base CoL.</p>
-                    <div className="col-selector-list">
-                        {allCategories.map(cat => (
-                            <div key={cat} className="col-item">
-                                <input 
-                                    type="checkbox" 
-                                    id={`col-${cat}`}
-                                    checked={selectedCategories.includes(cat)}
-                                    onChange={() => handleToggle(cat)}
-                                />
-                                <label htmlFor={`col-${cat}`}>{cat}</label>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
-        </div>
+            <div className="setting-group">
+                <label>Estimated State Tax Rate (e.g. 0.093 for 9.3%)</label>
+                <input 
+                    type="number" 
+                    name="state_tax_rate" 
+                    step="0.001" 
+                    placeholder="0.05" 
+                    value={config.state_tax_rate || ''} 
+                    onChange={handleChange} 
+                    onBlur={onSave} 
+                />
+                <small style={{color:'#999'}}>Applied to taxable income in simulation.</small>
+            </div>
+            
+            <div className="setting-group">
+                <label>Birth Year</label>
+                <input type="number" name="birth_year" value={config.birth_year || ''} onChange={handleChange} onBlur={onSave} />
+            </div>
+            <div className="setting-group">
+                <label>Inflation Rate (0.03 = 3%)</label>
+                <input type="number" name="inflation_rate" step="0.001" value={config.inflation_rate || ''} onChange={handleChange} onBlur={onSave} />
+            </div>
+            <div className="setting-group">
+                <label>Portfolio Return Rate (0.05 = 5%)</label>
+                <input type="number" name="return_rate" step="0.001" value={config.return_rate || ''} onChange={handleChange} onBlur={onSave} />
+            </div>
+        </CollapsibleCard>
     );
 };
 
-const DiscretionaryBudget = ({ items, onAdd, onDelete }) => {
-    const [newItem, setNewItem] = useState({ name: '', amount: '', start_year: new Date().getFullYear(), is_recurring: false, category: '' });
-    const [categories, setCategories] = useState([]);
+const ForecastTelemetryTable = ({ simulationData }) => {
+    if (!simulationData || simulationData.length === 0) return null;
 
-    useEffect(() => {
-        fetch('/api/filter-options')
-            .then(r => r.json())
-            .then(d => setCategories(d.categories || []));
-    }, []);
-
-    const handleSubmit = (e) => {
-        e.preventDefault();
-        onAdd(newItem);
-        setNewItem({ name: '', amount: '', start_year: new Date().getFullYear(), is_recurring: false, category: '' });
-    };
+    const exampleBreakdown = simulationData[0].expense_breakdown || {};
+    const categories = Object.keys(exampleBreakdown).sort();
 
     return (
-        <div className="budget-panel">
-            <h3>Discretionary Budget (Big Ticket Items)</h3>
-            <form onSubmit={handleSubmit} className="budget-form">
-                <input type="text" placeholder="Item Name" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} required />
-                <input type="number" placeholder="Amount" value={newItem.amount} onChange={e => setNewItem({...newItem, amount: e.target.value})} required />
-                <input type="number" placeholder="Start Year" value={newItem.start_year} onChange={e => setNewItem({...newItem, start_year: e.target.value})} required />
-                
-                <input 
-                    type="text" placeholder="Category (Optional)" 
-                    list="disc-cat-list" 
-                    value={newItem.category} 
-                    onChange={e => setNewItem({...newItem, category: e.target.value})} 
-                />
-                <datalist id="disc-cat-list">
-                    {categories.map(c => <option key={c} value={c} />)}
-                </datalist>
-
-                <label style={{display:'flex', alignItems:'center', color: '#ccc'}}>
-                    <input type="checkbox" checked={newItem.is_recurring} onChange={e => setNewItem({...newItem, is_recurring: e.target.checked})} style={{width:'auto', marginRight:'5px'}} />
-                    Recurring?
-                </label>
-                <button type="submit">Add Item</button>
-            </form>
-            
-            <table className="budget-table">
-                <thead>
-                    <tr>
-                        <th>Name</th>
-                        <th>Amount</th>
-                        <th>Start Year</th>
-                        <th>Recurring</th>
-                        <th>Category</th>
-                        <th></th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {items.map(item => (
-                        <tr key={item.item_id}>
-                            <td>{item.name}</td>
-                            <td>{formatCurrency(item.amount)}</td>
-                            <td>{item.start_year}</td>
-                            <td>{item.is_recurring ? 'Yes' : 'No'}</td>
-                            <td>{item.category || '-'}</td>
-                            <td><button className="delete-btn" onClick={() => onDelete(item.item_id)}>✕</button></td>
+        <CollapsibleCard title="Detailed Flight Telemetry" className="grid-full" defaultOpen={false}>
+            <div style={{overflowX: 'auto'}}>
+                <table className="budget-table" style={{minWidth: '1000px'}}>
+                    <thead>
+                        <tr>
+                            <th>Year</th>
+                            <th>Age</th>
+                            <th>Phase</th>
+                            <th>Strategy</th>
+                            <th>Liquid Assets</th>
+                            <th>NW Delta</th>
+                            <th>IRA Bal</th>
+                            <th>Roth Bal</th>
+                            <th>Taxable Bal</th>
+                            <th style={{borderLeft: '2px solid #555', paddingLeft: '10px'}}>Taxable Income</th>
+                            <th>Total Tax</th>
+                            <th>Roth Conv.</th>
+                            {categories.map(cat => (
+                                <th key={cat}>{cat}</th>
+                            ))}
+                            <th>Total Expenses</th>
                         </tr>
-                    ))}
-                </tbody>
-            </table>
-        </div>
-    );
-};
+                    </thead>
+                    <tbody>
+                        {simulationData.map(row => (
+                            <tr key={row.year}>
+                                <td>{row.year}</td>
+                                <td>{row.age}</td>
+                                <td>{row.phase}</td>
+                                <td style={{color: row.strategy_executed === 'Accumulation' ? '#05c46b' : (row.strategy_executed.includes('Age < 60') ? '#ff9f43' : '#feca57')}}>
+                                    {row.strategy_executed}
+                                </td>
+                                <td style={{fontWeight: 'bold'}}>{formatCurrency(row.liquid_assets)}</td>
+                                <td style={{color: row.nw_delta >= 0 ? '#05c46b' : '#ff6b6b'}}>{formatCurrency(row.nw_delta)}</td>
+                                <td style={{color: '#feca57'}}>{formatCurrency(row.bucket_deferred)}</td>
+                                <td style={{color: '#ff9ff3'}}>{formatCurrency(row.bucket_roth)}</td>
+                                <td style={{color: '#00f2fe'}}>{formatCurrency(row.bucket_taxable)}</td>
+                                <td style={{borderLeft: '2px solid #555', paddingLeft: '10px'}}>{formatCurrency(row.tax_metrics?.taxable_income)}</td>
+                                <td>{formatCurrency(row.tax_metrics?.total_tax)}</td>
+                                <td style={{color: row.roth_conversion > 0 ? '#ff9ff3' : 'inherit'}}>{formatCurrency(row.roth_conversion)}</td>
+                                
+                                {categories.map(cat => (
+                                    <td key={cat}>{formatCurrency(row.expense_breakdown[cat])}</td>
+                                ))}
+                                <td style={{fontWeight: 'bold', color: '#feca57'}}>{formatCurrency(row.total_expenses)}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        </CollapsibleCard>
+    )
+}
 
 // --- MAIN VIEW ---
 
 const ForecastView = () => {
+    const { mode } = useMode();
     const [config, setConfig] = useState({});
     const [baseColCategories, setBaseColCategories] = useState([]);
+    const [sunsetDates, setSunsetDates] = useState({}); 
     const [baseColTotal, setBaseColTotal] = useState(0);
     const [simulationData, setSimulationData] = useState([]);
     const [alerts, setAlerts] = useState([]);
@@ -6337,60 +7030,63 @@ const ForecastView = () => {
         fetch('/api/forecast/config').then(r => r.json()).then(data => {
             setConfig(data);
             setBaseColCategories(data.base_col_categories || []);
+            setSunsetDates(data.base_col_sunset_dates || {});
         });
         
         fetch('/api/forecast/discretionary').then(r => r.json()).then(setBudgetItems);
     }, []);
 
-    // Recalculate Simulation whenever inputs change
+    // Recalculate Simulation
     useEffect(() => {
-        fetch('/api/forecast/simulation').then(r => r.json()).then(data => {
+        fetch(`/api/forecast/simulation?mode=${mode}`).then(r => r.json()).then(data => {
             setSimulationData(data.simulation_series);
             setAlerts(data.alerts || []);
             if (data.settings && data.settings.starting_base_col) {
                 setBaseColTotal(data.settings.starting_base_col);
             }
         });
-    }, [refreshKey, config]); 
+    }, [refreshKey, config, mode]); 
 
-    const saveConfig = async () => {
+    const saveConfig = async (configOverride = null) => {
+        const configToSave = configOverride || config;
         await fetch('/api/forecast/config', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                ...config,
-                base_col_categories: baseColCategories
+                ...configToSave,
+                base_col_categories: baseColCategories,
+                base_col_sunset_dates: sunsetDates
             })
         });
+        // Only force refresh key update if we are NOT using an override (which implies we set state already)
+        // Actually, always good to force re-fetch of sim data.
         setRefreshKey(k => k + 1);
     };
+    
+    // Wrapper for immediate updates
+    const handleImmediateSettingChange = (name, value) => {
+        const newConfig = { ...config, [name]: value };
+        setConfig(newConfig);
+        saveConfig(newConfig);
+    }
 
-    // Auto-save base categories when they change
+    // Auto-save base categories or sunset dates change
     useEffect(() => {
         if (baseColCategories.length > 0) {
             saveConfig();
         }
-    }, [baseColCategories]);
+    }, [baseColCategories, sunsetDates]);
 
     const handleLookbackChange = (years) => {
         setConfig(prev => ({ ...prev, base_col_lookback_years: years }));
-        // Note: saveConfig() will be called automatically if we hook this right, 
-        // but here we just update local state and let the user interaction trigger save
-        // Actually, let's trigger save explicitly or rely on a useEffect.
-        // Simpler: Just update state, and call saveConfig directly after state update if we were class based.
-        // Better: trigger the PUT immediately.
-        fetch('/api/forecast/config', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                ...config,
-                base_col_categories: baseColCategories,
-                base_col_lookback_years: years
-            })
-        }).then(() => {
-             setConfig(prev => ({ ...prev, base_col_lookback_years: years }));
-             setRefreshKey(k => k + 1);
-        });
+        setTimeout(() => saveConfig({ ...config, base_col_lookback_years: years }), 100);
+    };
+
+    const handleSunsetChange = (cat, year) => {
+        setSunsetDates(prev => ({
+            ...prev,
+            [cat]: year
+        }));
     };
 
     const handleAddItem = async (item) => {
@@ -6411,64 +7107,89 @@ const ForecastView = () => {
         setRefreshKey(k => k + 1);
     };
 
+    const handleUpdateItem = async (item) => {
+        await fetch('/api/forecast/discretionary', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(item)
+        });
+        const res = await fetch('/api/forecast/discretionary');
+        setBudgetItems(await res.json());
+        setRefreshKey(k => k + 1);
+    };
+
     return (
         <div className="forecast-view-container">
-            <div className="chart-panel">
-                <h2>The Runway (Age 95 Horizon)</h2>
+            {/* 1) The Runway (Full) */}
+            <div className="chart-panel grid-full">
+                <h2>1) The Runway (Age 95 Horizon)</h2>
                 {alerts.length > 0 && (
                     <div style={{background: '#5a2a2a', color: '#ffc048', padding: '1rem', marginBottom: '1rem', borderRadius: '4px'}}>
                         <strong>Warning:</strong> {alerts.map((a, i) => <div key={i}>{a}</div>)}
                     </div>
                 )}
                 <RunwayChart data={simulationData} />
-                <FlightRecorderTable data={simulationData} />
             </div>
             
-            <div className="charts-row">
-                <div className="chart-sub-panel">
-                    <h3>Asset Composition (Accumulation)</h3>
-                    <AssetCompositionChart data={simulationData} />
-                </div>
-                <div className="chart-sub-panel">
-                    <h3>Expense Profile (Outflows)</h3>
+            <div className="dashboard-grid">
+                {/* 2) Expense Profile (Half Left) */}
+                <div className="chart-panel grid-half-left">
+                    <h3>2) Expense Profile</h3>
                     <ExpenseCompositionChart data={simulationData} />
+                </div>
+
+                {/* 3) Asset Composition (Half Right) */}
+                <div className="chart-panel grid-half-right">
+                    <h3>3) Asset Composition</h3>
+                    <AssetCompositionChart data={simulationData} />
                 </div>
             </div>
 
-            <div className="forecast-grid">
-                <div className="left-column">
-                    <ForecastSettings 
-                        config={config} 
-                        setConfig={setConfig} 
-                        onSave={saveConfig} 
-                    />
-                    <PhaseConfiguration
-                        config={config}
-                        setConfig={setConfig}
-                        onSave={saveConfig}
-                    />
-                    <ResidenceSaleConfig
-                        config={config}
-                        setConfig={setConfig}
-                        onSave={saveConfig}
-                    />
-                    <BaseColCalculator 
-                        selectedCategories={baseColCategories} 
-                        onSelectionChange={setBaseColCategories} 
-                        calculatedTotal={baseColTotal} 
-                        lookbackYears={config.base_col_lookback_years}
-                        onLookbackChange={handleLookbackChange}
-                    />
-                </div>
-                
-                <div className="right-column">
-                    <DiscretionaryBudget 
-                        items={budgetItems} 
-                        onAdd={handleAddItem} 
-                        onDelete={handleDeleteItem} 
-                    />
-                </div>
+            {/* 4) Discretionary Budget (Full) */}
+            <DiscretionaryBudget 
+                items={budgetItems} 
+                onAdd={handleAddItem} 
+                onDelete={handleDeleteItem} 
+                onUpdate={handleUpdateItem}
+            />
+
+            <div className="dashboard-grid">
+                 {/* 5) Principal Residence (Half Left) */}
+                <ResidenceSaleConfig
+                    config={config}
+                    setConfig={setConfig}
+                    onSave={() => saveConfig()}
+                />
+
+                {/* 6) Base CoL Engine (Half Right) */}
+                <BaseColCalculator 
+                    selectedCategories={baseColCategories} 
+                    onSelectionChange={setBaseColCategories} 
+                    calculatedTotal={baseColTotal} 
+                    lookbackYears={config.base_col_lookback_years}
+                    onLookbackChange={handleLookbackChange}
+                    sunsetDates={sunsetDates}
+                    onSunsetChange={handleSunsetChange}
+                />
+
+                {/* 7) Go Slow No Go (Half Left) */}
+                <PhaseConfiguration
+                    config={config}
+                    setConfig={setConfig}
+                    onSave={() => saveConfig()}
+                />
+
+                {/* Spacer / Other Settings (Half Right) */}
+                <ForecastSettings 
+                    config={config} 
+                    setConfig={setConfig} 
+                    onSave={() => saveConfig()} 
+                    onSettingChange={handleImmediateSettingChange}
+                />
             </div>
+
+            {/* Telemetry Tables below everything */}
+            <ForecastTelemetryTable simulationData={simulationData} />
         </div>
     );
 };
@@ -6982,6 +7703,7 @@ import TimeFilter from './TimeFilter';
 import PieChart from './PieChart';
 import CapitalFlowTable from './CapitalFlowTable';
 import TaxRateSummaryTable from './TaxRateSummaryTable';
+import AccountSummaryTable from './AccountSummaryTable';
 import ModeSelector from './ModeSelector';
 import './HomeView.css';
 import { useMode } from '../context/ModeContext';
@@ -7118,6 +7840,9 @@ const HomeView = ({ navigateTo }) => {
                     </div> : 
                     <p>No holdings data with asset types found.</p>}
             </div>
+            
+            {/* New Table: Source of Truth for Forecasting */}
+            <AccountSummaryTable />
             
             <TaxRateSummaryTable />
         </div>
@@ -8421,7 +9146,7 @@ const PortfolioSummary = ({ holdings, formatCurrency }) => {
 };
 
 const filterConfig = [
-    { id: 'account_id', label: 'Account', type: 'select', optionsKey: 'accounts' },
+    { id: 'account_id', label: 'Account', type: 'select', optionsKey: 'holding_accounts' },
     { id: 'asset_type', label: 'Asset Type', type: 'select', optionsKey: 'assetTypes' },
     { id: 'symbol', label: 'Symbol', type: 'text', placeholder: 'e.g., AAPL' },
     { id: 'tags', label: 'Tag Contains', type: 'text', placeholder: 'e.g., ESG' },
@@ -8513,7 +9238,8 @@ const PortfolioView = () => {
         let direction = 'descending';
         if (sortConfig && sortConfig.key === key && sortConfig.direction === 'descending') {
             direction = 'ascending';
-        } else if (sortConfig && sortConfig.key === key && sortConfig.direction === 'ascending') {
+        }
+        if (sortConfig && sortConfig.key === key && sortConfig.direction === 'ascending') {
             setSortConfig(null);
             return;
         }
@@ -8698,6 +9424,7 @@ const PortfolioView = () => {
 };
 
 export default PortfolioView;
+
 
 --- FILE: projects/trust/src/components/PortfolioWaterfall.css ---
 
@@ -11399,8 +12126,9 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Hold
         'quantity': ['quantity', 'shares', 'units'],
         'cost_basis': ['costbasis', 'cost', 'totalcost', 'costbasis($)'],
         'market_value': ['marketvalue', 'value', 'totalvalue', 'value($)'],
-        'tags': ['tags', 'group', 'category'],
-        'asset_type': ['assettype', 'type', 'assetclass', 'securitytypedescription'],
+        'tags': ['tags', 'group', 'category', 'accountname'], # Added Account Name to tags for visibility
+        'asset_type': ['assettype', 'type', 'assetclass', 'securitytypedescription', 'description'],
+        'account_number': ['accountnumber', 'account#', 'accountno', 'accountid', 'account'],
     }
 
     header_map = {}
@@ -11444,7 +12172,7 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Hold
 
         # A row is only skipped if its identifier (symbol) is missing.
         if not symbol_key or not row.get(symbol_key) or not row.get(symbol_key).strip():
-            skipped_rows.append({"row_number": row_num, "row_data": row, "reason": "Symbol is missing or empty."})
+            skipped_rows.append({"row_number": row_num, "row_data": row, "reason": "Symbol is missing or empty."}) 
             continue
 
         symbol = row[symbol_key].strip().upper()
@@ -11463,17 +12191,32 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Hold
         tags = []
         tags_key = header_map.get('tags')
         if tags_key and row.get(tags_key):
-            tags = [t.strip() for t in row[tags_key].split(',') if t.strip()]
+            # Split by comma if it looks like a list, otherwise just add the value
+            val = row[tags_key].strip()
+            if ',' in val:
+                tags = [t.strip() for t in val.split(',') if t.strip()]
+            else:
+                tags = [val]
 
         asset_type = None
         asset_type_key = header_map.get('asset_type')
         if asset_type_key and row.get(asset_type_key):
             asset_type = row[asset_type_key].strip()
 
+        account_number = None
+        acc_num_key = header_map.get('account_number')
+        if acc_num_key and row.get(acc_num_key):
+            account_number = row[acc_num_key].strip()
+            # Mask account number for privacy if needed, but for local trust we keep it.
+
         # --- AGGREGATION LOGIC ---
-        if symbol in holdings_map:
+        # We aggregate based on Symbol AND Account Number to prevent merging distinct sub-accounts.
+        # If account_number is None (file didn't have it), it falls back to 'main' bucket.
+        agg_key = (symbol, account_number)
+
+        if agg_key in holdings_map:
             # Aggregate data for the existing symbol
-            existing_holding = holdings_map[symbol]
+            existing_holding = holdings_map[agg_key]
             existing_holding.quantity += quantity
             existing_holding.cost_basis += cost_basis
             if existing_holding.market_value is not None and market_value is not None:
@@ -11491,14 +12234,15 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Hold
                 "row_number": row_num,
                 "field": "symbol",
                 "value": symbol,
-                "message": "Duplicate symbol found; values were aggregated."
+                "message": "Duplicate symbol (per account) found; values were aggregated."
             })
         else:
             # Create a new holding entry
-            raw_id = f"{account_id}-{symbol}"
+            # ID must be unique per account_id + symbol + account_number
+            raw_id = f"{account_id}-{symbol}-{account_number or 'main'}"
             holding_id = hashlib.sha256(raw_id.encode('utf-8')).hexdigest()
             
-            holdings_map[symbol] = Holding(
+            h = Holding(
                 holding_id=holding_id,
                 account_id=account_id,
                 symbol=symbol,
@@ -11508,6 +12252,11 @@ def parse_holdings_csv(file_contents: bytes, account_id: str) -> Tuple[List[Hold
                 tags=tags,
                 asset_type=asset_type
             )
+            # Manually attach account_number since it's not in the original dataclass constructor (unless updated)
+            # The database saver (database.py) looks for this attribute specifically.
+            h.account_number = account_number
+            
+            holdings_map[agg_key] = h
 
     holdings = list(holdings_map.values())
     

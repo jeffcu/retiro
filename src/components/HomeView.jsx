@@ -4,6 +4,7 @@ import TimeFilter from './TimeFilter';
 import PieChart from './PieChart';
 import CapitalFlowTable from './CapitalFlowTable';
 import TaxRateSummaryTable from './TaxRateSummaryTable';
+import AccountSummaryTable from './AccountSummaryTable';
 import ModeSelector from './ModeSelector';
 import './HomeView.css';
 import { useMode } from '../context/ModeContext';
@@ -140,6 +141,9 @@ const HomeView = ({ navigateTo }) => {
                     </div> : 
                     <p>No holdings data with asset types found.</p>}
             </div>
+            
+            {/* New Table: Source of Truth for Forecasting */}
+            <AccountSummaryTable />
             
             <TaxRateSummaryTable />
         </div>

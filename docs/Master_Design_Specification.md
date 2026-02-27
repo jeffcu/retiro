@@ -1,63 +1,66 @@
 # Curie Trust Financial Control Center
-## Master Design Specification (MDS) v1.5
+## Master Design Specification (MDS) v1.9
 
 ---
 
 ### 1. Overview
-[... Unchanged ...]
+The Curie Trust Financial Control Center is a local-first, privacy-centric application designed to aggregate, visualize, and forecast the financial health of the Curie Trust. It operates on a Python/FastAPI backend with a React/Vite frontend, storing data in a local SQLite database.
 
 ### 2. System Architecture
-[... Unchanged ...]
+*   **Backend:** Python 3.11+ (FastAPI, Pandas, SQLite).
+*   **Frontend:** React 18 (Vite, Nivo Charts).
+*   **Data Store:** `data/trust.db` (SQLite).
+*   **Market Data:** Massive (Primary), AlphaVantage (Secondary).
 
 ### 3. Core Modules
 
-*   `src/data_model.py`: [...]
-*   `src/database.py`: [...]
-*   `src/importers/`: [...]
-*   `src/rules_engine.py`: [...]
-*   `src/market_data/`: [...]
-*   `src/analysis.py`: Enhanced in v1.4.
-*   `src/forecast.py`: **New Module**. Encapsulates the "Time Machine" simulation logic.
-    *   `calculate_forecast()`: The core loop. Takes current NW, settings, and budget items. Returns a year-by-year list of projected values.
+*   `src/data_model.py`: Defines core data classes (Transaction, Holding, Property).
+*   `src/database.py`: Handles all SQL operations, schema migrations, and JSON settings.
+*   `src/forecast.py`: **Major Upgrade in Phase 10**.
+    *   `TaxEngine` Class: Handles progressive tax calculations (Fed + State).
+    *   `RMDCalculator` Class: Determines mandatory withdrawals based on IRS tables.
+    *   `SimulationEngine`: Now includes configurable withdrawal order strategies.
 
 ### 4. Data Model & Storage
 
 *   **Database:** SQLite `data/trust.db`
 
-**New Tables (v1.5):**
-*   `discretionary_budget_items`:
-    *   `item_id` (TEXT PK)
-    *   `name` (TEXT)
-    *   `amount` (REAL)
-    *   `start_year` (INTEGER)
-    *   `is_recurring` (INTEGER/BOOL)
-    *   `inflation_adjusted` (INTEGER/BOOL)
-*   `app_settings` (Existing): Will now store:
-    *   `forecast_inflation_rate` (REAL, default 0.03)
-    *   `forecast_return_rate` (REAL, default 0.05) - *New in v1.5*
-    *   `forecast_birth_year` (INTEGER)
-    *   `forecast_col_categories` (JSON list of category names)
+**New Settings Keys (v1.9):**
+*   `forecast_tax_filing_status`: 'single' | 'joint'
+*   `forecast_withdrawal_strategy`: 'standard' | 'deferred_first' (Added in v1.9.1)
+*   `forecast_roth_conversion_target`: 'none' | 'fill_12' | 'fill_22' | 'fill_24' | 'fill_32'
+*   `forecast_rmd_start_age`: INTEGER (Default 75)
 
 ### 5. API Interfaces
 
-#### 5.3 Forecast API (New)
-*   `GET /api/forecast/config`: Get inflation, birth year, return rate.
-*   `PUT /api/forecast/config`: Update settings.
-*   `GET /api/forecast/base-col`: Returns the calculated "Year 0" cost based on last 12 months of selected categories.
-*   `POST /api/forecast/discretionary`: CRUD for budget items.
-*   `GET /api/forecast/simulation`: Returns the projection series:
-    *   `year`: 2024, 2025...
-    *   `age`: 50, 51...
-    *   `starting_net_worth`: Value at start of year.
-    *   `income`: Total income for year (from Future Streams).
-    *   `expenses`: Base CoL + Discretionary for year.
-    *   `investment_growth`: Calculated growth on liquid assets.
-    *   `ending_net_worth`: Value at end of year.
+#### 5.3 Forecast API (Updated for Phase 10)
+*   `GET /api/forecast/simulation`: Returns `simulation_series` with new fields:
+    *   `taxable_income`: Total income subject to tax (RMDs + SS + Withdrawals + Conversions).
+    *   `federal_tax_paid`: Estimated federal tax bill.
+    *   `effective_tax_rate`: `federal_tax_paid / taxable_income`.
+    *   `rmd_amount`: The mandatory distribution amount for that year.
+    *   `withdrawal_strategy_used`: The logic applied for that year (e.g. "IRA First").
 
 ### 6. Security
-[... Unchanged ...]
+*   Local-only access.
+*   API Keys stored in `.env`.
 
 ### 7. Phased Implementation Plan
 
-*   **Phase 8:** Data Protection (Completed).
-*   **Phase 9:** Forecast Planner (Next).
+*   **Phase 9:** Forecast Planner (Base Simulation) - **Completed/Stable**.
+
+*   **Phase 10:** The Strategic Tax Engine (UI Specification) - **Next**.
+    
+    **A. New UI Component: `TaxStrategyConfig`**
+    *   **Location:** Forecast View Grid.
+    *   **Inputs:**
+        1.  **Filing Status:** Toggle [Single | Joint].
+        2.  **Withdrawal Order:** [Standard (Taxable First) | Legacy Saver (IRA First)].
+        3.  **Strategy:** Dropdown for Roth Conversions.
+    
+    **B. New Visualization: `TaxExposureChart`**
+    *   Visualizes Income vs. Tax Brackets over time.
+
+*   **Phase 11:** Legacy & Liquidation View.
+    1.  Add "After-Tax Net Worth" calculation.
+    2.  Visualize the efficiency of different asset buckets for heirs.

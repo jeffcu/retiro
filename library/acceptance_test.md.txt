@@ -1,37 +1,39 @@
-# Curie Trust - Acceptance Test Plan v1.7
+# Curie Trust - Acceptance Test Plan v1.9
 
 ## 1. Introduction
 This document outlines the acceptance criteria for the Curie Trust Financial Control Center.
 
 ---
 
-## 2. Phase 0-8: Core Functionality (Completed)
+## 2. Phase 0-9: Core Functionality (Completed)
 All previous phases are stable.
 
 ---
 
-## 3. Phase 9: Forecast Planner (Next)
+## 3. Phase 10: The Strategic Tax Engine (Next)
 
-**Objective**: Provide a simulation of Net Worth trajectory up to age 95.
+**Objective**: Transform the forecast from a simple growth model to a tax-aware optimization engine.
 
-### 9.1 Forecast Settings
+### 10.1 Progressive Tax Logic
 **Acceptance Criteria**:
-- [ ] **Birth Year**: User can enter birth year; system accurately calculates current and future age.
-- [ ] **Rates**: User can set Inflation Rate and Investment Return Rate. Changes to these immediately affect the graph.
+- [ ] **Bracket Calculation**: Verify that $100k income results in a lower effective rate than $300k income (progressive vs flat).
+- [ ] **Standard Deduction**: Verify that the first ~$29k (Joint) or ~$14k (Single) of income is tax-free.
 
-### 9.2 Base Cost of Living (CoL)
+### 10.2 RMDs (Required Minimum Distributions)
 **Acceptance Criteria**:
-- [ ] **Actuals Driven**: Checking a category (e.g., "Groceries") adds the sum of the *last 12 months* of that category to the Base CoL.
-- [ ] **No Manual Override**: The Base CoL is strictly derived from the selected categories' actual data.
+- [ ] **Age Trigger**: Verify RMDs begin automatically at age 75 (or configured age).
+- [ ] **Forced Withdrawal**: Verify that even if spending needs are met by Cash/Yield, the RMD is still withdrawn from the Deferred bucket and added to Taxable Income.
 
-### 9.3 The Simulation (The Runway)
+### 10.3 Roth Conversions (Bracket Filling)
 **Acceptance Criteria**:
-- [ ] **Logic Accuracy**: Verify calculation: `Next_Year_NW = (Assets * (1 + Return)) + Income - Expenses`.
-- [ ] **Drawdown Visualization**: If Expenses > (Income + Growth), the Net Worth line should visibly decline.
-- [ ] **Compounding**: Verify that positive savings result in exponential growth (compounding returns).
+- [ ] **Filling the Bucket**: If the user sets a "Top of 22% Bracket" target, verify the system converts just enough Deferred assets to hit that limit, but no more.
+- [ ] **Tax Impact**: Verify that taxes on the conversion are paid in the current year (ideally from Taxable brokerage).
 
-### 9.4 The Graph
+---
+
+## 4. Phase 11: Legacy & Liquidation (Future)
+
+### 11.1 Liquidation Value
 **Acceptance Criteria**:
-- [ ] **X-Axis**: Years/Age (e.g., "2025 (Age 50)").
-- [ ] **Y-Axis**: Net Worth (Currency).
-- [ ] **Visibility**: The chart clearly shows if/when the Net Worth line crosses zero (exhaustion of assets).
+- [ ] **Embedded Tax**: Verify the system displays a "Liquidation Value" that subtracts estimated taxes from the Deferred bucket (Ordinary Income) and Taxable bucket (Capital Gains).
+- [ ] **Roth Premium**: Verify that $1 in Roth contributes exactly $1 to Liquidation Value, while $1 in Deferred contributes less (e.g., $0.76).
