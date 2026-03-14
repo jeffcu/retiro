@@ -165,6 +165,130 @@ coverage/
 .open-next/
 
 
+--- FILE: projects/trust/README.md ---
+
+# Trust Financial System
+
+**A Local-First, Open Source Financial Control Center & Retirement Forecasting Engine.**
+
+## 🎯 Mission
+
+The Trust Financial System is a privacy-centric application designed for **retirees and serious financial planners** who demand high-fidelity modeling without sacrificing data sovereignty.
+
+Unlike commercial aggregators that scrape your passwords and sell your data, **Trust** runs entirely on your local machine. You import your own ledgers; the system enriches them with live market data to answer the critical questions of retirement:
+
+1.  **Will the capital last?** (Modeling market conditions against spending needs)
+2.  **How do life phases impact our runway?** (Transitioning from "Go" years to "Slow Go" and "No Go" years)
+3.  **Are we tax-optimized?** (Visualizing the impact of RMDs, Roth conversions, and specific withdrawal orders)
+4.  **What is our True Net Worth?** (Liquid Assets + Real Estate Equity - Liabilities)
+
+**This project is Open Source.** We offer this codebase so you can build your own *private* financial planning system, audit the logic yourself, and expand it to handle scenarios unique to your life.
+
+---
+
+## 👤 The Ideal User
+
+This system is built for the **hands-on planner**.
+
+*   **You value privacy above convenience.** You prefer uploading CSVs once a month over giving a third-party app your bank login credentials.
+*   **You want "Live" Net Worth.** While you manage the transaction history, the system automatically pulls end-of-day stock and bond prices to keep your portfolio value current.
+*   **You are planning complex scenarios.** You need to model selling a primary residence in 2030, paying for a wedding in 2032, or funding long-term care in 2045.
+*   **You care about Tax Drag.** You want to see how drawing from your IRA vs. your Brokerage account affects your long-term survival rate.
+*   **No cost to operate.** Market updates use a slow drip strategy to stay under the pay levels for market prices.   Add an free API keys from Massive and/or AlphaVantage to enable the free daily price refresh after market close, and a mid-day refresh of your top 25 holdings.
+
+---
+
+## 🚀 Key Features
+
+### 1. "The Time Machine" Forecast Engine
+*   **Life Phase Modeling:** distinct spending multipliers for your "Go" (Active), "Slow Go" (Aging), and "No Go" (Late stage) years.
+*   **Strategic Levers:** Toggle "Roth Conversion" strategies to fill low tax brackets.
+*   **Real Estate Logic:** Model the sale of a primary residence and the subsequent liquidity event.
+*   **Event Injection:** Schedule one-time large expenses (Weddings, Gifts) or recurring future costs (Caregivers, Retirement Homes).
+*   **Tax Awareness:** Automatically calculates Required Minimum Distributions (RMDs) and applies progressive tax brackets to your withdrawals.
+
+### 2. The Bridge (Dashboard)
+*   **Real-Time Net Worth:** Aggregates portfolio holdings and real estate equity.
+*   **Asset Allocation:** Visualizes exposure across asset classes.
+*   **Tax Status Breakdown:** Tracks assets by tax bucket (Taxable, Deferred, Roth, Exempt).
+
+### 3. Capital Flow Analysis
+*   **Sankey Diagrams:** A visual flow of money from Income → Allocations → Expenses.
+*   **Tabular Breakdown:** Detailed categorization of inflows and outflows.
+
+### 4. Portfolio Performance
+*   **Waterfall Analysis:** Breaks down performance into Contributions, Yield, Withdrawals, Fees, and Market Growth.
+*   **Layered Returns:** Calculates Gross Return → Net of Fees → Net of Taxes.
+
+---
+
+## 🏗️ Technical Architecture
+
+This is a **monorepo** containing a full-stack application designed to be run locally:
+
+*   **Backend:** Python 3.11+ (FastAPI, Pandas, SQLite)
+*   **Frontend:** React 18 (Vite, Nivo Charts)
+*   **Database:** SQLite (`data/trust.db`) - Simple, portable, and local.
+*   **Market Data:** Integrates with Massive and AlphaVantage APIs for end-of-day pricing.
+
+---
+
+## 🛠️ Setup & Installation
+
+### Prerequisites
+- Python 3.11 or higher
+- Node.js 18 or higher
+- Git
+
+### 1. Clone the Repository
+```bash
+git clone https://github.com/your-username/trust.git
+cd trust/projects/trust
+```
+
+### 2. Configure Environment
+Create a `.env` file in the `projects/trust` directory:
+```bash
+cp .env.example .env
+```
+Edit `.env` and add your API keys (optional, but required for live market updates):
+```ini
+MASSIVE_API_KEY="your_key_here"
+ALPHA_VANTAGE_API_KEY="your_key_here"
+```
+
+### 3. Launch the Development Environment
+We provide a unified startup script that spins up both the Python backend and React frontend:
+
+```bash
+./scripts/start_dev_environment.sh
+```
+
+*   **Frontend:** http://localhost:5173
+*   **Backend API:** http://localhost:8000/docs
+
+---
+
+## 📂 Usage Guide
+
+### Importing Data
+1.  Navigate to the **Data & Settings** view.
+2.  **Transactions:** Upload CSVs from your bank. The system uses a flexible importer that attempts to auto-detect columns.
+3.  **Holdings:** Upload CSVs of your investment positions (Symbol, Quantity, Cost Basis).
+
+### Categorization Rules
+The system includes a regex-based Rules Engine. You can create rules in the **Cashflow** view to automatically tag and categorize transactions based on merchant names, amounts, or descriptions.
+
+### Forecasting
+Navigate to **Forecast**. Adjust the "Flight Controls" (Inflation, Return Rate, Retirement Age) to simulate different futures. Use **Discretionary Budget** to add one-time expenses (e.g., "Wedding in 2030").
+
+---
+
+## 🤝 Contributing
+
+This project is open source to encourage private financial sovereignty. Pull requests are welcome. If you find a bug in the tax calculation logic or want to add a new importer for a specific brokerage, please open an issue.
+
+
 --- FILE: projects/trust/agent_manifests.json ---
 
 {
@@ -174,7 +298,8 @@ coverage/
     "library_files": [
       "projects/trust/library/Trust Financial System.txt",
       "projects/trust/docs/Master_Design_Specification.md",
-      "projects/trust/library/acceptance_test.md.txt"
+      "projects/trust/library/acceptance_test.md.txt",
+      "projects/trust/README.md"
     ],
     "codebase_level": "full"
   },
@@ -1115,10 +1240,10 @@ import SideBar from './components/SideBar';
 import HomeView from './components/HomeView';
 import PortfolioView from './components/PortfolioView';
 import DataImportView from './components/DataImportView';
-import PlaceholderView from './components/PlaceholderView';
 import TransactionListView from './components/TransactionListView';
 import RealEstateView from './components/RealEstateView';
-import ForecastView from './components/ForecastView'; // IMPORTED
+import ForecastView from './components/ForecastView';
+import ProjectsTagsView from './components/ProjectsTagsView';
 import ErrorBoundary from './components/ErrorBoundary'; 
 import './App.css';
 
@@ -1147,9 +1272,9 @@ function App() {
       case 'Real Estate':
         return <RealEstateView />;
       case 'Forecast':
-        return <ForecastView />; // ACTIVATED
+        return <ForecastView />;
       case 'Projects/Tags':
-        return <PlaceholderView viewName={name} />;
+        return <ProjectsTagsView />;
       default:
         return <HomeView navigateTo={navigateTo} />;
     }
@@ -3263,6 +3388,71 @@ def delete_discretionary_budget_item(item_id: str) -> bool:
     finally:
         conn.close()
 
+# --- TAG ENGINE ADDITIONS ---
+
+def get_tag_summary() -> List[Dict[str, Any]]:
+    """
+    Aggregates tags across transactions and holdings, providing count and volume.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT tags, amount FROM transactions WHERE tags IS NOT NULL AND tags != ''")
+    tx_rows = cursor.fetchall()
+    
+    cursor.execute("SELECT tags, market_value FROM holdings WHERE tags IS NOT NULL AND tags != ''")
+    holding_rows = cursor.fetchall()
+    conn.close()
+    
+    tag_map = {}
+    
+    for row in tx_rows:
+        tags = [t.strip() for t in row['tags'].split(',') if t.strip()]
+        for t in tags:
+            if t not in tag_map:
+                tag_map[t] = {'tag': t, 'tx_count': 0, 'tx_value': 0.0, 'holding_count': 0, 'holding_value': 0.0}
+            tag_map[t]['tx_count'] += 1
+            # Use absolute value to represent total activity volume
+            tag_map[t]['tx_value'] += abs(float(row['amount']))
+            
+    for row in holding_rows:
+        tags = [t.strip() for t in row['tags'].split(',') if t.strip()]
+        for t in tags:
+            if t not in tag_map:
+                tag_map[t] = {'tag': t, 'tx_count': 0, 'tx_value': 0.0, 'holding_count': 0, 'holding_value': 0.0}
+            tag_map[t]['holding_count'] += 1
+            tag_map[t]['holding_value'] += float(row['market_value'] or 0)
+            
+    return sorted(list(tag_map.values()), key=lambda x: x['tag'].lower())
+
+def get_records_by_tag(tag: str) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Fetches exact records (transactions & holdings) that contain the specified tag.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM transactions WHERE tags IS NOT NULL AND tags != '' ORDER BY transaction_date DESC")
+    tx_rows = cursor.fetchall()
+    
+    cursor.execute("SELECT * FROM holdings WHERE tags IS NOT NULL AND tags != '' ORDER BY symbol ASC")
+    holding_rows = cursor.fetchall()
+    conn.close()
+    
+    matched_tx = []
+    for r in tx_rows:
+        tags = [t.strip().lower() for t in r['tags'].split(',') if t.strip()]
+        if tag.lower() in tags:
+            matched_tx.append(dict(r))
+            
+    matched_holdings = []
+    for r in holding_rows:
+        tags = [t.strip().lower() for t in r['tags'].split(',') if t.strip()]
+        if tag.lower() in tags:
+            matched_holdings.append(dict(r))
+            
+    return {"transactions": matched_tx, "holdings": matched_holdings}
+
 
 --- FILE: projects/trust/src/demo_mode.py ---
 
@@ -4687,6 +4877,16 @@ async def create_discretionary_item(item: DiscretionaryItemCreate):
 async def delete_discretionary_item(item_id: str):
     db.delete_discretionary_budget_item(item_id)
     return Response(status_code=204)
+
+
+# --- NEW: TAG API ENDPOINTS ---
+@app.get("/api/tags/summary", tags=["Tags"])
+async def get_all_tags_summary():
+    return db.get_tag_summary()
+
+@app.get("/api/tags/{tag_name}/records", tags=["Tags"])
+async def get_tag_records(tag_name: str):
+    return db.get_records_by_tag(tag_name)
 
 
 # --- Admin & Market Data Endpoints ---
@@ -9699,6 +9899,387 @@ const PortfolioWaterfall = () => {
 export default PortfolioWaterfall;
 
 
+--- FILE: projects/trust/src/components/ProjectsTagsView.css ---
+
+.tags-view-container {
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+}
+
+.tag-cloud-card {
+    background-color: var(--dark-bg);
+    padding: 2rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+}
+
+.tag-cloud-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2rem;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 1rem;
+}
+
+.tag-cloud-header h2 {
+    margin: 0;
+    border: none;
+    padding: 0;
+    color: var(--gold-accent);
+}
+
+.tag-controls select {
+    background-color: var(--medium-bg);
+    color: #fff;
+    border: 1px solid #555;
+    padding: 0.5rem;
+    border-radius: 4px;
+    outline: none;
+}
+
+.tag-cloud-area {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem;
+    justify-content: center;
+    align-items: center;
+    padding: 2rem 1rem;
+    min-height: 200px;
+}
+
+.tag-item {
+    cursor: pointer;
+    transition: all 0.2s ease;
+    color: var(--text-color);
+    padding: 0.2em 0.5em;
+    border-radius: 6px;
+    user-select: none;
+    text-align: center;
+    line-height: 1.2;
+}
+
+.tag-item:hover {
+    color: var(--gold-accent);
+    background-color: rgba(226, 178, 84, 0.1);
+    transform: scale(1.05);
+}
+
+.tag-item.selected {
+    color: var(--dark-bg);
+    background-color: var(--gold-accent);
+    font-weight: bold;
+}
+
+.tag-detail-card {
+    background-color: var(--light-bg);
+    padding: 1.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--gold-accent);
+    animation: fadeIn 0.3s ease-in-out;
+}
+
+.tag-detail-card h3 {
+    margin-top: 0;
+    color: var(--gold-accent);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.close-btn {
+    background: none;
+    border: none;
+    color: #ccc;
+    cursor: pointer;
+    font-size: 1.2em;
+}
+
+.close-btn:hover {
+    color: #fff;
+}
+
+.tag-summary-stats {
+    display: flex;
+    gap: 2rem;
+    margin-bottom: 1.5rem;
+    padding: 1rem;
+    background-color: var(--medium-bg);
+    border-radius: 4px;
+}
+
+.stat-box {
+    display: flex;
+    flex-direction: column;
+}
+
+.stat-box label {
+    font-size: 0.8em;
+    color: #aaa;
+    text-transform: uppercase;
+}
+
+.stat-box span {
+    font-size: 1.4em;
+    font-weight: 500;
+    color: #fff;
+}
+
+.tag-tables-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 2rem;
+}
+
+@media (min-width: 1000px) {
+    .tag-tables-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+.tag-table-wrapper h4 {
+    margin-bottom: 0.5rem;
+    color: #ddd;
+    border-bottom: 1px solid #555;
+    padding-bottom: 0.25rem;
+}
+
+.tag-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9em;
+}
+
+.tag-table th, .tag-table td {
+    padding: 6px 8px;
+    border-bottom: 1px solid #444;
+    text-align: left;
+}
+
+.tag-table td.numeric {
+    text-align: right;
+    font-family: monospace;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+
+--- FILE: projects/trust/src/components/ProjectsTagsView.jsx ---
+
+import { useState, useEffect, useMemo } from 'react';
+import './ProjectsTagsView.css';
+
+const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+}).format(value || 0);
+
+const ProjectsTagsView = () => {
+    const [tags, setTags] = useState([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [sizingMethod, setSizingMethod] = useState('count'); // 'count' or 'value'
+    const [selectedTag, setSelectedTag] = useState(null);
+    const [tagRecords, setTagRecords] = useState({ transactions: [], holdings: [] });
+    const [recordsLoading, setRecordsLoading] = useState(false);
+
+    useEffect(() => {
+        const fetchTags = async () => {
+            try {
+                setIsLoading(true);
+                const response = await fetch('/api/tags/summary');
+                if (!response.ok) throw new Error('Failed to fetch tags');
+                const data = await response.json();
+                setTags(data);
+            } catch (err) {
+                console.error("Error fetching tags:", err);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        fetchTags();
+    }, []);
+
+    const handleTagClick = async (tagName) => {
+        setSelectedTag(tagName);
+        setRecordsLoading(true);
+        try {
+            const response = await fetch(`/api/tags/${encodeURIComponent(tagName)}/records`);
+            if (!response.ok) throw new Error('Failed to fetch records');
+            const data = await response.json();
+            setTagRecords(data);
+        } catch (err) {
+            console.error("Error fetching tag records:", err);
+        } finally {
+            setRecordsLoading(false);
+        }
+    };
+
+    const closeDetails = () => {
+        setSelectedTag(null);
+        setTagRecords({ transactions: [], holdings: [] });
+    };
+
+    // Calculate min/max for tag cloud scaling
+    const { minScale, maxScale } = useMemo(() => {
+        if (tags.length === 0) return { minScale: 1, maxScale: 1 };
+        const values = tags.map(t => sizingMethod === 'count' 
+            ? t.tx_count + t.holding_count 
+            : t.tx_value + t.holding_value
+        );
+        return {
+            minScale: Math.min(...values),
+            maxScale: Math.max(...values)
+        };
+    }, [tags, sizingMethod]);
+
+    // Render individual Tag with dynamic sizing
+    const renderTag = (tag) => {
+        const metric = sizingMethod === 'count' 
+            ? tag.tx_count + tag.holding_count 
+            : tag.tx_value + tag.holding_value;
+        
+        // Scale between 0.9em and 3.5em based on relative size
+        const range = maxScale - minScale || 1; // Prevent div by 0
+        const scaleFactor = (metric - minScale) / range;
+        const fontSize = 0.9 + (scaleFactor * 2.6);
+        
+        const totalValue = tag.tx_value + tag.holding_value;
+        const totalCount = tag.tx_count + tag.holding_count;
+        
+        const titleText = `${tag.tag}\nItems: ${totalCount}\nTotal Vol: ${formatCurrency(totalValue)}`;
+
+        return (
+            <div 
+                key={tag.tag} 
+                className={`tag-item ${selectedTag === tag.tag ? 'selected' : ''}`}
+                style={{ fontSize: `${fontSize}em` }}
+                onClick={() => handleTagClick(tag.tag)}
+                title={titleText}
+            >
+                {tag.tag}
+            </div>
+        );
+    };
+
+    const activeTagSummary = tags.find(t => t.tag === selectedTag);
+
+    return (
+        <div className="tags-view-container">
+            <div className="tag-cloud-card">
+                <div className="tag-cloud-header">
+                    <h2>Project & Tag Inspector</h2>
+                    <div className="tag-controls">
+                        <label style={{marginRight: '0.5rem', color: '#ccc'}}>Size by:</label>
+                        <select value={sizingMethod} onChange={(e) => setSizingMethod(e.target.value)}>
+                            <option value="count">Number of Items</option>
+                            <option value="value">Total Volume ($)</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div className="tag-cloud-area">
+                    {isLoading ? <p>Scanning core memory for tags...</p> : 
+                     tags.length === 0 ? <p>No tags found in the system. Edit transactions or assets to add them.</p> :
+                     tags.map(renderTag)}
+                </div>
+            </div>
+
+            {selectedTag && (
+                <div className="tag-detail-card">
+                    <h3>
+                        Records for tag: #{selectedTag}
+                        <button className="close-btn" onClick={closeDetails}>✕</button>
+                    </h3>
+                    
+                    {activeTagSummary && (
+                        <div className="tag-summary-stats">
+                            <div className="stat-box">
+                                <label>Transactions</label>
+                                <span>{activeTagSummary.tx_count} ({formatCurrency(activeTagSummary.tx_value)})</span>
+                            </div>
+                            <div className="stat-box">
+                                <label>Holdings</label>
+                                <span>{activeTagSummary.holding_count} ({formatCurrency(activeTagSummary.holding_value)})</span>
+                            </div>
+                        </div>
+                    )}
+
+                    {recordsLoading ? <p>Loading detailed records...</p> : (
+                        <div className="tag-tables-grid">
+                            {tagRecords.transactions.length > 0 && (
+                                <div className="tag-table-wrapper">
+                                    <h4>Transactions</h4>
+                                    <table className="tag-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Date</th>
+                                                <th>Description</th>
+                                                <th>Account</th>
+                                                <th className="numeric">Amount</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {tagRecords.transactions.map(tx => (
+                                                <tr key={tx.transaction_id}>
+                                                    <td>{tx.transaction_date.split(' ')[0]}</td>
+                                                    <td title={tx.description}>
+                                                        {tx.description.length > 30 ? tx.description.substring(0,30) + '...' : tx.description}
+                                                    </td>
+                                                    <td>{tx.account_id}</td>
+                                                    <td className="numeric">{formatCurrency(tx.amount)}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+                            
+                            {tagRecords.holdings.length > 0 && (
+                                <div className="tag-table-wrapper">
+                                    <h4>Holdings / Assets</h4>
+                                    <table className="tag-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Symbol/Name</th>
+                                                <th>Account</th>
+                                                <th>Qty</th>
+                                                <th className="numeric">Value</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {tagRecords.holdings.map(h => (
+                                                <tr key={h.holding_id}>
+                                                    <td>{h.symbol}</td>
+                                                    <td>{h.account_id}</td>
+                                                    <td>{h.quantity.toFixed(2)}</td>
+                                                    <td className="numeric">{formatCurrency(h.market_value)}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+
+                            {tagRecords.transactions.length === 0 && tagRecords.holdings.length === 0 && (
+                                <p>No records found. The tag might have been removed.</p>
+                            )}
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+};
+
+export default ProjectsTagsView;
+
+
 --- FILE: projects/trust/src/components/RealEstateView.css ---
 
 .real-estate-view-container {
@@ -12782,7 +13363,8 @@ async def refresh_eod_data() -> Dict[str, Any]:
     "library_files": [
       "projects/trust/library/Trust Financial System.txt",
       "projects/trust/docs/Master_Design_Specification.md",
-      "projects/trust/library/acceptance_test.md.txt"
+      "projects/trust/library/acceptance_test.md.txt",
+      "projects/trust/README.md"
     ],
     "codebase_level": "full"
   },

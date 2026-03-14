@@ -1351,3 +1351,68 @@ def delete_discretionary_budget_item(item_id: str) -> bool:
         raise e
     finally:
         conn.close()
+
+# --- TAG ENGINE ADDITIONS ---
+
+def get_tag_summary() -> List[Dict[str, Any]]:
+    """
+    Aggregates tags across transactions and holdings, providing count and volume.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT tags, amount FROM transactions WHERE tags IS NOT NULL AND tags != ''")
+    tx_rows = cursor.fetchall()
+    
+    cursor.execute("SELECT tags, market_value FROM holdings WHERE tags IS NOT NULL AND tags != ''")
+    holding_rows = cursor.fetchall()
+    conn.close()
+    
+    tag_map = {}
+    
+    for row in tx_rows:
+        tags = [t.strip() for t in row['tags'].split(',') if t.strip()]
+        for t in tags:
+            if t not in tag_map:
+                tag_map[t] = {'tag': t, 'tx_count': 0, 'tx_value': 0.0, 'holding_count': 0, 'holding_value': 0.0}
+            tag_map[t]['tx_count'] += 1
+            # Use absolute value to represent total activity volume
+            tag_map[t]['tx_value'] += abs(float(row['amount']))
+            
+    for row in holding_rows:
+        tags = [t.strip() for t in row['tags'].split(',') if t.strip()]
+        for t in tags:
+            if t not in tag_map:
+                tag_map[t] = {'tag': t, 'tx_count': 0, 'tx_value': 0.0, 'holding_count': 0, 'holding_value': 0.0}
+            tag_map[t]['holding_count'] += 1
+            tag_map[t]['holding_value'] += float(row['market_value'] or 0)
+            
+    return sorted(list(tag_map.values()), key=lambda x: x['tag'].lower())
+
+def get_records_by_tag(tag: str) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Fetches exact records (transactions & holdings) that contain the specified tag.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM transactions WHERE tags IS NOT NULL AND tags != '' ORDER BY transaction_date DESC")
+    tx_rows = cursor.fetchall()
+    
+    cursor.execute("SELECT * FROM holdings WHERE tags IS NOT NULL AND tags != '' ORDER BY symbol ASC")
+    holding_rows = cursor.fetchall()
+    conn.close()
+    
+    matched_tx = []
+    for r in tx_rows:
+        tags = [t.strip().lower() for t in r['tags'].split(',') if t.strip()]
+        if tag.lower() in tags:
+            matched_tx.append(dict(r))
+            
+    matched_holdings = []
+    for r in holding_rows:
+        tags = [t.strip().lower() for t in r['tags'].split(',') if t.strip()]
+        if tag.lower() in tags:
+            matched_holdings.append(dict(r))
+            
+    return {"transactions": matched_tx, "holdings": matched_holdings}

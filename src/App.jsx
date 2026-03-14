@@ -3,10 +3,10 @@ import SideBar from './components/SideBar';
 import HomeView from './components/HomeView';
 import PortfolioView from './components/PortfolioView';
 import DataImportView from './components/DataImportView';
-import PlaceholderView from './components/PlaceholderView';
 import TransactionListView from './components/TransactionListView';
 import RealEstateView from './components/RealEstateView';
-import ForecastView from './components/ForecastView'; // IMPORTED
+import ForecastView from './components/ForecastView';
+import ProjectsTagsView from './components/ProjectsTagsView';
 import ErrorBoundary from './components/ErrorBoundary'; 
 import './App.css';
 
@@ -35,9 +35,9 @@ function App() {
       case 'Real Estate':
         return <RealEstateView />;
       case 'Forecast':
-        return <ForecastView />; // ACTIVATED
+        return <ForecastView />;
       case 'Projects/Tags':
-        return <PlaceholderView viewName={name} />;
+        return <ProjectsTagsView />;
       default:
         return <HomeView navigateTo={navigateTo} />;
     }

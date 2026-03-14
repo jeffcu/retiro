@@ -775,6 +775,16 @@ async def delete_discretionary_item(item_id: str):
     return Response(status_code=204)
 
 
+# --- NEW: TAG API ENDPOINTS ---
+@app.get("/api/tags/summary", tags=["Tags"])
+async def get_all_tags_summary():
+    return db.get_tag_summary()
+
+@app.get("/api/tags/{tag_name}/records", tags=["Tags"])
+async def get_tag_records(tag_name: str):
+    return db.get_records_by_tag(tag_name)
+
+
 # --- Admin & Market Data Endpoints ---
 @app.post("/api/data/purge", tags=["Admin"])
 async def purge_data(request: PurgeRequest):
