@@ -169,48 +169,10 @@ def calculate_investment_cashflow_summary(period: str) -> Dict[str, Any]:
     # Step 2: Get cash outflows for fees
     fees = db.get_total_investment_fees_for_period(period)
 
-    # Step 3: Calculate estimated taxes on the income with intelligent fallback
+    # Step 3: Calculate estimated taxes on the income with LTCG 15% standard
     notes = [f"Using data for period '{period}'."]
-    taxes = 0
-    tax_facts = None
-
-    # Determine the primary year to check based on the period
-    primary_year_to_check = None
-    if period.isdigit() and len(period) == 4:
-        primary_year_to_check = int(period)
-    else:
-        primary_year_to_check = db.get_latest_transaction_year() # e.g., for 'all' or '6m'
-
-    if primary_year_to_check:
-        # Attempt to get tax facts for the primary year
-        tax_facts = db.get_tax_facts(primary_year_to_check)
-        
-        # Check if primary year's facts are usable for calculation
-        if tax_facts and tax_facts.get('fed_taxable_income') and tax_facts.get('fed_total_tax'):
-            notes.append(f"Taxes estimated based on {primary_year_to_check} tax data.")
-        else:
-            # If not usable, find the latest complete historical data as a fallback
-            historical_tax_facts = db.get_latest_complete_tax_facts()
-            if historical_tax_facts:
-                tax_facts = historical_tax_facts
-                tax_year_used = tax_facts['tax_year']
-                notes.append(f"Tax facts for {primary_year_to_check} are incomplete; using data from {tax_year_used} as an estimate.")
-            else:
-                notes.append("No complete tax data available in the system; taxes cannot be calculated.")
-                tax_facts = None # Ensure it's None for the next step
-    else:
-        notes.append("Could not determine a tax year; taxes cannot be calculated.")
-
-    # Calculate taxes if we found any usable tax_facts (either primary or fallback)
-    if tax_facts:
-        total_income = (tax_facts.get('fed_taxable_income', 0) or 0) + (tax_facts.get('state_taxable_income', 0) or 0)
-        total_tax = (tax_facts.get('fed_total_tax', 0) or 0) + (tax_facts.get('state_total_tax', 0) or 0)
-        if total_income > 0:
-            effective_tax_rate = total_tax / total_income
-            taxes = investment_income * effective_tax_rate if investment_income > 0 else 0
-            notes.append(f"Effective rate used: {effective_tax_rate:.2%}.")
-        else:
-            notes.append("Taxable income for the selected year is zero; could not calculate rate.")
+    taxes = investment_income * 0.15 if investment_income > 0 else 0
+    notes.append("Applying standard 15% Long-Term Capital Gains rate to yield.")
 
     # Step 4: Calculate what's left to spend
     spendable_cash = investment_income - fees - taxes
@@ -392,19 +354,9 @@ def calculate_layered_returns_summary() -> Dict[str, Any]:
 
     # 3. Tax Estimation
     estimated_taxes = 0
-    tax_facts = db.get_latest_complete_tax_facts()
-    if tax_facts:
-        total_income = (tax_facts.get('fed_taxable_income', 0) or 0) + (tax_facts.get('state_taxable_income', 0) or 0)
-        total_tax = (tax_facts.get('fed_total_tax', 0) or 0) + (tax_facts.get('state_total_tax', 0) or 0)
-        if total_income > 0 and gross_return > 0:
-            effective_rate = total_tax / total_income
-            # CRITICAL ASSUMPTION: Applying blended income tax rate to capital gains.
-            estimated_taxes = gross_return * effective_rate
-            notes.append(f"Taxes estimated using {tax_facts['tax_year']} effective blended rate of {effective_rate:.2%}.")
-        else:
-            notes.append("Could not calculate tax rate from available data.")
-    else:
-        notes.append("No complete historical tax data found for estimation.")
+    notes.append("Taxes estimated using standard 15% Long-Term Capital Gains rate.")
+    if gross_return > 0:
+        estimated_taxes = gross_return * 0.15
 
     # 4. Final Metrics & Sankey Values
     # Ensure leakage values don't exceed the gross return for a clean visualization.
@@ -498,14 +450,9 @@ def calculate_portfolio_waterfall(period: str) -> Dict[str, Any]:
     
     # --- Tax Calculation (on yield only) ---
     estimated_taxes = 0
-    tax_facts = db.get_latest_complete_tax_facts()
-    if tax_facts and portfolio_yield > 0:
-        total_income = (tax_facts.get('fed_taxable_income', 0) or 0) + (tax_facts.get('state_taxable_income', 0) or 0)
-        total_tax = (tax_facts.get('fed_total_tax', 0) or 0) + (tax_facts.get('state_total_tax', 0) or 0)
-        if total_income > 0:
-            effective_rate = total_tax / total_income
-            estimated_taxes = portfolio_yield * effective_rate
-            notes.append(f"Taxes on yield estimated using {tax_facts['tax_year']} effective rate of {effective_rate:.2%}.")
+    if portfolio_yield > 0:
+        estimated_taxes = portfolio_yield * 0.15
+        notes.append("Taxes on yield estimated using standard 15% Long-Term Capital Gains rate.")
 
     # 4. Calculate Net Cash Flow and Market Growth
     net_cash_flow = (contributions + portfolio_yield) - (withdrawals + fees + estimated_taxes)

@@ -32,9 +32,16 @@ The system ingests periodic CSV/spreadsheet uploads from multiple financial inst
 		•	Calculates RMDs (Required Minimum Distributions) starting at age 75.
 		•	Applies progressive tax brackets to RMDs and Withdrawals.
 		•	Models the "Tax Drag" on the portfolio over time.
+	•	Discretionary Budget:
+		•	Manual entries feature double-click editing, toggle state persistence (preventing ghost clones), and hard-delete confirmation protocols.
 	•	Visualization:
 		•	Runway Graph (Net Worth).
 		•	Tax Exposure Graph: Income vs. Tax Brackets over time.
+
+4.7 Projects and Tags Explorer - NEW
+	•	Visual Tag Cloud: Dynamically sized based on either transaction count or monetary volume.
+	•	Cross-Module Aggregation: Unifies tags across both Cashflow (Transactions) and Portfolio (Holdings).
+	•	Drill-Down Detail: Inspecting a tag reveals a unified ledger of all associated assets and cash movements.
 
 ⸻
 

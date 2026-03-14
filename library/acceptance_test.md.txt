@@ -10,6 +10,22 @@ All previous phases are stable.
 
 ---
 
+## 2.5. Project/Tags Engine & Budget Refinements (Recently Completed)
+
+**Objective**: Ensure tags aggregate properly across modules and verify discretionary budget safeguards.
+
+**Acceptance Criteria for Projects/Tags**:
+- [ ] **Tag Cloud Rendering**: Verify that the Tag Cloud correctly sizes tags based on the selected metric (Item Count vs. Total Volume).
+- [ ] **Cross-Module Aggregation**: Verify that a tag applied to both a stock holding and a cashflow transaction accurately sums the volume of both in the summary view.
+- [ ] **Drill-Down Inspection**: Verify that clicking a tag opens a detail view showing the exact transaction and holding records associated with that tag.
+
+**Acceptance Criteria for Discretionary Budget**:
+- [ ] **Edit Mode**: Verify that double-clicking a budget item in the table populates the flight controls form for editing.
+- [ ] **Ghost Clone Prevention**: Verify that toggling the enable/disable state of an item grays it out without creating a duplicate record in the database or UI.
+- [ ] **Delete Safeguard**: Verify that clicking the delete icon prompts the user with a strict confirmation warning before permanent removal.
+
+---
+
 ## 3. Phase 10: The Strategic Tax Engine (Next)
 
 **Objective**: Transform the forecast from a simple growth model to a tax-aware optimization engine.

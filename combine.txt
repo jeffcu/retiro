@@ -420,7 +420,7 @@ The Curie Trust Financial Control Center is a local-first, privacy-centric appli
 ### 3. Core Modules
 
 *   `src/data_model.py`: Defines core data classes (Transaction, Holding, Property).
-*   `src/database.py`: Handles all SQL operations, schema migrations, and JSON settings.
+*   `src/database.py`: Handles all SQL operations, schema migrations, JSON settings, and the Tag Aggregation Engine.
 *   `src/forecast.py`: **Major Upgrade in Phase 10**.
     *   `TaxEngine` Class: Handles progressive tax calculations (Fed + State).
     *   `RMDCalculator` Class: Determines mandatory withdrawals based on IRS tables.
@@ -446,6 +446,10 @@ The Curie Trust Financial Control Center is a local-first, privacy-centric appli
     *   `rmd_amount`: The mandatory distribution amount for that year.
     *   `withdrawal_strategy_used`: The logic applied for that year (e.g. "IRA First").
 
+#### 5.4 Tag Engine API (New)
+*   `GET /api/tags/summary`: Returns aggregated counts and monetary volumes for all tags across transactions and holdings.
+*   `GET /api/tags/{tag_name}/records`: Returns exact records (transactions and holdings) matching a specific tag.
+
 ### 6. Security
 *   Local-only access.
 *   API Keys stored in `.env`.
@@ -469,7 +473,6 @@ The Curie Trust Financial Control Center is a local-first, privacy-centric appli
 *   **Phase 11:** Legacy & Liquidation View.
     1.  Add "After-Tax Net Worth" calculation.
     2.  Visualize the efficiency of different asset buckets for heirs.
-
 
 --- FILE: projects/trust/library/Phase9_Forecast_Checklist.md ---
 
@@ -555,9 +558,16 @@ The system ingests periodic CSV/spreadsheet uploads from multiple financial inst
 		•	Calculates RMDs (Required Minimum Distributions) starting at age 75.
 		•	Applies progressive tax brackets to RMDs and Withdrawals.
 		•	Models the "Tax Drag" on the portfolio over time.
+	•	Discretionary Budget:
+		•	Manual entries feature double-click editing, toggle state persistence (preventing ghost clones), and hard-delete confirmation protocols.
 	•	Visualization:
 		•	Runway Graph (Net Worth).
 		•	Tax Exposure Graph: Income vs. Tax Brackets over time.
+
+4.7 Projects and Tags Explorer - NEW
+	•	Visual Tag Cloud: Dynamically sized based on either transaction count or monetary volume.
+	•	Cross-Module Aggregation: Unifies tags across both Cashflow (Transactions) and Portfolio (Holdings).
+	•	Drill-Down Detail: Inspecting a tag reveals a unified ledger of all associated assets and cash movements.
 
 ⸻
 
@@ -604,6 +614,22 @@ This document outlines the acceptance criteria for the Curie Trust Financial Con
 
 ## 2. Phase 0-9: Core Functionality (Completed)
 All previous phases are stable.
+
+---
+
+## 2.5. Project/Tags Engine & Budget Refinements (Recently Completed)
+
+**Objective**: Ensure tags aggregate properly across modules and verify discretionary budget safeguards.
+
+**Acceptance Criteria for Projects/Tags**:
+- [ ] **Tag Cloud Rendering**: Verify that the Tag Cloud correctly sizes tags based on the selected metric (Item Count vs. Total Volume).
+- [ ] **Cross-Module Aggregation**: Verify that a tag applied to both a stock holding and a cashflow transaction accurately sums the volume of both in the summary view.
+- [ ] **Drill-Down Inspection**: Verify that clicking a tag opens a detail view showing the exact transaction and holding records associated with that tag.
+
+**Acceptance Criteria for Discretionary Budget**:
+- [ ] **Edit Mode**: Verify that double-clicking a budget item in the table populates the flight controls form for editing.
+- [ ] **Ghost Clone Prevention**: Verify that toggling the enable/disable state of an item grays it out without creating a duplicate record in the database or UI.
+- [ ] **Delete Safeguard**: Verify that clicking the delete icon prompts the user with a strict confirmation warning before permanent removal.
 
 ---
 
@@ -1572,48 +1598,10 @@ def calculate_investment_cashflow_summary(period: str) -> Dict[str, Any]:
     # Step 2: Get cash outflows for fees
     fees = db.get_total_investment_fees_for_period(period)
 
-    # Step 3: Calculate estimated taxes on the income with intelligent fallback
+    # Step 3: Calculate estimated taxes on the income with LTCG 15% standard
     notes = [f"Using data for period '{period}'."]
-    taxes = 0
-    tax_facts = None
-
-    # Determine the primary year to check based on the period
-    primary_year_to_check = None
-    if period.isdigit() and len(period) == 4:
-        primary_year_to_check = int(period)
-    else:
-        primary_year_to_check = db.get_latest_transaction_year() # e.g., for 'all' or '6m'
-
-    if primary_year_to_check:
-        # Attempt to get tax facts for the primary year
-        tax_facts = db.get_tax_facts(primary_year_to_check)
-        
-        # Check if primary year's facts are usable for calculation
-        if tax_facts and tax_facts.get('fed_taxable_income') and tax_facts.get('fed_total_tax'):
-            notes.append(f"Taxes estimated based on {primary_year_to_check} tax data.")
-        else:
-            # If not usable, find the latest complete historical data as a fallback
-            historical_tax_facts = db.get_latest_complete_tax_facts()
-            if historical_tax_facts:
-                tax_facts = historical_tax_facts
-                tax_year_used = tax_facts['tax_year']
-                notes.append(f"Tax facts for {primary_year_to_check} are incomplete; using data from {tax_year_used} as an estimate.")
-            else:
-                notes.append("No complete tax data available in the system; taxes cannot be calculated.")
-                tax_facts = None # Ensure it's None for the next step
-    else:
-        notes.append("Could not determine a tax year; taxes cannot be calculated.")
-
-    # Calculate taxes if we found any usable tax_facts (either primary or fallback)
-    if tax_facts:
-        total_income = (tax_facts.get('fed_taxable_income', 0) or 0) + (tax_facts.get('state_taxable_income', 0) or 0)
-        total_tax = (tax_facts.get('fed_total_tax', 0) or 0) + (tax_facts.get('state_total_tax', 0) or 0)
-        if total_income > 0:
-            effective_tax_rate = total_tax / total_income
-            taxes = investment_income * effective_tax_rate if investment_income > 0 else 0
-            notes.append(f"Effective rate used: {effective_tax_rate:.2%}.")
-        else:
-            notes.append("Taxable income for the selected year is zero; could not calculate rate.")
+    taxes = investment_income * 0.15 if investment_income > 0 else 0
+    notes.append("Applying standard 15% Long-Term Capital Gains rate to yield.")
 
     # Step 4: Calculate what's left to spend
     spendable_cash = investment_income - fees - taxes
@@ -1795,19 +1783,9 @@ def calculate_layered_returns_summary() -> Dict[str, Any]:
 
     # 3. Tax Estimation
     estimated_taxes = 0
-    tax_facts = db.get_latest_complete_tax_facts()
-    if tax_facts:
-        total_income = (tax_facts.get('fed_taxable_income', 0) or 0) + (tax_facts.get('state_taxable_income', 0) or 0)
-        total_tax = (tax_facts.get('fed_total_tax', 0) or 0) + (tax_facts.get('state_total_tax', 0) or 0)
-        if total_income > 0 and gross_return > 0:
-            effective_rate = total_tax / total_income
-            # CRITICAL ASSUMPTION: Applying blended income tax rate to capital gains.
-            estimated_taxes = gross_return * effective_rate
-            notes.append(f"Taxes estimated using {tax_facts['tax_year']} effective blended rate of {effective_rate:.2%}.")
-        else:
-            notes.append("Could not calculate tax rate from available data.")
-    else:
-        notes.append("No complete historical tax data found for estimation.")
+    notes.append("Taxes estimated using standard 15% Long-Term Capital Gains rate.")
+    if gross_return > 0:
+        estimated_taxes = gross_return * 0.15
 
     # 4. Final Metrics & Sankey Values
     # Ensure leakage values don't exceed the gross return for a clean visualization.
@@ -1901,14 +1879,9 @@ def calculate_portfolio_waterfall(period: str) -> Dict[str, Any]:
     
     # --- Tax Calculation (on yield only) ---
     estimated_taxes = 0
-    tax_facts = db.get_latest_complete_tax_facts()
-    if tax_facts and portfolio_yield > 0:
-        total_income = (tax_facts.get('fed_taxable_income', 0) or 0) + (tax_facts.get('state_taxable_income', 0) or 0)
-        total_tax = (tax_facts.get('fed_total_tax', 0) or 0) + (tax_facts.get('state_total_tax', 0) or 0)
-        if total_income > 0:
-            effective_rate = total_tax / total_income
-            estimated_taxes = portfolio_yield * effective_rate
-            notes.append(f"Taxes on yield estimated using {tax_facts['tax_year']} effective rate of {effective_rate:.2%}.")
+    if portfolio_yield > 0:
+        estimated_taxes = portfolio_yield * 0.15
+        notes.append("Taxes on yield estimated using standard 15% Long-Term Capital Gains rate.")
 
     # 4. Calculate Net Cash Flow and Market Growth
     net_cash_flow = (contributions + portfolio_yield) - (withdrawals + fees + estimated_taxes)
@@ -1931,6 +1904,7 @@ def calculate_portfolio_waterfall(period: str) -> Dict[str, Any]:
         "end_of_period_value": round(end_value, 2) if end_value is not None else None,
         "notes": " ".join(notes)
     }
+
 
 --- FILE: projects/trust/src/data_model.py ---
 
@@ -3659,6 +3633,14 @@ TAX_BRACKETS_2024 = [
     (0.37, float('inf'), float('inf'))
 ]
 
+# 2024 Long-Term Capital Gains Brackets
+# Rate, Single Ceiling, Joint Ceiling
+LTCG_BRACKETS_2024 = [
+    (0.00, 47025, 94050),
+    (0.15, 518900, 583750),
+    (0.20, float('inf'), float('inf'))
+]
+
 STANDARD_DEDUCTION_2024 = {
     'single': 14600,
     'joint': 29200
@@ -3673,44 +3655,84 @@ def get_rmd_divisor(age: int) -> float:
         return max(3.0, 6.4 - (0.3 * (age - 100)))
     return RMD_DIVISORS.get(age, 27.4)
 
-def calculate_progressive_tax(gross_income: float, filing_status: str, state_rate: float) -> Dict[str, float]:
+def calculate_taxable_ss(ss_benefit: float, other_income: float, filing_status: str) -> float:
     """
-    Calculates estimated federal tax (progressive) and state tax (flat effective).
+    Calculates the taxable portion of Social Security using the IRS Provisional Income formula.
+    """
+    if ss_benefit <= 0: return 0.0
+    combined_income = other_income + (0.5 * ss_benefit)
+    
+    if filing_status == 'joint':
+        base_threshold, upper_threshold = 32000, 44000
+    else:
+        base_threshold, upper_threshold = 25000, 34000
+        
+    if combined_income <= base_threshold:
+        return 0.0
+    elif combined_income <= upper_threshold:
+        taxable = 0.5 * (combined_income - base_threshold)
+        return min(0.85 * ss_benefit, taxable)
+    else:
+        tier1 = 0.5 * (upper_threshold - base_threshold)
+        tier2 = 0.85 * (combined_income - upper_threshold)
+        return min(0.85 * ss_benefit, tier1 + tier2)
+
+def calculate_progressive_tax(ordinary_income: float, ltcg_income: float, filing_status: str, state_rate: float) -> Dict[str, float]:
+    """
+    Calculates estimated federal tax (Ordinary + LTCG) and state tax (flat effective).
     Returns tax metrics including room to next bracket.
     """
     std_deduction = STANDARD_DEDUCTION_2024.get(filing_status, 14600)
-    taxable_income = max(0, gross_income - std_deduction)
+    taxable_ordinary = max(0, ordinary_income - std_deduction)
     
-    fed_tax_bill = 0.0
+    fed_ordinary_tax = 0.0
     previous_ceiling = 0.0
     
-    # Calculate Federal Tax
+    # Calculate Federal Ordinary Tax
     for rate, single_ceil, joint_ceil in TAX_BRACKETS_2024:
         ceiling = joint_ceil if filing_status == 'joint' else single_ceil
         
-        if taxable_income > ceiling:
-            fed_tax_bill += (ceiling - previous_ceiling) * rate
+        if taxable_ordinary > ceiling:
+            fed_ordinary_tax += (ceiling - previous_ceiling) * rate
             previous_ceiling = ceiling
         else:
-            fed_tax_bill += (taxable_income - previous_ceiling) * rate
+            fed_ordinary_tax += (taxable_ordinary - previous_ceiling) * rate
             break
             
-    # Calculate State Tax (Simplified Effective Rate on Taxable Income)
-    state_tax_bill = taxable_income * state_rate
+    # Calculate Federal LTCG Tax (Sits on top of ordinary income)
+    fed_ltcg_tax = 0.0
+    unallocated_ltcg = ltcg_income
+    current_income_stack = taxable_ordinary
+    
+    for rate, single_ceil, joint_ceil in LTCG_BRACKETS_2024:
+        ceiling = joint_ceil if filing_status == 'joint' else single_ceil
+        if unallocated_ltcg <= 0:
+            break
+        if current_income_stack < ceiling:
+            room_in_bracket = ceiling - current_income_stack
+            amount_to_tax = min(unallocated_ltcg, room_in_bracket)
+            fed_ltcg_tax += amount_to_tax * rate
+            unallocated_ltcg -= amount_to_tax
+            current_income_stack += amount_to_tax
 
-    total_tax = fed_tax_bill + state_tax_bill
+    # Calculate State Tax (Simplified Effective Rate on Total Taxable Income)
+    total_taxable = taxable_ordinary + ltcg_income
+    state_tax_bill = total_taxable * state_rate
+
+    total_tax = fed_ordinary_tax + fed_ltcg_tax + state_tax_bill
+    gross_income = ordinary_income + ltcg_income
     effective_rate = (total_tax / gross_income) if gross_income > 0 else 0.0
     
-    # Calculate Room to 24% Bracket (Top of 22% bracket)
+    # Calculate Room to 24% Bracket (Top of 22% bracket for Ordinary Income)
     bracket_22_ceiling = TAX_BRACKETS_2024[2][2] if filing_status == 'joint' else TAX_BRACKETS_2024[2][1]
-    dist_to_24 = max(0, bracket_22_ceiling - taxable_income)
+    dist_to_24 = max(0, bracket_22_ceiling - taxable_ordinary)
     
     return {
-        "federal_tax": fed_tax_bill,
+        "federal_tax": fed_ordinary_tax + fed_ltcg_tax,
         "state_tax": state_tax_bill,
         "total_tax": total_tax,
         "effective_rate": effective_rate,
-        "taxable_income": taxable_income,
+        "taxable_income": total_taxable,
         "headroom_24_pct": dist_to_24
     }
 
@@ -3723,7 +3745,7 @@ def calculate_forecast() -> Dict[str, Any]:
     # 1. Gather Simulation Inputs
     birth_year = db.get_setting('forecast_birth_year')
     inflation_rate = float(db.get_setting('forecast_inflation_rate') or 0.03)
-    return_rate = float(db.get_setting('forecast_return_rate') or 0.05)
+    return_rate_setting = db.get_setting('forecast_return_rate')
     withdrawal_tax_rate = float(db.get_setting('forecast_withdrawal_tax_rate') or 0.15) # For gross-up estimation
     
     state_tax_rate = float(db.get_setting('forecast_state_tax_rate') or 0.0) 
@@ -3788,9 +3810,6 @@ def calculate_forecast() -> Dict[str, Any]:
             buckets['Exempt'] += val
         else:
             buckets['Taxable'] += val
-            # If status is the default 'Taxable' but maybe shouldn't be, we can't easily detect that here without more logic.
-            # But if the account metadata was missing, analysis.py defaults to Taxable. 
-            # We can check if metadata exists in analysis.py, but for now we rely on the user checking the Home Page table.
 
     print(f"Forecast Engine Initialized with Buckets: {buckets}")
 
@@ -3846,11 +3865,29 @@ def calculate_forecast() -> Dict[str, Any]:
         age = year - birth_year
         phase_key = "no" if age >= nogo_age else ("slow" if age >= retirement_age else "go")
         
-        # Track events that add to Ordinary Income (Streams, RMDs, Conversions, Deferred Withdrawals)
+        # Snapshot starting balances for intra-year math
+        start_taxable = buckets['Taxable']
+        start_deferred = buckets['Deferred']
+        start_roth = buckets['Roth']
+        start_exempt = buckets['Exempt']
+        
+        # Track events that add to Income for tax logic
         ordinary_income_events = 0.0
+        ltcg_income_events = 0.0
+        
+        # Dynamic Return Rate (SORR readiness)
+        if isinstance(return_rate_setting, list):
+            year_idx = min(year - current_year, max(0, len(return_rate_setting) - 1))
+            return_rate = float(return_rate_setting[year_idx])
+        else:
+            return_rate = float(return_rate_setting or 0.05)
+            
+        taxable_return = return_rate - tax_drag_rate
+        if taxable_return < 0: taxable_return = 0
 
         # --- 1. Calculate Income (Non-Portfolio) ---
         year_income = 0.0
+        ss_income = 0.0
         for stream in future_income_streams:
             start = date.fromisoformat(stream['start_date'])
             end = date.fromisoformat(stream['end_date']) if stream['end_date'] else None
@@ -3860,7 +3897,11 @@ def calculate_forecast() -> Dict[str, Any]:
                 increase_rate = stream['annual_increase_rate']
                 adjusted_amount = annual_amount * ((1 + increase_rate) ** (year - start.year))
                 year_income += adjusted_amount
-                ordinary_income_events += adjusted_amount
+                
+                if stream.get('stream_type') == 'Social Security':
+                    ss_income += adjusted_amount
+                else:
+                    ordinary_income_events += adjusted_amount
 
         # --- 2. Calculate RMDs ---
         year_rmd = 0.0
@@ -3898,23 +3939,22 @@ def calculate_forecast() -> Dict[str, Any]:
                 expense_breakdown[item['name']] = round(item_amount, 2)
 
         # --- 4. Preliminary Tax Check (Pre-Withdrawal/Conversion) ---
-        tax_metrics_pre = calculate_progressive_tax(ordinary_income_events, filing_status, state_tax_rate)
+        taxable_ss = calculate_taxable_ss(ss_income, ordinary_income_events, filing_status)
+        prelim_ordinary = ordinary_income_events + taxable_ss
+        tax_metrics_pre = calculate_progressive_tax(prelim_ordinary, ltcg_income_events, filing_status, state_tax_rate)
 
         # --- 5. ROTH CONVERSION STRATEGY (Phase 10) ---
         conversion_amount = 0.0
-        if roth_conversion_target == 'fill_22' or roth_conversion_target == 'fill_24':
-            # Determine ceiling based on target
-            # Using 2024 brackets: 22% ends at 100k/201k. 24% ends at 191k/383k.
-            # We use the generic 'headroom_24_pct' from our function which calculates distance to end of 22% (start of 24%)
-            # If user wants to fill 24%, we need logic for that. For now, we support 'Fill to Top of 22%' which is common.
-            
-            if roth_conversion_target == 'fill_22':
-                room = tax_metrics_pre['headroom_24_pct'] # This is distance to 24%
-                if room > 0 and buckets['Deferred'] > 0:
-                    conversion_amount = min(buckets['Deferred'], room)
-                    buckets['Deferred'] -= conversion_amount
-                    buckets['Roth'] += conversion_amount
-                    ordinary_income_events += conversion_amount
+        if roth_conversion_target == 'fill_22':
+            room = tax_metrics_pre['headroom_24_pct']
+            if room > 0 and buckets['Deferred'] > 0:
+                conversion_amount = min(buckets['Deferred'], room)
+                buckets['Deferred'] -= conversion_amount
+                buckets['Roth'] += conversion_amount
+                
+                # Recalculate Taxable SS with higher income from conversion
+                taxable_ss = calculate_taxable_ss(ss_income, ordinary_income_events + conversion_amount, filing_status)
+                prelim_ordinary = ordinary_income_events + conversion_amount + taxable_ss
 
         # --- 6. Residence Sale ---
         sale_proceeds = 0.0
@@ -3928,12 +3968,10 @@ def calculate_forecast() -> Dict[str, Any]:
                 sale_event_triggered = True
 
         # --- 7. Net Cashflow & Strategic Withdrawal ---
-        # We must recalculate tax because of Conversions
-        tax_metrics_post_conversion = calculate_progressive_tax(ordinary_income_events, filing_status, state_tax_rate)
-        annual_tax_bill = tax_metrics_post_conversion['total_tax']
-        expense_breakdown['Est. Income Tax'] = round(annual_tax_bill, 2)
+        annual_tax_bill_est = calculate_progressive_tax(prelim_ordinary, ltcg_income_events, filing_status, state_tax_rate)['total_tax']
+        expense_breakdown['Est. Income Tax'] = round(annual_tax_bill_est, 2)
 
-        total_expenses = year_living_expenses + year_discretionary + annual_tax_bill
+        total_expenses = year_living_expenses + year_discretionary + annual_tax_bill_est
 
         net_cashflow = year_income + sale_proceeds - total_expenses
         strategy_executed = "Standard"
@@ -3986,22 +4024,29 @@ def calculate_forecast() -> Dict[str, Any]:
                     amount_needed -= from_roth
         
         # --- 8. Final Tax Recalculation (Post-Withdrawal) ---
-        # If we pulled more from deferred to pay bills, we owe more tax.
         ordinary_income_events += deferred_withdrawals_for_spend
-        final_tax_metrics = calculate_progressive_tax(ordinary_income_events, filing_status, state_tax_rate)
-
-        # --- 9. Investment Growth ---
-        taxable_return = return_rate - tax_drag_rate
-        if taxable_return < 0: taxable_return = 0
-
-        buckets['Taxable'] *= (1 + taxable_return)
-        buckets['Deferred'] *= (1 + return_rate)
-        buckets['Roth'] *= (1 + return_rate)
-        buckets['Exempt'] *= (1 + return_rate)
+        final_taxable_ss = calculate_taxable_ss(ss_income, ordinary_income_events + conversion_amount, filing_status)
+        final_ordinary = ordinary_income_events + conversion_amount + final_taxable_ss
         
-        total_investment_growth = \
-            (buckets['Taxable'] * (taxable_return / (1+taxable_return))) + \
-            ((buckets['Deferred'] + buckets['Roth'] + buckets['Exempt']) * (return_rate / (1+return_rate)))
+        final_tax_metrics = calculate_progressive_tax(final_ordinary, ltcg_income_events, filing_status, state_tax_rate)
+
+        # --- 9. Investment Growth (Continuous Compounding) ---
+        delta_taxable = buckets['Taxable'] - start_taxable
+        delta_deferred = buckets['Deferred'] - start_deferred
+        delta_roth = buckets['Roth'] - start_roth
+        delta_exempt = buckets['Exempt'] - start_exempt
+        
+        growth_taxable = (start_taxable * taxable_return) + (delta_taxable * taxable_return / 2.0)
+        growth_deferred = (start_deferred * return_rate) + (delta_deferred * return_rate / 2.0)
+        growth_roth = (start_roth * return_rate) + (delta_roth * return_rate / 2.0)
+        growth_exempt = (start_exempt * return_rate) + (delta_exempt * return_rate / 2.0)
+
+        buckets['Taxable'] += growth_taxable
+        buckets['Deferred'] += growth_deferred
+        buckets['Roth'] += growth_roth
+        buckets['Exempt'] += growth_exempt
+
+        total_investment_growth = growth_taxable + growth_deferred + growth_roth + growth_exempt
 
         # --- 10. Real Estate Growth ---
         year_re_value = 0.0

@@ -15,7 +15,7 @@ The Curie Trust Financial Control Center is a local-first, privacy-centric appli
 ### 3. Core Modules
 
 *   `src/data_model.py`: Defines core data classes (Transaction, Holding, Property).
-*   `src/database.py`: Handles all SQL operations, schema migrations, and JSON settings.
+*   `src/database.py`: Handles all SQL operations, schema migrations, JSON settings, and the Tag Aggregation Engine.
 *   `src/forecast.py`: **Major Upgrade in Phase 10**.
     *   `TaxEngine` Class: Handles progressive tax calculations (Fed + State).
     *   `RMDCalculator` Class: Determines mandatory withdrawals based on IRS tables.
@@ -40,6 +40,10 @@ The Curie Trust Financial Control Center is a local-first, privacy-centric appli
     *   `effective_tax_rate`: `federal_tax_paid / taxable_income`.
     *   `rmd_amount`: The mandatory distribution amount for that year.
     *   `withdrawal_strategy_used`: The logic applied for that year (e.g. "IRA First").
+
+#### 5.4 Tag Engine API (New)
+*   `GET /api/tags/summary`: Returns aggregated counts and monetary volumes for all tags across transactions and holdings.
+*   `GET /api/tags/{tag_name}/records`: Returns exact records (transactions and holdings) matching a specific tag.
 
 ### 6. Security
 *   Local-only access.
