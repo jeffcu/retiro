@@ -290,7 +290,16 @@ const BaseColCalculator = ({ selectedCategories, onSelectionChange, calculatedTo
 };
 
 const DiscretionaryBudget = ({ items, onAdd, onDelete, onUpdate }) => {
-    const [newItem, setNewItem] = useState({ name: '', amount: '', start_year: new Date().getFullYear(), end_year: '', is_recurring: false, category: '', is_enabled: true });
+    const [newItem, setNewItem] = useState({ 
+        item_id: null, 
+        name: '', 
+        amount: '', 
+        start_year: new Date().getFullYear(), 
+        end_year: '', 
+        is_recurring: false, 
+        category: '', 
+        is_enabled: true 
+    });
     const [categories, setCategories] = useState([]);
 
     useEffect(() => {
@@ -303,15 +312,39 @@ const DiscretionaryBudget = ({ items, onAdd, onDelete, onUpdate }) => {
         e.preventDefault();
         const payload = { ...newItem };
         if (!payload.end_year) payload.end_year = null;
+        if (!payload.item_id) delete payload.item_id; // Let backend generate it if new
         onAdd(payload);
-        setNewItem({ name: '', amount: '', start_year: new Date().getFullYear(), end_year: '', is_recurring: false, category: '', is_enabled: true });
+        setNewItem({ item_id: null, name: '', amount: '', start_year: new Date().getFullYear(), end_year: '', is_recurring: false, category: '', is_enabled: true });
+    };
+
+    const handleRowDoubleClick = (item) => {
+        setNewItem({
+            item_id: item.item_id,
+            name: item.name,
+            amount: item.amount,
+            start_year: item.start_year,
+            end_year: item.end_year || '',
+            is_recurring: !!item.is_recurring,
+            category: item.category || '',
+            is_enabled: !!item.is_enabled
+        });
+    };
+
+    const handleDelete = (id) => {
+        if (!id) {
+            alert("Error: Item ID is missing.");
+            return;
+        }
+        if (window.confirm("Are you sure you want to delete this forever?")) {
+            onDelete(id);
+        }
     };
 
     return (
         <CollapsibleCard title="4) Discretionary Budget (Changes)" className="grid-full">
             <p style={{fontSize: '0.9em', color: '#ccc'}}>
                 Add large one-off or recurring expenses. <br/>
-                <em>Note: Negative amounts reduce expenses. To end a recurring cost forever, set the End Year (or use Sunset in Base CoL).</em>
+                <em>Double-click any item in the list to edit it. Negative amounts reduce expenses.</em>
             </p>
             <form onSubmit={handleSubmit} style={{display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: '1rem'}}>
                 <div className="setting-group" style={{flex: 2}}>
@@ -341,8 +374,15 @@ const DiscretionaryBudget = ({ items, onAdd, onDelete, onUpdate }) => {
                         Recur?
                     </label>
                 </div>
-                <div className="setting-group">
-                     <button type="submit" style={{background: 'var(--gold-accent)', border: 'none', padding: '0.6rem', borderRadius: '4px', cursor: 'pointer', fontWeight:'bold', color: '#222'}}>Add</button>
+                <div className="setting-group" style={{display: 'flex', gap: '0.5rem'}}>
+                     <button type="submit" style={{background: 'var(--gold-accent)', border: 'none', padding: '0.6rem', borderRadius: '4px', cursor: 'pointer', fontWeight:'bold', color: '#222'}}>
+                         {newItem.item_id ? 'Save Changes' : 'Add'}
+                     </button>
+                     {newItem.item_id && (
+                         <button type="button" onClick={() => setNewItem({ item_id: null, name: '', amount: '', start_year: new Date().getFullYear(), end_year: '', is_recurring: false, category: '', is_enabled: true })} style={{background: '#555', border: 'none', padding: '0.6rem', borderRadius: '4px', cursor: 'pointer', fontWeight:'bold', color: '#fff'}}>
+                             Cancel
+                         </button>
+                     )}
                 </div>
             </form>
             
@@ -361,12 +401,23 @@ const DiscretionaryBudget = ({ items, onAdd, onDelete, onUpdate }) => {
                 </thead>
                 <tbody>
                     {items.map(item => (
-                        <tr key={item.item_id || Math.random()} style={{opacity: item.is_enabled !== 0 ? 1 : 0.4}}>
-                            <td>
+                        <tr 
+                            key={item.item_id || Math.random()} 
+                            style={{opacity: item.is_enabled !== 0 ? 1 : 0.4, cursor: 'pointer'}} 
+                            onDoubleClick={() => handleRowDoubleClick(item)}
+                            title="Double-click to edit"
+                        >
+                            <td onClick={(e) => e.stopPropagation()}>
                                 <input 
                                     type="checkbox" 
                                     checked={!!item.is_enabled} 
-                                    onChange={() => onUpdate({...item, is_enabled: !item.is_enabled})}
+                                    onChange={() => {
+                                        if (!item.item_id) {
+                                            alert("Cannot toggle: Item ID is missing.");
+                                            return;
+                                        }
+                                        onUpdate({...item, is_enabled: !item.is_enabled});
+                                    }}
                                     className="toggle-checkbox"
                                 />
                             </td>
@@ -376,7 +427,9 @@ const DiscretionaryBudget = ({ items, onAdd, onDelete, onUpdate }) => {
                             <td>{item.end_year || (item.is_recurring ? 'Forever' : item.start_year)}</td>
                             <td>{item.is_recurring ? 'Yes' : 'No'}</td>
                             <td>{item.category || '-'}</td>
-                            <td><button className="delete-btn" onClick={() => onDelete(item.item_id)}>✕</button></td>
+                            <td onClick={(e) => e.stopPropagation()}>
+                                <button className="delete-btn" onClick={() => handleDelete(item.item_id)}>✕</button>
+                            </td>
                         </tr>
                     ))}
                 </tbody>
