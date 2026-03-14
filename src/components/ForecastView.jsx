@@ -595,8 +595,14 @@ const ForecastSettings = ({ config, setConfig, onSave, onSettingChange }) => {
 const ForecastTelemetryTable = ({ simulationData }) => {
     if (!simulationData || simulationData.length === 0) return null;
 
-    const exampleBreakdown = simulationData[0].expense_breakdown || {};
-    const categories = Object.keys(exampleBreakdown).sort();
+    // --- FIX: Aggregate keys from ALL years to ensure future expenses (e.g. starting 2030) are included ---
+    const allCategoriesSet = new Set();
+    simulationData.forEach(row => {
+        if (row.expense_breakdown) {
+            Object.keys(row.expense_breakdown).forEach(key => allCategoriesSet.add(key));
+        }
+    });
+    const categories = Array.from(allCategoriesSet).sort();
 
     return (
         <CollapsibleCard title="Detailed Flight Telemetry" className="grid-full" defaultOpen={false}>

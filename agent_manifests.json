@@ -5,7 +5,8 @@
     "library_files": [
       "projects/trust/library/Trust Financial System.txt",
       "projects/trust/docs/Master_Design_Specification.md",
-      "projects/trust/library/acceptance_test.md.txt"
+      "projects/trust/library/acceptance_test.md.txt",
+      "projects/trust/README.md"
     ],
     "codebase_level": "full"
   },
