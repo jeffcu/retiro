@@ -108,7 +108,6 @@ const AssetCompositionChart = ({ data }) => {
         data: data.map(d => ({ x: d.age, y: d.real_estate_equity }))
     };
     
-    // Break down liquid assets into buckets for v1.9
     const deferredSeries = {
         id: "Deferred (IRA)",
         data: data.map(d => ({ x: d.age, y: d.bucket_deferred }))
@@ -312,7 +311,7 @@ const DiscretionaryBudget = ({ items, onAdd, onDelete, onUpdate }) => {
         e.preventDefault();
         const payload = { ...newItem };
         if (!payload.end_year) payload.end_year = null;
-        if (!payload.item_id) delete payload.item_id; // Let backend generate it if new
+        if (!payload.item_id) delete payload.item_id;
         onAdd(payload);
         setNewItem({ item_id: null, name: '', amount: '', start_year: new Date().getFullYear(), end_year: '', is_recurring: false, category: '', is_enabled: true });
     };
@@ -438,7 +437,7 @@ const DiscretionaryBudget = ({ items, onAdd, onDelete, onUpdate }) => {
     );
 };
 
-const ResidenceSaleConfig = ({ config, setConfig, onSave }) => {
+const ResidenceStrategiesConfig = ({ config, setConfig, onSave }) => {
     const handleChange = (e) => {
         const { name, value, type, checked } = e.target;
         setConfig(prev => ({
@@ -448,36 +447,83 @@ const ResidenceSaleConfig = ({ config, setConfig, onSave }) => {
     };
 
     return (
-        <CollapsibleCard title="5) Principal Residence Strategy" className="grid-half-left">
+        <CollapsibleCard title="5) Principal Residence Strategies" className="grid-half-left">
             <p style={{fontSize: '0.8em', color: '#aaa', marginTop: '-0.5rem'}}>
-                Simulate selling your primary home and moving equity into liquid investments.
+                Model liquidating your primary home OR converting it to a rental property.
             </p>
-            <div className="setting-group" style={{display: 'flex', alignItems: 'center', marginBottom: '1rem'}}>
-                <input 
-                    type="checkbox" 
-                    id="residence_sale_enabled"
-                    name="residence_sale_enabled"
-                    checked={config.residence_sale_enabled || false} 
-                    onChange={handleChange} 
-                    onBlur={onSave}
-                    style={{width: 'auto', marginRight: '0.5rem'}}
-                />
-                <label htmlFor="residence_sale_enabled" style={{margin: 0, cursor: 'pointer', color: '#fff'}}>Enable Sale Strategy</label>
-            </div>
-            
-            {config.residence_sale_enabled && (
-                <div className="setting-group">
-                    <label>Sale Year (e.g. 2040)</label>
+
+            {/* SALE STRATEGY */}
+            <div style={{borderBottom: '1px solid #444', paddingBottom: '1rem', marginBottom: '1rem'}}>
+                <div className="setting-group" style={{display: 'flex', alignItems: 'center', marginBottom: '1rem'}}>
                     <input 
-                        type="number" 
-                        name="residence_sale_year" 
-                        value={config.residence_sale_year || ''} 
+                        type="checkbox" 
+                        id="residence_sale_enabled"
+                        name="residence_sale_enabled"
+                        checked={config.residence_sale_enabled || false} 
                         onChange={handleChange} 
-                        onBlur={onSave} 
-                        placeholder="YYYY"
+                        onBlur={onSave}
+                        style={{width: 'auto', marginRight: '0.5rem'}}
                     />
+                    <label htmlFor="residence_sale_enabled" style={{margin: 0, cursor: 'pointer', color: '#fff'}}>Enable Sale Strategy</label>
                 </div>
-            )}
+                
+                {config.residence_sale_enabled && (
+                    <div className="setting-group">
+                        <label>Sale Year (e.g. 2040)</label>
+                        <input 
+                            type="number" 
+                            name="residence_sale_year" 
+                            value={config.residence_sale_year || ''} 
+                            onChange={handleChange} 
+                            onBlur={onSave} 
+                            placeholder="YYYY"
+                        />
+                    </div>
+                )}
+            </div>
+
+            {/* LEASE STRATEGY */}
+            <div>
+                <div className="setting-group" style={{display: 'flex', alignItems: 'center', marginBottom: '1rem'}}>
+                    <input 
+                        type="checkbox" 
+                        id="residence_lease_enabled"
+                        name="residence_lease_enabled"
+                        checked={config.residence_lease_enabled || false} 
+                        onChange={handleChange} 
+                        onBlur={onSave}
+                        style={{width: 'auto', marginRight: '0.5rem'}}
+                    />
+                    <label htmlFor="residence_lease_enabled" style={{margin: 0, cursor: 'pointer', color: '#fff'}}>Enable Lease Strategy</label>
+                </div>
+                
+                {config.residence_lease_enabled && (
+                    <>
+                        <div className="setting-group">
+                            <label>Lease Start Year (e.g. 2040)</label>
+                            <input 
+                                type="number" 
+                                name="residence_lease_year" 
+                                value={config.residence_lease_year || ''} 
+                                onChange={handleChange} 
+                                onBlur={onSave} 
+                                placeholder="YYYY"
+                            />
+                        </div>
+                        <div className="setting-group">
+                            <label>Monthly Rental Income (Today's $)</label>
+                            <input 
+                                type="number" 
+                                name="residence_lease_monthly_value" 
+                                value={config.residence_lease_monthly_value || ''} 
+                                onChange={handleChange} 
+                                onBlur={onSave} 
+                                placeholder="e.g. 3500"
+                            />
+                        </div>
+                    </>
+                )}
+            </div>
         </CollapsibleCard>
     );
 };
@@ -563,15 +609,12 @@ const ForecastSettings = ({ config, setConfig, onSave, onSettingChange }) => {
         setConfig(prev => ({ ...prev, [name]: value }));
     };
     
-    // Specialized handler for dropdowns to trigger immediate save/recalc
     const handleImmediateChange = (e) => {
         const { name, value } = e.target;
         if (onSettingChange) {
             onSettingChange(name, value);
         } else {
-             // Fallback
              handleChange(e);
-             // We assume onBlur will be called if user clicks away, but we want immediate effect.
         }
     }
 
@@ -648,7 +691,6 @@ const ForecastSettings = ({ config, setConfig, onSave, onSettingChange }) => {
 const ForecastTelemetryTable = ({ simulationData }) => {
     if (!simulationData || simulationData.length === 0) return null;
 
-    // --- FIX: Aggregate keys from ALL years to ensure future expenses (e.g. starting 2030) are included ---
     const allCategoriesSet = new Set();
     simulationData.forEach(row => {
         if (row.expense_breakdown) {
@@ -725,7 +767,6 @@ const ForecastView = () => {
     const [budgetItems, setBudgetItems] = useState([]);
     const [refreshKey, setRefreshKey] = useState(0);
 
-    // Initial Load
     useEffect(() => {
         fetch('/api/forecast/config').then(r => r.json()).then(data => {
             setConfig(data);
@@ -736,7 +777,6 @@ const ForecastView = () => {
         fetch('/api/forecast/discretionary').then(r => r.json()).then(setBudgetItems);
     }, []);
 
-    // Recalculate Simulation
     useEffect(() => {
         fetch(`/api/forecast/simulation?mode=${mode}`).then(r => r.json()).then(data => {
             setSimulationData(data.simulation_series);
@@ -758,19 +798,15 @@ const ForecastView = () => {
                 base_col_sunset_dates: sunsetDates
             })
         });
-        // Only force refresh key update if we are NOT using an override (which implies we set state already)
-        // Actually, always good to force re-fetch of sim data.
         setRefreshKey(k => k + 1);
     };
     
-    // Wrapper for immediate updates
     const handleImmediateSettingChange = (name, value) => {
         const newConfig = { ...config, [name]: value };
         setConfig(newConfig);
         saveConfig(newConfig);
     }
 
-    // Auto-save base categories or sunset dates change
     useEffect(() => {
         if (baseColCategories.length > 0) {
             saveConfig();
@@ -820,7 +856,6 @@ const ForecastView = () => {
 
     return (
         <div className="forecast-view-container">
-            {/* 1) The Runway (Full) */}
             <div className="chart-panel grid-full">
                 <h2>1) The Runway (Age 95 Horizon)</h2>
                 {alerts.length > 0 && (
@@ -832,20 +867,17 @@ const ForecastView = () => {
             </div>
             
             <div className="dashboard-grid">
-                {/* 2) Expense Profile (Half Left) */}
                 <div className="chart-panel grid-half-left">
                     <h3>2) Expense Profile</h3>
                     <ExpenseCompositionChart data={simulationData} />
                 </div>
 
-                {/* 3) Asset Composition (Half Right) */}
                 <div className="chart-panel grid-half-right">
                     <h3>3) Asset Composition</h3>
                     <AssetCompositionChart data={simulationData} />
                 </div>
             </div>
 
-            {/* 4) Discretionary Budget (Full) */}
             <DiscretionaryBudget 
                 items={budgetItems} 
                 onAdd={handleAddItem} 
@@ -854,14 +886,12 @@ const ForecastView = () => {
             />
 
             <div className="dashboard-grid">
-                 {/* 5) Principal Residence (Half Left) */}
-                <ResidenceSaleConfig
+                <ResidenceStrategiesConfig
                     config={config}
                     setConfig={setConfig}
                     onSave={() => saveConfig()}
                 />
 
-                {/* 6) Base CoL Engine (Half Right) */}
                 <BaseColCalculator 
                     selectedCategories={baseColCategories} 
                     onSelectionChange={setBaseColCategories} 
@@ -872,14 +902,12 @@ const ForecastView = () => {
                     onSunsetChange={handleSunsetChange}
                 />
 
-                {/* 7) Go Slow No Go (Half Left) */}
                 <PhaseConfiguration
                     config={config}
                     setConfig={setConfig}
                     onSave={() => saveConfig()}
                 />
 
-                {/* Spacer / Other Settings (Half Right) */}
                 <ForecastSettings 
                     config={config} 
                     setConfig={setConfig} 
@@ -888,7 +916,6 @@ const ForecastView = () => {
                 />
             </div>
 
-            {/* Telemetry Tables below everything */}
             <ForecastTelemetryTable simulationData={simulationData} />
         </div>
     );

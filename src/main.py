@@ -18,7 +18,7 @@ from src.database import initialize_database, save_transactions
 from src.data_model import CashflowType, Transaction, FutureIncomeStream, Property
 from src import database as db
 from src import analysis
-from src import forecast # NEW
+from src import forecast
 from src import rules_engine
 from src.market_data import polling_service, market_scheduler
 from src import demo_mode
@@ -27,16 +27,14 @@ load_dotenv()
 
 app = FastAPI(title="Curie Trust Financial Control Center API", version="1.0")
 
-# Scotty: Opening the hailing frequencies to all ships in the sector (Local Network Access)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Allow all origins for local dev convenience
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- Pydantic Models ---
 class RuleCreate(BaseModel):
     category: str
     cashflow_type: str
@@ -85,7 +83,6 @@ class PortfolioAllocationResponse(BaseModel):
     chartData: List[AllocationDataItem]
     tableData: List[AllocationTableItem]
 
-# --- NEW: Pydantic model for Tax Facts ---
 class TaxFactsPayload(BaseModel):
     filing_status: Optional[str] = None
     fed_taxable_income: Optional[float] = None
@@ -96,7 +93,6 @@ class TaxFactsPayload(BaseModel):
 class TaxFactsResponse(TaxFactsPayload):
     tax_year: int
 
-# --- NEW: Pydantic model for Tax Rate Summary ---
 class TaxRateSummary(BaseModel):
     year: int
     federal_rate: str
@@ -104,17 +100,15 @@ class TaxRateSummary(BaseModel):
     combined_rate: str
     notes: str
 
-# --- REVISED: Pydantic model for Portfolio Overall Return ---
 class PortfolioOverallReturnSummary(BaseModel):
     total_market_value: float
     total_cost_basis: float
     total_gain_dollars: float
     total_gain_percent: float
-    total_real_estate_equity: float # NEW
-    total_net_worth: float # NEW
+    total_real_estate_equity: float
+    total_net_worth: float
     notes: str
 
-# --- NEW: Pydantic models for Layered Returns --- 
 class LayeredReturnsMetrics(BaseModel):
     gross_return: float
     total_fees: float
@@ -138,21 +132,18 @@ class LayeredReturnsResponse(BaseModel):
     sankey_data: SankeyData
     notes: str
 
-
-# --- NEW: Pydantic models for Future Income Streams ---
 class FutureIncomeStreamCreate(BaseModel):
     stream_type: str = Field(..., example="Pension")
     description: str = Field(..., example="Spouse's Pension")
     start_date: date
     end_date: Optional[date] = None
     amount: float
-    frequency: str = Field(..., example="monthly") # 'monthly' or 'annually'
+    frequency: str = Field(..., example="monthly")
     annual_increase_rate: float = Field(0.0, ge=0)
 
 class FutureIncomeStreamResponse(FutureIncomeStreamCreate):
     stream_id: str
 
-# --- REVISED: Pydantic model for Portfolio Waterfall ---
 class PortfolioWaterfallResponse(BaseModel):
     start_of_period_value: Optional[float]
     external_contributions: float
@@ -164,7 +155,6 @@ class PortfolioWaterfallResponse(BaseModel):
     end_of_period_value: Optional[float]
     notes: str
 
-# --- NEW: Pydantic models for Snapshots ---
 class PortfolioSnapshotCreate(BaseModel):
     snapshot_date: date
     market_value: float
@@ -172,7 +162,6 @@ class PortfolioSnapshotCreate(BaseModel):
 class PortfolioSnapshotResponse(PortfolioSnapshotCreate):
     snapshot_id: str
 
-# --- NEW: Pydantic models for Properties ---
 class PropertyCreate(BaseModel):
     name: str
     purchase_price: float
@@ -185,33 +174,29 @@ class PropertyResponse(PropertyCreate):
     property_id: str
     equity: float
 
-# --- NEW: Pydantic models for Forecast Config (Phase 9) ---
 class ForecastConfig(BaseModel):
     birth_year: Optional[int]
     inflation_rate: Optional[float]
     return_rate: Optional[float]
     withdrawal_tax_rate: Optional[float]
-    state_tax_rate: Optional[float] # NEW
+    state_tax_rate: Optional[float]
     retirement_age: Optional[int]
     nogo_age: Optional[int]
     base_col_categories: Optional[List[str]]
-    base_col_sunset_dates: Optional[Dict[str, Union[float, int, str]]] = None # NEW: Support for category sunset
-    # Phase Multipliers can be strings from UI (e.g. empty string to clear), so we allow Any/Union
+    base_col_sunset_dates: Optional[Dict[str, Union[float, int, str]]] = None
     phase_multipliers: Optional[Dict[str, Dict[str, Union[float, int, str]]]] 
-    # --- NEW: Residence Sale Strategy ---
     residence_sale_enabled: Optional[bool] = False
     residence_sale_year: Optional[int] = None
-    # --- NEW: CoL Lookback ---
+    residence_lease_enabled: Optional[bool] = False
+    residence_lease_year: Optional[int] = None
+    residence_lease_monthly_value: Optional[float] = None
     base_col_lookback_years: Optional[int] = 1
-    # --- NEW: Withdrawal Strategy (v1.9.1) ---
     withdrawal_strategy: Optional[str] = 'standard'
-    # --- NEW: Fix for Tax Filing Status (v1.9.2) ---
     tax_filing_status: Optional[str] = 'single'
-    # --- NEW: Roth Conversion Strategy (Phase 10) ---
     roth_conversion_target: Optional[str] = 'none'
 
 class DiscretionaryItemCreate(BaseModel):
-    item_id: Optional[str] = None # Allow ID to be passed for updates
+    item_id: Optional[str] = None
     name: str
     amount: float
     start_year: int
@@ -219,15 +204,12 @@ class DiscretionaryItemCreate(BaseModel):
     is_recurring: bool = False
     inflation_adjusted: bool = True
     category: Optional[str] = None
-    is_enabled: Optional[bool] = True # NEW
+    is_enabled: Optional[bool] = True
 
-# --- NEW: Account Metadata Pydantic ---
 class AccountMetadataUpdate(BaseModel):
     tax_status: str
     notes: Optional[str] = None
 
-
-# --- App Events ---
 @app.on_event("startup")
 async def startup_event():
     print("API is starting up...")
@@ -237,7 +219,6 @@ async def startup_event():
     print("Launching background market data polling scheduler...")
     asyncio.create_task(market_scheduler.background_market_poller())
 
-# --- Dependency Functions for Filters ---
 def get_transaction_filters(
     category: Optional[str] = Query(None),
     account_id: Optional[str] = Query(None),
@@ -258,13 +239,10 @@ def get_holding_filters(
 ):
     return {k: v for k, v in locals().items() if v is not None}
 
-# --- API Endpoints ---
-
 @app.get("/")
 async def root():
     return {"message": "Curie Trust Financial Control Center API is running."}
 
-# --- Import Endpoints ---
 @app.post("/api/import/transactions", tags=["Import"])
 async def import_transactions_csv(account_id: str = Form(...), file: UploadFile = File(...)):
     if not file.filename or not file.filename.lower().endswith('.csv'):
@@ -318,7 +296,6 @@ async def import_holdings_csv(account_id: str = Form(...), file: UploadFile = Fi
 async def get_all_import_runs():
     return db.get_all_import_runs()
 
-# --- Rules Endpoints ---
 @app.post("/api/rules", response_model=RuleResponse, status_code=201, tags=["Rules"])
 async def create_new_rule(rule: RuleCreate):
     try:
@@ -342,7 +319,6 @@ async def trigger_recategorization():
     re_categorized_count = rules_engine.recategorize_all_transactions()
     return {"message": f"Successfully re-categorized {re_categorized_count} transactions."}
 
-# --- Analysis Endpoints ---
 @app.get("/api/sankey/home", tags=["Analysis"])
 async def get_home_sankey_data(period: str = "all"):
     return analysis.generate_capital_flow_sankey(period, exclude_invisible=True)
@@ -359,16 +335,12 @@ async def get_investment_cashflow_summary(period: str = "all"):
 async def get_portfolio_summary(mode: str = Query("actuals")):
     holdings = db.get_holdings()
     total_market_value = sum(h.get('market_value', 0) for h in holdings if h.get('market_value') is not None)
-    
-    # Calculate Real Estate Equity
     total_re_equity = db.get_total_real_estate_equity()
-    
     result = {
         "total_market_value": total_market_value,
         "total_real_estate_equity": total_re_equity,
         "total_net_worth": total_market_value + total_re_equity
     }
-    
     if mode == 'demo':
         return demo_mode.process_for_demo_mode(result)
     return result
@@ -391,55 +363,34 @@ async def get_portfolio_chart(filters: Dict[str, Any] = Depends(get_holding_filt
         return demo_mode.process_for_demo_mode(result)
     return result
 
-# --- NEW: Effective Tax Rate Endpoint ---
 @app.get("/api/analysis/effective-tax-rates", response_model=List[TaxRateSummary], tags=["Analysis"])
 async def get_effective_tax_rates():
-    """Calculates and returns the effective tax rates for key years."""
     target_years = [2023, 2024]
     return analysis.calculate_effective_tax_rates_for_years(target_years)
 
-# --- REVISED: Portfolio Overall Return Endpoint ---
 @app.get("/api/portfolio/overall-return", response_model=PortfolioOverallReturnSummary, tags=["Analysis"])
 async def get_portfolio_overall_return(mode: str = Query("actuals")):
-    """
-    Calculates key portfolio summary metrics based on "since inception" data.
-    """
     result = analysis.calculate_portfolio_summary_metrics()
     if mode == 'demo':
         return demo_mode.process_for_demo_mode(result)
     return result
 
-# --- NEW: Layered Returns Endpoint --- 
 @app.get("/api/portfolio/layered-returns-summary", response_model=LayeredReturnsResponse, tags=["Analysis"])
 async def get_layered_returns_summary(mode: str = Query("actuals")):
-    """ 
-    Calculates the full Gross -> Fees -> Taxes -> After-Tax return waterfall.
-    """
     result = analysis.calculate_layered_returns_summary()
-    # Note: Demo mode is not applied here as the values are relative and less sensitive.
     return result
 
-# --- REVISED: Portfolio Waterfall Endpoint ---
 @app.get("/api/analysis/portfolio-waterfall", response_model=PortfolioWaterfallResponse, tags=["Analysis"])
 async def get_portfolio_waterfall(period: str = Query("all", description="Time period, e.g., '2023', '6m', 'all'")):
-    """
-    Provides a full performance attribution waterfall analysis of portfolio value changes.
-    Requires historical value snapshots to be entered.
-    """
     return analysis.calculate_portfolio_waterfall(period)
 
-# --- NEW: Account Performance Summary Endpoint (v1.9.3) ---
 @app.get("/api/accounts/performance", tags=["Analysis"])
 async def get_account_performance(mode: str = Query("actuals")):
-    """
-    Returns aggregated performance metrics per account (value, cost basis, gain, tax status).
-    """
     data = analysis.get_account_performance_summary()
     if mode == 'demo':
         return demo_mode.process_for_demo_mode(data)
     return data
 
-# --- Data & Filter Endpoints ---
 @app.get("/api/transactions", tags=["Data"])
 async def get_filtered_transactions(filters: Dict[str, Any] = Depends(get_transaction_filters)):
     return db.get_transactions(filters)
@@ -497,7 +448,6 @@ async def get_filter_options():
 async def get_income_category_options():
     return db.get_income_categories()
 
-# --- Account & Settings Endpoints ---
 @app.get("/api/accounts", response_model=List[str], tags=["Accounts"])
 async def get_all_accounts():
     return db.get_all_account_ids()
@@ -520,7 +470,6 @@ async def set_sankey_income_settings(categories: List[str] = Body(...)):
     db.set_setting('sankey_income_categories', categories)
     return Response(status_code=204)
 
-# --- NEW: Account Metadata Endpoints ---
 @app.get("/api/accounts/metadata", response_model=Dict[str, Dict[str, Any]], tags=["Accounts"])
 async def get_account_metadata():
     return db.get_account_metadata()
@@ -530,7 +479,6 @@ async def update_account_metadata(account_id: str, payload: AccountMetadataUpdat
     db.set_account_metadata(account_id, payload.tax_status, payload.notes)
     return Response(status_code=204)
 
-# --- NEW: Tax Facts Endpoints --- 
 @app.get("/api/tax-facts/{year}", response_model=TaxFactsResponse, tags=["Tax Data"])
 async def get_tax_facts_for_year(year: int = Path(..., ge=2000, le=2100)):
     facts = db.get_tax_facts(year)
@@ -547,7 +495,6 @@ async def create_or_update_tax_facts(payload: TaxFactsPayload, year: int = Path(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- NEW: Future Income Stream Endpoints ---
 @app.post("/api/future-streams", response_model=FutureIncomeStreamResponse, status_code=201, tags=["Forecasting"])
 async def create_future_stream(payload: FutureIncomeStreamCreate):
     stream_id = str(uuid.uuid4())
@@ -578,11 +525,9 @@ async def delete_future_stream(stream_id: str):
         raise HTTPException(status_code=404, detail="Future income stream not found.")
     return Response(status_code=204)
 
-# --- NEW: Properties (Real Estate) Endpoints ---
 @app.get("/api/properties", response_model=List[PropertyResponse], tags=["Real Estate"])
 async def get_all_properties(mode: str = Query("actuals")):
     properties = db.get_all_properties()
-    # Calculate equity on the fly for display
     results = []
     for p in properties:
         p['equity'] = p['current_value'] - p['mortgage_balance']
@@ -594,13 +539,9 @@ async def get_all_properties(mode: str = Query("actuals")):
 
 @app.post("/api/properties", response_model=PropertyResponse, status_code=201, tags=["Real Estate"])
 async def create_property(payload: PropertyCreate):
-    # Check limit: "Principal Residence first, with up to five additional properties"
     existing = db.get_all_properties()
     if len(existing) >= 6:
         raise HTTPException(status_code=400, detail="Maximum property limit (6) reached.")
-    
-    # Enforce Principal Residence logic? Or just allow user to manage via flags.
-    # Requirement says "Principal Residence should be first". We'll rely on frontend/sorting.
     
     prop_id = str(uuid.uuid4())
     prop_obj = Property(
@@ -635,8 +576,6 @@ async def delete_property(property_id: str):
         raise HTTPException(status_code=404, detail="Property not found.")
     return Response(status_code=204)
 
-
-# --- NEW: Portfolio Settings & Snapshots Endpoints ---
 @app.get("/api/settings/portfolio-inception-date", response_model=Optional[date], tags=["Settings"])
 async def get_portfolio_inception_date():
     date_str = db.get_setting('portfolio_inception_date')
@@ -668,7 +607,6 @@ async def delete_snapshot(snapshot_id: str):
         raise HTTPException(status_code=404, detail="Snapshot not found.")
     return Response(status_code=204)
 
-# --- NEW: Phase 9 Forecast Endpoints ---
 @app.get("/api/forecast/config", tags=["Forecast"])
 async def get_forecast_config():
     return {
@@ -680,10 +618,13 @@ async def get_forecast_config():
         "retirement_age": db.get_setting('forecast_retirement_age') or 65,
         "nogo_age": db.get_setting('forecast_nogo_age') or 80,
         "base_col_categories": db.get_setting('forecast_base_col_categories') or [],
-        "base_col_sunset_dates": db.get_setting('forecast_base_col_sunset_dates') or {}, # NEW
+        "base_col_sunset_dates": db.get_setting('forecast_base_col_sunset_dates') or {},
         "phase_multipliers": db.get_setting('forecast_phase_multipliers') or {},
         "residence_sale_enabled": db.get_setting('forecast_residence_sale_enabled') or False,
         "residence_sale_year": db.get_setting('forecast_residence_sale_year'),
+        "residence_lease_enabled": db.get_setting('forecast_residence_lease_enabled') or False,
+        "residence_lease_year": db.get_setting('forecast_residence_lease_year'),
+        "residence_lease_monthly_value": db.get_setting('forecast_residence_lease_monthly_value'),
         "base_col_lookback_years": db.get_setting('forecast_base_col_lookback_years') or 1,
         "withdrawal_strategy": db.get_setting('forecast_withdrawal_strategy') or 'standard',
         "tax_filing_status": db.get_setting('forecast_tax_filing_status') or 'single',
@@ -692,61 +633,45 @@ async def get_forecast_config():
 
 @app.put("/api/forecast/config", status_code=204, tags=["Forecast"])
 async def update_forecast_config(config: ForecastConfig):
-    # We use __fields_set__ to know which fields were actually sent in the request.
-    # This allows us to handle explicit nulls (clearing a value) vs missing fields (no update).
-    
     fields_set = config.__fields_set__
     print(f"DEBUG: Received forecast config update. Fields: {fields_set}")
 
     if 'birth_year' in fields_set: 
         db.set_setting('forecast_birth_year', config.birth_year)
-    
     if 'inflation_rate' in fields_set: 
         db.set_setting('forecast_inflation_rate', config.inflation_rate)
-    
     if 'return_rate' in fields_set: 
         db.set_setting('forecast_return_rate', config.return_rate)
-    
     if 'withdrawal_tax_rate' in fields_set: 
         db.set_setting('forecast_withdrawal_tax_rate', config.withdrawal_tax_rate)
-
     if 'state_tax_rate' in fields_set: 
         db.set_setting('forecast_state_tax_rate', config.state_tax_rate)
-    
     if 'retirement_age' in fields_set: 
         db.set_setting('forecast_retirement_age', config.retirement_age)
-    
     if 'nogo_age' in fields_set: 
         db.set_setting('forecast_nogo_age', config.nogo_age)
-    
     if 'base_col_categories' in fields_set: 
         db.set_setting('forecast_base_col_categories', config.base_col_categories)
-
     if 'base_col_sunset_dates' in fields_set:
         db.set_setting('forecast_base_col_sunset_dates', config.base_col_sunset_dates)
-    
     if 'phase_multipliers' in fields_set: 
         db.set_setting('forecast_phase_multipliers', config.phase_multipliers)
-    
-    # --- NEW: Residence Sale Settings ---
     if 'residence_sale_enabled' in fields_set: 
         db.set_setting('forecast_residence_sale_enabled', config.residence_sale_enabled)
-    
     if 'residence_sale_year' in fields_set: 
         db.set_setting('forecast_residence_sale_year', config.residence_sale_year)
-    
+    if 'residence_lease_enabled' in fields_set:
+        db.set_setting('forecast_residence_lease_enabled', config.residence_lease_enabled)
+    if 'residence_lease_year' in fields_set:
+        db.set_setting('forecast_residence_lease_year', config.residence_lease_year)
+    if 'residence_lease_monthly_value' in fields_set:
+        db.set_setting('forecast_residence_lease_monthly_value', config.residence_lease_monthly_value)
     if 'base_col_lookback_years' in fields_set: 
         db.set_setting('forecast_base_col_lookback_years', config.base_col_lookback_years)
-
-    # --- NEW: Withdrawal Strategy ---
     if 'withdrawal_strategy' in fields_set:
         db.set_setting('forecast_withdrawal_strategy', config.withdrawal_strategy)
-        
-    # --- NEW: Tax Filing Status ---
     if 'tax_filing_status' in fields_set:
         db.set_setting('forecast_tax_filing_status', config.tax_filing_status)
-
-    # --- NEW: Roth Conversion Strategy ---
     if 'roth_conversion_target' in fields_set:
         db.set_setting('forecast_roth_conversion_target', config.roth_conversion_target)
 
@@ -779,8 +704,6 @@ async def delete_discretionary_item(item_id: str):
     db.delete_discretionary_budget_item(item_id)
     return Response(status_code=204)
 
-
-# --- NEW: TAG API ENDPOINTS ---
 @app.get("/api/tags/summary", tags=["Tags"])
 async def get_all_tags_summary():
     return db.get_tag_summary()
@@ -789,8 +712,6 @@ async def get_all_tags_summary():
 async def get_tag_records(tag_name: str):
     return db.get_records_by_tag(tag_name)
 
-
-# --- Admin & Market Data Endpoints ---
 @app.post("/api/data/purge", tags=["Admin"])
 async def purge_data(request: PurgeRequest):
     try:
@@ -810,30 +731,22 @@ async def trigger_eod_market_data_refresh(background_tasks: BackgroundTasks):
     background_tasks.add_task(polling_service.refresh_eod_data)
     return {"message": "Bulk EOD data refresh initiated in the background for ALL holdings."}
 
-# --- NEW: Backup & Restore Endpoints ---
 @app.get("/api/admin/backup", tags=["Admin"])
 async def download_backup():
-    """Downloads the current SQLite database file."""
     db_path = db.DB_FILE
     filename = f"trust_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
     return FileResponse(path=db_path, filename=filename, media_type='application/octet-stream')
 
 @app.post("/api/admin/restore", tags=["Admin"])
 async def restore_backup(file: UploadFile = File(...)):
-    """Overwrites the current database with the uploaded file."""
     try:
-        # Verify file extension (simple check)
         if not file.filename.endswith('.db') and not file.filename.endswith('.sqlite'):
             raise HTTPException(status_code=400, detail="Invalid file type. Please upload a .db file.")
-        
-        # Overwrite the database file
         with open(db.DB_FILE, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-        
         return {"message": "Database restored successfully. Please refresh the application."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to restore backup: {e}")
 
 if __name__ == "__main__":
-    # Scotty: Binding to 0.0.0.0 is crucial for the iPad (remote access) to work!
     uvicorn.run(app, host="0.0.0.0", port=8000)

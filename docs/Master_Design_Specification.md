@@ -19,7 +19,7 @@ The Curie Trust Financial Control Center is a local-first, privacy-centric appli
 *   `src/forecast.py`: **Major Upgrade in Phase 10**.
     *   `TaxEngine` Class: Handles progressive tax calculations (Fed + State).
     *   `RMDCalculator` Class: Determines mandatory withdrawals based on IRS tables.
-    *   `SimulationEngine`: Now includes configurable withdrawal order strategies.
+    *   `SimulationEngine`: Now includes configurable withdrawal order strategies and dual real estate strategies.
 
 ### 4. Data Model & Storage
 
@@ -27,15 +27,18 @@ The Curie Trust Financial Control Center is a local-first, privacy-centric appli
 
 **New Settings Keys (v1.9):**
 *   `forecast_tax_filing_status`: 'single' | 'joint'
-*   `forecast_withdrawal_strategy`: 'standard' | 'deferred_first' (Added in v1.9.1)
+*   `forecast_withdrawal_strategy`: 'standard' | 'deferred_first'
 *   `forecast_roth_conversion_target`: 'none' | 'fill_12' | 'fill_22' | 'fill_24' | 'fill_32'
 *   `forecast_rmd_start_age`: INTEGER (Default 75)
+*   `forecast_residence_lease_enabled`: BOOLEAN
+*   `forecast_residence_lease_year`: INTEGER
+*   `forecast_residence_lease_monthly_value`: FLOAT
 
 ### 5. API Interfaces
 
 #### 5.3 Forecast API (Updated for Phase 10)
 *   `GET /api/forecast/simulation`: Returns `simulation_series` with new fields:
-    *   `taxable_income`: Total income subject to tax (RMDs + SS + Withdrawals + Conversions).
+    *   `taxable_income`: Total income subject to tax (RMDs + SS + Withdrawals + Conversions + Rentals).
     *   `federal_tax_paid`: Estimated federal tax bill.
     *   `effective_tax_rate`: `federal_tax_paid / taxable_income`.
     *   `rmd_amount`: The mandatory distribution amount for that year.

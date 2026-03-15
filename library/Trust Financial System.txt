@@ -28,9 +28,10 @@ The system ingests periodic CSV/spreadsheet uploads from multiple financial inst
 	•	Strategy Configuration:
 		•	Withdrawal Order: Standard (Taxable -> Deferred -> Roth) vs. Legacy Saver (Deferred -> Taxable -> Roth).
 		•	Roth Conversion Strategy: "Fill to Bracket Top" (converting Deferred to Roth up to the 22% or 24% tax ceiling).
+		•	Principal Residence Strategies: Mutually exclusive parallel tracking for liquidating the primary home or converting it into an inflation-adjusted, taxable rental property.
 	•	The Simulation (Runway Logic):
 		•	Calculates RMDs (Required Minimum Distributions) starting at age 75.
-		•	Applies progressive tax brackets to RMDs and Withdrawals.
+		•	Applies progressive tax brackets to RMDs, Withdrawals, and Rental Yield.
 		•	Models the "Tax Drag" on the portfolio over time.
 	•	Discretionary Budget:
 		•	Manual entries feature double-click editing, toggle state persistence (preventing ghost clones), and hard-delete confirmation protocols.

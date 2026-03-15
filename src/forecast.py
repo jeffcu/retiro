@@ -124,7 +124,7 @@ def calculate_forecast() -> Dict[str, Any]:
     if state_tax_rate > 0.5:
         state_tax_rate = state_tax_rate / 100.0
     
-    # NEW: Assumed dividend yield from taxable accounts to fix AGI reporting weakness
+    # Assumed dividend yield from taxable accounts to fix AGI reporting weakness
     dividend_yield_rate = float(db.get_setting('forecast_dividend_yield') or 0.02)
     
     filing_status = db.get_setting('forecast_tax_filing_status') or 'single'
@@ -138,12 +138,26 @@ def calculate_forecast() -> Dict[str, Any]:
     withdrawal_strategy = db.get_setting('forecast_withdrawal_strategy') or 'standard'
     roth_conversion_target = db.get_setting('forecast_roth_conversion_target') or 'none'
     
+    # Property Strategies
     residence_sale_enabled = bool(db.get_setting('forecast_residence_sale_enabled') or False)
     residence_sale_year = db.get_setting('forecast_residence_sale_year')
     try:
         residence_sale_year = int(residence_sale_year) if residence_sale_year else None
     except (ValueError, TypeError):
         residence_sale_year = None
+
+    residence_lease_enabled = bool(db.get_setting('forecast_residence_lease_enabled') or False)
+    residence_lease_year = db.get_setting('forecast_residence_lease_year')
+    try:
+        residence_lease_year = int(residence_lease_year) if residence_lease_year else None
+    except (ValueError, TypeError):
+        residence_lease_year = None
+        
+    residence_lease_monthly_value = db.get_setting('forecast_residence_lease_monthly_value')
+    try:
+        residence_lease_monthly_value = float(residence_lease_monthly_value) if residence_lease_monthly_value else 0.0
+    except (ValueError, TypeError):
+        residence_lease_monthly_value = 0.0
 
     phase_multipliers = db.get_setting('forecast_phase_multipliers') or {}
     base_col_categories = db.get_setting('forecast_base_col_categories') or []
@@ -244,6 +258,9 @@ def calculate_forecast() -> Dict[str, Any]:
         year_income = 0.0
         ss_income = 0.0
         
+        years_from_start = year - current_year
+        inflation_factor = (1 + inflation_rate) ** years_from_start
+
         # 1. Base Income & SS
         for stream in future_income_streams:
             start = date.fromisoformat(stream['start_date'])
@@ -260,10 +277,22 @@ def calculate_forecast() -> Dict[str, Any]:
                 else:
                     ordinary_income_events += adjusted_amount
 
-        # FIX: The Phantom Yield Weakness - Add taxable dividends to AGI stack
+        # The Phantom Yield Weakness - Add taxable dividends to AGI stack
         taxable_yield_income = start_taxable * dividend_yield_rate
         ltcg_income_events += taxable_yield_income
         year_income += taxable_yield_income
+
+        # 1.5 Principal Residence Lease Strategy
+        if residence_lease_enabled and residence_lease_year and year >= residence_lease_year:
+            # Prevent double dipping in the exact year of a sale
+            is_selling_this_year = residence_sale_enabled and residence_sale_year == year
+            if not is_selling_this_year:
+                # Check if a primary property still exists
+                primary_props = [p for p in working_properties if p['is_primary']]
+                if primary_props:
+                    annual_lease_income = (residence_lease_monthly_value * 12) * inflation_factor
+                    year_income += annual_lease_income
+                    ordinary_income_events += annual_lease_income
 
         # 2. Calculate RMDs
         year_rmd = 0.0
@@ -275,17 +304,14 @@ def calculate_forecast() -> Dict[str, Any]:
             ordinary_income_events += year_rmd
 
         # 3. Living Expenses
-        years_from_start = year - current_year
-        inflation_factor = (1 + inflation_rate) ** years_from_start
-        
         year_living_expenses = 0.0
         expense_breakdown = {}
 
         for cat, amount in base_col_breakdown.items():
-            # NEW: Implement Sunset cutoff logic
+            # Sunset cutoff logic
             sunset_year = cleaned_sunsets.get(cat)
             if sunset_year and year > sunset_year:
-                continue # The sunset has passed, this expense is gone
+                continue 
             
             multiplier = get_phase_multiplier(cat, phase_key)
             cost = (amount * inflation_factor * multiplier)
@@ -314,8 +340,7 @@ def calculate_forecast() -> Dict[str, Any]:
         if roth_conversion_target == 'fill_22':
             room = tax_metrics_pre['headroom_24_pct']
             if room > 0 and buckets['Deferred'] > 0:
-                # FIX: The Social Security Tax Torpedo Dampener.
-                # $1 of conversion exposes up to $0.85 of SS to taxes. We divide the room by 1.85 to be safe.
+                # The Social Security Tax Torpedo Dampener.
                 effective_room = room / 1.85 if ss_income > 0 else room
                 conversion_amount = min(buckets['Deferred'], effective_room)
                 buckets['Deferred'] -= conversion_amount
