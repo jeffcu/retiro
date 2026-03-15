@@ -180,6 +180,11 @@ def _ensure_schema(conn: sqlite3.Connection):
     );
     """)
 
+    # --- GHOST PURGE PROTOCOL ---
+    # Vaporize any legacy discretionary budget items trapped with null or empty item_ids
+    cursor.execute("DELETE FROM discretionary_budget_items WHERE item_id IS NULL OR trim(item_id) = '';")
+    conn.commit() # Flush implicit transaction to prevent OperationalError
+
     # --- Schema Migrations --- 
     cursor.execute("PRAGMA table_info(holdings)")
     holdings_cols = {row[1] for row in cursor.fetchall()}
@@ -249,6 +254,7 @@ def _ensure_schema(conn: sqlite3.Connection):
 
     if needs_rebuild:
         print("--- MIGRATING SCHEMA: Updating UNIQUE constraint on 'holdings' to include 'account_number'. ---")
+        conn.commit() # Flush implicit transaction to prevent OperationalError
         cursor.execute("PRAGMA foreign_keys=off;")
         cursor.execute("BEGIN TRANSACTION;")
         try:
@@ -293,6 +299,7 @@ def _ensure_schema(conn: sqlite3.Connection):
             cursor.execute("PRAGMA foreign_keys=on;")
 
     # Rules migration logic
+    conn.commit() # Flush implicit transaction to prevent OperationalError
     cursor.execute("PRAGMA foreign_keys=off;")
     cursor.execute("BEGIN TRANSACTION;")
     try:

@@ -195,6 +195,7 @@ class ForecastConfig(BaseModel):
     retirement_age: Optional[int]
     nogo_age: Optional[int]
     base_col_categories: Optional[List[str]]
+    base_col_sunset_dates: Optional[Dict[str, Union[float, int, str]]] = None # NEW: Support for category sunset
     # Phase Multipliers can be strings from UI (e.g. empty string to clear), so we allow Any/Union
     phase_multipliers: Optional[Dict[str, Dict[str, Union[float, int, str]]]] 
     # --- NEW: Residence Sale Strategy ---
@@ -679,6 +680,7 @@ async def get_forecast_config():
         "retirement_age": db.get_setting('forecast_retirement_age') or 65,
         "nogo_age": db.get_setting('forecast_nogo_age') or 80,
         "base_col_categories": db.get_setting('forecast_base_col_categories') or [],
+        "base_col_sunset_dates": db.get_setting('forecast_base_col_sunset_dates') or {}, # NEW
         "phase_multipliers": db.get_setting('forecast_phase_multipliers') or {},
         "residence_sale_enabled": db.get_setting('forecast_residence_sale_enabled') or False,
         "residence_sale_year": db.get_setting('forecast_residence_sale_year'),
@@ -719,6 +721,9 @@ async def update_forecast_config(config: ForecastConfig):
     
     if 'base_col_categories' in fields_set: 
         db.set_setting('forecast_base_col_categories', config.base_col_categories)
+
+    if 'base_col_sunset_dates' in fields_set:
+        db.set_setting('forecast_base_col_sunset_dates', config.base_col_sunset_dates)
     
     if 'phase_multipliers' in fields_set: 
         db.set_setting('forecast_phase_multipliers', config.phase_multipliers)
