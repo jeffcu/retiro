@@ -222,7 +222,8 @@ def calculate_forecast() -> Dict[str, Any]:
                 "rate": float(p['appreciation_rate']), "is_primary": bool(p['is_primary']),
                 "purchase_year": p.get('purchase_year'), "sale_year": p.get('sale_year'),
                 "annual_maintenance": float(p.get('annual_maintenance') or 0.0), "name": p['name'],
-                "purchase_price": float(p['purchase_price'])
+                "purchase_price": float(p['purchase_price']),
+                "fixed_sale_price": float(p['fixed_sale_price']) if p.get('fixed_sale_price') is not None else None
             }
             if prop_dict['purchase_year'] and prop_dict['purchase_year'] > current_year:
                 if future_properties_enabled:
@@ -385,11 +386,16 @@ def calculate_forecast() -> Dict[str, Any]:
             # 6. Residence & Temporal Property Sale
             sale_proceeds = 0.0
             sale_event_triggered = False
+
+            def _calc_proceeds(p):
+                if p.get('fixed_sale_price') is not None:
+                    return max(0.0, p['fixed_sale_price'] - p['debt'])
+                return max(0.0, p['value'] - p['debt'])
             
             # Legacy Primary Sale Config
             if residence_sale_enabled and residence_sale_year and year == residence_sale_year:
                 for prop in [p for p in working_properties if p['is_primary']]:
-                    sale_proceeds += max(0.0, prop['value'] - prop['debt'])
+                    sale_proceeds += _calc_proceeds(prop)
                     working_properties.remove(prop)
                     sale_event_triggered = True
 
@@ -397,7 +403,7 @@ def calculate_forecast() -> Dict[str, Any]:
             temporal_sold = []
             for prop in working_properties:
                 if prop.get('sale_year') == year:
-                    sale_proceeds += max(0.0, prop['value'] - prop['debt'])
+                    sale_proceeds += _calc_proceeds(prop)
                     temporal_sold.append(prop)
                     sale_event_triggered = True
             

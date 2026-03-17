@@ -74,6 +74,7 @@ class Property:
     purchase_year: Optional[int] = None
     sale_year: Optional[int] = None
     annual_maintenance: Decimal = Decimal('0.0')
+    fixed_sale_price: Optional[Decimal] = None
 
 
 @dataclass

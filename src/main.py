@@ -176,6 +176,7 @@ class PropertyCreate(BaseModel):
     purchase_year: Optional[int] = None
     sale_year: Optional[int] = None
     annual_maintenance: Optional[float] = 0.0
+    fixed_sale_price: Optional[float] = None
 
 class PropertyResponse(PropertyCreate):
     property_id: str
@@ -600,7 +601,8 @@ async def create_property(payload: PropertyCreate):
         is_primary=payload.is_primary,
         purchase_year=payload.purchase_year,
         sale_year=payload.sale_year,
-        annual_maintenance=Decimal(str(payload.annual_maintenance or 0.0))
+        annual_maintenance=Decimal(str(payload.annual_maintenance or 0.0)),
+        fixed_sale_price=Decimal(str(payload.fixed_sale_price)) if payload.fixed_sale_price is not None else None
     )
     try:
         db.create_property(prop_obj)

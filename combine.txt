@@ -1959,6 +1959,7 @@ class Property:
     purchase_year: Optional[int] = None
     sale_year: Optional[int] = None
     annual_maintenance: Decimal = Decimal('0.0')
+    fixed_sale_price: Optional[Decimal] = None
 
 
 @dataclass
@@ -2074,7 +2075,8 @@ def _ensure_schema(conn: sqlite3.Connection):
         is_primary INTEGER DEFAULT 0,
         purchase_year INTEGER,
         sale_year INTEGER,
-        annual_maintenance REAL DEFAULT 0.0
+        annual_maintenance REAL DEFAULT 0.0,
+        fixed_sale_price REAL
     );
     """)
 
@@ -2178,6 +2180,9 @@ def _ensure_schema(conn: sqlite3.Connection):
         cursor.execute("ALTER TABLE properties ADD COLUMN purchase_year INTEGER;")
         cursor.execute("ALTER TABLE properties ADD COLUMN sale_year INTEGER;")
         cursor.execute("ALTER TABLE properties ADD COLUMN annual_maintenance REAL DEFAULT 0.0;")
+    if 'fixed_sale_price' not in prop_cols:
+        print("--- MIGRATING SCHEMA: Adding fixed_sale_price to 'properties'. ---")
+        cursor.execute("ALTER TABLE properties ADD COLUMN fixed_sale_price REAL;")
 
     # Holdings columns
     cursor.execute("PRAGMA table_info(holdings)")
@@ -3027,8 +3032,8 @@ def create_property(prop: Property) -> Property:
     sql = """INSERT INTO properties (
                  property_id, name, purchase_price, mortgage_balance, 
                  current_value, appreciation_rate, is_primary,
-                 purchase_year, sale_year, annual_maintenance
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"""
+                 purchase_year, sale_year, annual_maintenance, fixed_sale_price
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"""
     params = (
         prop.property_id,
         prop.name,
@@ -3039,7 +3044,8 @@ def create_property(prop: Property) -> Property:
         1 if prop.is_primary else 0,
         prop.purchase_year,
         prop.sale_year,
-        float(prop.annual_maintenance)
+        float(prop.annual_maintenance),
+        float(prop.fixed_sale_price) if prop.fixed_sale_price is not None else None
     )
     try:
         cursor.execute(sql, params)
@@ -3054,7 +3060,7 @@ def create_property(prop: Property) -> Property:
 def update_property(property_id: str, updates: Dict[str, Any]):
     conn = get_db_connection()
     cursor = conn.cursor()
-    allowed_fields = ['name', 'purchase_price', 'mortgage_balance', 'current_value', 'appreciation_rate', 'is_primary', 'purchase_year', 'sale_year', 'annual_maintenance']
+    allowed_fields = ['name', 'purchase_price', 'mortgage_balance', 'current_value', 'appreciation_rate', 'is_primary', 'purchase_year', 'sale_year', 'annual_maintenance', 'fixed_sale_price']
     set_clauses, params = [], []
     for field, value in updates.items():
         if field not in allowed_fields:
@@ -3663,7 +3669,8 @@ def calculate_forecast() -> Dict[str, Any]:
                 "rate": float(p['appreciation_rate']), "is_primary": bool(p['is_primary']),
                 "purchase_year": p.get('purchase_year'), "sale_year": p.get('sale_year'),
                 "annual_maintenance": float(p.get('annual_maintenance') or 0.0), "name": p['name'],
-                "purchase_price": float(p['purchase_price'])
+                "purchase_price": float(p['purchase_price']),
+                "fixed_sale_price": float(p['fixed_sale_price']) if p.get('fixed_sale_price') is not None else None
             }
             if prop_dict['purchase_year'] and prop_dict['purchase_year'] > current_year:
                 if future_properties_enabled:
@@ -3826,11 +3833,16 @@ def calculate_forecast() -> Dict[str, Any]:
             # 6. Residence & Temporal Property Sale
             sale_proceeds = 0.0
             sale_event_triggered = False
+
+            def _calc_proceeds(p):
+                if p.get('fixed_sale_price') is not None:
+                    return max(0.0, p['fixed_sale_price'] - p['debt'])
+                return max(0.0, p['value'] - p['debt'])
             
             # Legacy Primary Sale Config
             if residence_sale_enabled and residence_sale_year and year == residence_sale_year:
                 for prop in [p for p in working_properties if p['is_primary']]:
-                    sale_proceeds += max(0.0, prop['value'] - prop['debt'])
+                    sale_proceeds += _calc_proceeds(prop)
                     working_properties.remove(prop)
                     sale_event_triggered = True
 
@@ -3838,7 +3850,7 @@ def calculate_forecast() -> Dict[str, Any]:
             temporal_sold = []
             for prop in working_properties:
                 if prop.get('sale_year') == year:
-                    sale_proceeds += max(0.0, prop['value'] - prop['debt'])
+                    sale_proceeds += _calc_proceeds(prop)
                     temporal_sold.append(prop)
                     sale_event_triggered = True
             
@@ -4216,6 +4228,7 @@ class PropertyCreate(BaseModel):
     purchase_year: Optional[int] = None
     sale_year: Optional[int] = None
     annual_maintenance: Optional[float] = 0.0
+    fixed_sale_price: Optional[float] = None
 
 class PropertyResponse(PropertyCreate):
     property_id: str
@@ -4640,7 +4653,8 @@ async def create_property(payload: PropertyCreate):
         is_primary=payload.is_primary,
         purchase_year=payload.purchase_year,
         sale_year=payload.sale_year,
-        annual_maintenance=Decimal(str(payload.annual_maintenance or 0.0))
+        annual_maintenance=Decimal(str(payload.annual_maintenance or 0.0)),
+        fixed_sale_price=Decimal(str(payload.fixed_sale_price)) if payload.fixed_sale_price is not None else None
     )
     try:
         db.create_property(prop_obj)
@@ -10655,6 +10669,12 @@ const PropertyCard = ({ property, onEdit, onDelete }) => (
                     <span style={{color: 'var(--gold-accent)'}}>{property.sale_year}</span>
                 </div>
             )}
+            {property.fixed_sale_price !== null && property.fixed_sale_price !== undefined && (
+                <div className="detail-item">
+                    <label>Predetermined Sale Price</label>
+                    <span style={{color: 'var(--gold-accent)'}}>{formatCurrency(property.fixed_sale_price)}</span>
+                </div>
+            )}
             {property.annual_maintenance > 0 && (
                 <div className="detail-item">
                     <label>Annual Maint. Drag</label>
@@ -10686,7 +10706,8 @@ const RealEstateView = () => {
         is_primary: false,
         purchase_year: '',
         sale_year: '',
-        annual_maintenance: 0
+        annual_maintenance: 0,
+        fixed_sale_price: ''
     };
     const [formData, setFormData] = useState(initialForm);
 
@@ -10726,7 +10747,8 @@ const RealEstateView = () => {
             appreciation_rate: parseFloat(formData.appreciation_rate),
             purchase_year: formData.purchase_year ? parseInt(formData.purchase_year) : null,
             sale_year: formData.sale_year ? parseInt(formData.sale_year) : null,
-            annual_maintenance: parseFloat(formData.annual_maintenance || 0)
+            annual_maintenance: parseFloat(formData.annual_maintenance || 0),
+            fixed_sale_price: formData.fixed_sale_price !== '' && formData.fixed_sale_price !== null ? parseFloat(formData.fixed_sale_price) : null
         };
 
         try {
@@ -10769,7 +10791,8 @@ const RealEstateView = () => {
             is_primary: prop.is_primary,
             purchase_year: prop.purchase_year || '',
             sale_year: prop.sale_year || '',
-            annual_maintenance: prop.annual_maintenance || 0
+            annual_maintenance: prop.annual_maintenance || 0,
+            fixed_sale_price: prop.fixed_sale_price !== null && prop.fixed_sale_price !== undefined ? prop.fixed_sale_price : ''
         });
         setEditingId(prop.property_id);
         setShowForm(true);
@@ -10834,6 +10857,10 @@ const RealEstateView = () => {
                         <div className="form-group">
                             <label>Annual Maintenance ($)</label>
                             <input type="number" name="annual_maintenance" value={formData.annual_maintenance} onChange={handleInputChange} placeholder="15000" />
+                        </div>
+                        <div className="form-group">
+                            <label>Fixed Sale Price (e.g. CCRC 80% Return)</label>
+                            <input type="number" name="fixed_sale_price" value={formData.fixed_sale_price} onChange={handleInputChange} placeholder="Optional" />
                         </div>
 
                         <div className="form-group" style={{flexDirection: 'row', alignItems: 'center', marginTop: '1.5rem'}}>

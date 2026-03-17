@@ -50,6 +50,12 @@ const PropertyCard = ({ property, onEdit, onDelete }) => (
                     <span style={{color: 'var(--gold-accent)'}}>{property.sale_year}</span>
                 </div>
             )}
+            {property.fixed_sale_price !== null && property.fixed_sale_price !== undefined && (
+                <div className="detail-item">
+                    <label>Predetermined Sale Price</label>
+                    <span style={{color: 'var(--gold-accent)'}}>{formatCurrency(property.fixed_sale_price)}</span>
+                </div>
+            )}
             {property.annual_maintenance > 0 && (
                 <div className="detail-item">
                     <label>Annual Maint. Drag</label>
@@ -81,7 +87,8 @@ const RealEstateView = () => {
         is_primary: false,
         purchase_year: '',
         sale_year: '',
-        annual_maintenance: 0
+        annual_maintenance: 0,
+        fixed_sale_price: ''
     };
     const [formData, setFormData] = useState(initialForm);
 
@@ -121,7 +128,8 @@ const RealEstateView = () => {
             appreciation_rate: parseFloat(formData.appreciation_rate),
             purchase_year: formData.purchase_year ? parseInt(formData.purchase_year) : null,
             sale_year: formData.sale_year ? parseInt(formData.sale_year) : null,
-            annual_maintenance: parseFloat(formData.annual_maintenance || 0)
+            annual_maintenance: parseFloat(formData.annual_maintenance || 0),
+            fixed_sale_price: formData.fixed_sale_price !== '' && formData.fixed_sale_price !== null ? parseFloat(formData.fixed_sale_price) : null
         };
 
         try {
@@ -164,7 +172,8 @@ const RealEstateView = () => {
             is_primary: prop.is_primary,
             purchase_year: prop.purchase_year || '',
             sale_year: prop.sale_year || '',
-            annual_maintenance: prop.annual_maintenance || 0
+            annual_maintenance: prop.annual_maintenance || 0,
+            fixed_sale_price: prop.fixed_sale_price !== null && prop.fixed_sale_price !== undefined ? prop.fixed_sale_price : ''
         });
         setEditingId(prop.property_id);
         setShowForm(true);
@@ -229,6 +238,10 @@ const RealEstateView = () => {
                         <div className="form-group">
                             <label>Annual Maintenance ($)</label>
                             <input type="number" name="annual_maintenance" value={formData.annual_maintenance} onChange={handleInputChange} placeholder="15000" />
+                        </div>
+                        <div className="form-group">
+                            <label>Fixed Sale Price (e.g. CCRC 80% Return)</label>
+                            <input type="number" name="fixed_sale_price" value={formData.fixed_sale_price} onChange={handleInputChange} placeholder="Optional" />
                         </div>
 
                         <div className="form-group" style={{flexDirection: 'row', alignItems: 'center', marginTop: '1.5rem'}}>

@@ -86,7 +86,8 @@ def _ensure_schema(conn: sqlite3.Connection):
         is_primary INTEGER DEFAULT 0,
         purchase_year INTEGER,
         sale_year INTEGER,
-        annual_maintenance REAL DEFAULT 0.0
+        annual_maintenance REAL DEFAULT 0.0,
+        fixed_sale_price REAL
     );
     """)
 
@@ -190,6 +191,9 @@ def _ensure_schema(conn: sqlite3.Connection):
         cursor.execute("ALTER TABLE properties ADD COLUMN purchase_year INTEGER;")
         cursor.execute("ALTER TABLE properties ADD COLUMN sale_year INTEGER;")
         cursor.execute("ALTER TABLE properties ADD COLUMN annual_maintenance REAL DEFAULT 0.0;")
+    if 'fixed_sale_price' not in prop_cols:
+        print("--- MIGRATING SCHEMA: Adding fixed_sale_price to 'properties'. ---")
+        cursor.execute("ALTER TABLE properties ADD COLUMN fixed_sale_price REAL;")
 
     # Holdings columns
     cursor.execute("PRAGMA table_info(holdings)")
@@ -1039,8 +1043,8 @@ def create_property(prop: Property) -> Property:
     sql = """INSERT INTO properties (
                  property_id, name, purchase_price, mortgage_balance, 
                  current_value, appreciation_rate, is_primary,
-                 purchase_year, sale_year, annual_maintenance
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"""
+                 purchase_year, sale_year, annual_maintenance, fixed_sale_price
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"""
     params = (
         prop.property_id,
         prop.name,
@@ -1051,7 +1055,8 @@ def create_property(prop: Property) -> Property:
         1 if prop.is_primary else 0,
         prop.purchase_year,
         prop.sale_year,
-        float(prop.annual_maintenance)
+        float(prop.annual_maintenance),
+        float(prop.fixed_sale_price) if prop.fixed_sale_price is not None else None
     )
     try:
         cursor.execute(sql, params)
@@ -1066,7 +1071,7 @@ def create_property(prop: Property) -> Property:
 def update_property(property_id: str, updates: Dict[str, Any]):
     conn = get_db_connection()
     cursor = conn.cursor()
-    allowed_fields = ['name', 'purchase_price', 'mortgage_balance', 'current_value', 'appreciation_rate', 'is_primary', 'purchase_year', 'sale_year', 'annual_maintenance']
+    allowed_fields = ['name', 'purchase_price', 'mortgage_balance', 'current_value', 'appreciation_rate', 'is_primary', 'purchase_year', 'sale_year', 'annual_maintenance', 'fixed_sale_price']
     set_clauses, params = [], []
     for field, value in updates.items():
         if field not in allowed_fields:
