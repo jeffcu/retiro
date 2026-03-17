@@ -33,12 +33,19 @@ const TransactionListView = ({ initialFilters = {} }) => {
     const [showRuleCreator, setShowRuleCreator] = useState(false);
     const [editingTransaction, setEditingTransaction] = useState(null);
     const [sortConfig, setSortConfig] = useState(null);
+    
+    // Bulk Tagging State
+    const [selectedIds, setSelectedIds] = useState(new Set());
+    const [bulkTagInput, setBulkTagInput] = useState('');
+    const [isBulkTagging, setIsBulkTagging] = useState(false);
 
     const fetchData = async (filters = activeFilters) => {
         try {
             setLoading(true);
             setActiveFilters(filters);
             setShowRuleCreator(false); // Hide creator on new filter/fetch
+            setSelectedIds(new Set()); // Clear selection on data change
+            
             const query = new URLSearchParams(filters).toString();
 
             const [transactionsRes, chartRes] = await Promise.all([
@@ -137,6 +144,59 @@ const TransactionListView = ({ initialFilters = {} }) => {
         fetchData(activeFilters); // Refresh the data
     };
 
+    // --- Bulk Tagging Logic ---
+    const handleSelectAll = (e) => {
+        if (e.target.checked) {
+            const allIds = new Set(sortedTransactions.map(t => t.transaction_id));
+            setSelectedIds(allIds);
+        } else {
+            setSelectedIds(new Set());
+        }
+    };
+
+    const handleSelectRow = (id) => {
+        setSelectedIds(prev => {
+            const newSet = new Set(prev);
+            if (newSet.has(id)) newSet.delete(id);
+            else newSet.add(id);
+            return newSet;
+        });
+    };
+
+    const handleBulkTagSubmit = async () => {
+        if (!bulkTagInput.trim()) {
+            alert("Please enter a tag to apply.");
+            return;
+        }
+        if (selectedIds.size === 0) return;
+
+        setIsBulkTagging(true);
+        try {
+            const response = await fetch('/api/transactions/bulk-tag', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    transaction_ids: Array.from(selectedIds),
+                    tags: bulkTagInput.split(',').map(t => t.trim()).filter(Boolean)
+                })
+            });
+
+            if (!response.ok) {
+                const errData = await response.json();
+                throw new Error(errData.detail || 'Bulk tagging failed');
+            }
+            
+            alert(`Successfully tagged ${selectedIds.size} transactions.`);
+            setBulkTagInput('');
+            setSelectedIds(new Set());
+            fetchData(activeFilters); // Refresh list to show new tags
+        } catch (err) {
+            alert(`Error: ${err.message}`);
+        } finally {
+            setIsBulkTagging(false);
+        }
+    };
+
     const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
         style: 'currency',
         currency: 'USD',
@@ -200,6 +260,29 @@ const TransactionListView = ({ initialFilters = {} }) => {
 
             <div className="card">
                 <h2>Transaction Details</h2>
+                
+                {selectedIds.size > 0 && (
+                    <div className="bulk-action-bar">
+                        <div>
+                            <strong>{selectedIds.size} transaction{selectedIds.size > 1 ? 's' : ''} selected.</strong>
+                        </div>
+                        <div>
+                            <input 
+                                type="text" 
+                                placeholder="Enter tags (comma separated)" 
+                                value={bulkTagInput}
+                                onChange={(e) => setBulkTagInput(e.target.value)}
+                            />
+                            <button onClick={handleBulkTagSubmit} disabled={isBulkTagging}>
+                                {isBulkTagging ? 'Applying...' : 'Apply Tags'}
+                            </button>
+                            <button className="btn-secondary" onClick={() => setSelectedIds(new Set())}>
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                )}
+
                 {loading ? (
                     <p>Loading transactions...</p>
                 ) : transactions.length > 0 ? (
@@ -207,6 +290,14 @@ const TransactionListView = ({ initialFilters = {} }) => {
                         <table>
                             <thead>
                                 <tr>
+                                    <th className="checkbox-cell">
+                                        <input 
+                                            type="checkbox" 
+                                            checked={sortedTransactions.length > 0 && selectedIds.size === sortedTransactions.length}
+                                            onChange={handleSelectAll}
+                                            title="Select all visible rows"
+                                        />
+                                    </th>
                                     <th className="sortable" onClick={() => requestSort('transaction_date')}>
                                         Date <span className="sort-indicator">{getSortIndicator('transaction_date')}</span>
                                     </th>
@@ -236,6 +327,13 @@ const TransactionListView = ({ initialFilters = {} }) => {
                             <tbody>
                                 {sortedTransactions.map(t => (
                                     <tr key={t.transaction_id} onDoubleClick={() => setEditingTransaction(t)} style={{cursor: 'pointer'}} title="Double-click to edit">
+                                        <td className="checkbox-cell" onClick={(e) => e.stopPropagation()}>
+                                            <input 
+                                                type="checkbox" 
+                                                checked={selectedIds.has(t.transaction_id)}
+                                                onChange={() => handleSelectRow(t.transaction_id)}
+                                            />
+                                        </td>
                                         <td>{formatDate(t.transaction_date)}</td>
                                         <td>{t.account_id}</td>
                                         <td>{t.institution}</td>

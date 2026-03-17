@@ -1,4 +1,4 @@
-Curie Trust Financial Control Center — Project Requirements Specification (PRS) v1.9
+Curie Trust Financial Control Center — Project Requirements Specification (PRS) v1.9.3
 
 1) Mission
 
@@ -8,72 +8,46 @@ Build a local-first financial control center for the Curie Trust that continuous
 	3.	What rate of return are we getting on our investments (before fees, after fees, after taxes)?
 	4.	(Forecast) Will our capital last, and are we tax-optimized?
 
-The system ingests periodic CSV/spreadsheet uploads from multiple financial institutions, normalizes them into Curie Trust’s internal data model, and keeps market values fresh via API “drip” updates.
-
-⸻
-
-2) Core UX Requirements (Sankey-forward)
-[... unchanged ...]
-
 ⸻
 
 4) Screens (UI Requirements Summary)
 
-4.1 - 4.5 [... unchanged ...]
-
-4.6 Forecast (The Time Machine) - UPGRADED v1.9
+4.6 Forecast (The Time Machine) - UPGRADED v1.9.3
 	•	Global Settings:
 		•	Birth Year, Inflation Rate, Return Rate.
 		•	Tax Filing Status (Single/Joint).
+		•	RMD Start Age (Default 73, configurable for SECURE 2.0 compliance).
 	•	Strategy Configuration:
 		•	Withdrawal Order: Standard (Taxable -> Deferred -> Roth) vs. Legacy Saver (Deferred -> Taxable -> Roth).
-		•	Roth Conversion Strategy: "Fill to Bracket Top" (converting Deferred to Roth up to the 22% or 24% tax ceiling).
-		•	Principal Residence Strategies: Mutually exclusive parallel tracking for liquidating the primary home or converting it into an inflation-adjusted, taxable rental property.
+		•	Roth Conversion Strategy: "Fill to Bracket Top" (12%, 22%, 24%, 32%).
+		•	Charitable & DAF Strategy: Configure specific years and tranches to transfer highly appreciated Taxable assets to a Donor Advised Fund, bypassing Capital Gains taxes and simulating charitable deductions.
 	•	The Simulation (Runway Logic):
-		•	Calculates RMDs (Required Minimum Distributions) starting at age 75.
+		•	Calculates RMDs based on dynamic start age.
 		•	Applies progressive tax brackets to RMDs, Withdrawals, and Rental Yield.
-		•	Models the "Tax Drag" on the portfolio over time.
+		•	Embedded Gains Logic: Withdrawals from the Taxable bucket trigger proportionate Long-Term Capital Gains tax, preventing "free" liquidations of massive assets like CCRC buy-ins.
+	•	Real Estate Lifecycle Engine:
+		•	Models future property purchases by deducting capital from liquid assets in the target year.
+		•	Applies annual maintenance drag to cashflow during ownership years.
+		•	Models property liquidation by converting appreciated real estate equity back into liquid taxable assets in the sale year.
 	•	Discretionary Budget:
-		•	Manual entries feature double-click editing, toggle state persistence (preventing ghost clones), and hard-delete confirmation protocols.
-	•	Visualization:
-		•	Runway Graph (Net Worth).
-		•	Tax Exposure Graph: Income vs. Tax Brackets over time.
-
-4.7 Projects and Tags Explorer - NEW
-	•	Visual Tag Cloud: Dynamically sized based on either transaction count or monetary volume.
-	•	Cross-Module Aggregation: Unifies tags across both Cashflow (Transactions) and Portfolio (Holdings).
-	•	Drill-Down Detail: Inspecting a tag reveals a unified ledger of all associated assets and cash movements.
-
-⸻
-
-8) Internal Data Model (Additions for v1.9)
-	•	`app_settings` (KV store additions):
-		•	`forecast_tax_filing_status`: 'single' | 'joint'
-		•	`forecast_withdrawal_strategy`: 'standard' | 'legacy_optimize'
-		•	`forecast_roth_conversion_target`: integer (amount to convert annually)
-		•	`forecast_tax_bracket_ceiling`: integer (e.g., 190000 for the 22% bracket)
+		•	Manual entries feature double-click editing, toggle state persistence, and hard-delete confirmation.
 
 ⸻
 
 10) Phased Delivery
 
-[... Phases 0-9 Completed ...]
+Phase 10.5: Tax Physics Refinement (Stable)
 
-Phase 10: The Strategic Tax Engine (Next)
-	•	Goal: Optimize pre-tax retirement accounts using progressive tax logic.
+Phase 10.6: Advanced Capital Evasion
+	•	Goal: Model high-net-worth tax avoidance strategies.
 	•	Features:
-		•	Implement 2024 Federal/State Tax Brackets (Simplified).
-		•	Calculate RMDs (Age 75 rule).
-		•	Simulate "Tax Bracket Filling" via Roth Conversions.
-		•	Visualize the "Tax Bomb" (RMD impact on future tax rates).
+		•	DAF (Donor Advised Fund) Tranche transfers to bypass embedded LTCG.
+
+Phase 10.7: Real Estate Lifecycle Engine (New)
+	•	Goal: Model the acquisition, carrying costs, and liquidation of future real estate.
+	•	Features:
+		•	Expand Property model with Purchase Year, Sale Year, and Annual Maintenance.
+		•	Update Simulation Engine to process these temporal liquidity events.
 
 Phase 11: Legacy & Liquidation View (Thereafter)
 	•	Goal: Show the "True" value of the estate after estimated liquidation taxes.
-	•	Features:
-		•	Calculate "Liquidation Value" (Net Worth minus embedded capital gains/income tax).
-		•	Compare "Step-Up Basis" value (Taxable accounts) vs. "Tax-Free" value (Roth) vs. "Tax-Heavy" value (Deferred).
-
-11) Deferred / "Maybe Someday" (Low Priority)
-	•	Complex Housing Scenarios (CCRC entrance fees): Use Discretionary Budget manual entries instead.
-	•	Survivor Modeling: Too much variance; stick to Joint for now.
-	•	Specific Tax Lot Selling: Average cost basis is sufficient for strategic forecasting.

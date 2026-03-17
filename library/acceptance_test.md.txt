@@ -1,4 +1,4 @@
-# Curie Trust - Acceptance Test Plan v1.9
+# Curie Trust - Acceptance Test Plan v1.9.3
 
 ## 1. Introduction
 This document outlines the acceptance criteria for the Curie Trust Financial Control Center.
@@ -10,40 +10,21 @@ All previous phases are stable.
 
 ---
 
-## 2.5. Project/Tags Engine & Budget Refinements (Recently Completed)
+## 3. Phase 10: The Strategic Tax Engine
 
-**Objective**: Ensure tags aggregate properly across modules and verify discretionary budget safeguards.
+### 10.1 - 10.5 Progressive Tax & Logic (Completed)
+Stable.
 
-**Acceptance Criteria for Projects/Tags**:
-- [ ] **Tag Cloud Rendering**: Verify that the Tag Cloud correctly sizes tags based on the selected metric (Item Count vs. Total Volume).
-- [ ] **Cross-Module Aggregation**: Verify that a tag applied to both a stock holding and a cashflow transaction accurately sums the volume of both in the summary view.
-- [ ] **Drill-Down Inspection**: Verify that clicking a tag opens a detail view showing the exact transaction and holding records associated with that tag.
-
-**Acceptance Criteria for Discretionary Budget**:
-- [ ] **Edit Mode**: Verify that double-clicking a budget item in the table populates the flight controls form for editing.
-- [ ] **Ghost Clone Prevention**: Verify that toggling the enable/disable state of an item grays it out without creating a duplicate record in the database or UI.
-- [ ] **Delete Safeguard**: Verify that clicking the delete icon prompts the user with a strict confirmation warning before permanent removal.
-
----
-
-## 3. Phase 10: The Strategic Tax Engine (Next)
-
-**Objective**: Transform the forecast from a simple growth model to a tax-aware optimization engine.
-
-### 10.1 Progressive Tax Logic
+### 10.6 Advanced Capital Evasion (DAFs)
 **Acceptance Criteria**:
-- [ ] **Bracket Calculation**: Verify that $100k income results in a lower effective rate than $300k income (progressive vs flat).
-- [ ] **Standard Deduction**: Verify that the first ~$29k (Joint) or ~$14k (Single) of income is tax-free.
+- [ ] **Tranche Execution**: Verify that scheduling a $100k DAF transfer in 2026 accurately removes $100k from the Taxable bucket in that year.
+- [ ] **LTCG Bypass**: Verify that this transfer does *not* trigger the embedded LTCG tax penalty that a standard withdrawal would.
 
-### 10.2 RMDs (Required Minimum Distributions)
+### 10.7 Real Estate Lifecycle Engine (Vacation Home Simulation)
 **Acceptance Criteria**:
-- [ ] **Age Trigger**: Verify RMDs begin automatically at age 75 (or configured age).
-- [ ] **Forced Withdrawal**: Verify that even if spending needs are met by Cash/Yield, the RMD is still withdrawn from the Deferred bucket and added to Taxable Income.
-
-### 10.3 Roth Conversions (Bracket Filling)
-**Acceptance Criteria**:
-- [ ] **Filling the Bucket**: If the user sets a "Top of 22% Bracket" target, verify the system converts just enough Deferred assets to hit that limit, but no more.
-- [ ] **Tax Impact**: Verify that taxes on the conversion are paid in the current year (ideally from Taxable brokerage).
+- [ ] **Future Purchase**: Add a property with a purchase year of Current Year + 5. Verify that in Year 5, the Liquid Assets drop by the exact purchase price, and Real Estate Equity increases accordingly.
+- [ ] **Maintenance Drag**: Verify that during the years the property is owned, the total expenses line increases by the `annual_maintenance` amount (adjusted for inflation).
+- [ ] **Liquidation Recoup**: Set a sale year for the property. Verify that in the sale year, the Real Estate Equity drops, and the compounded, appreciated value of the property is injected back into the Taxable Liquid Assets bucket.
 
 ---
 

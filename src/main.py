@@ -64,6 +64,10 @@ class TransactionUpdate(BaseModel):
     cashflow_type: Optional[str] = None
     tags: List[str] = []
 
+class BulkTagRequest(BaseModel):
+    transaction_ids: List[str]
+    tags: List[str]
+
 class HoldingUpdate(BaseModel):
     tags: List[str] = []
     asset_type: Optional[str] = None
@@ -194,6 +198,11 @@ class ForecastConfig(BaseModel):
     withdrawal_strategy: Optional[str] = 'standard'
     tax_filing_status: Optional[str] = 'single'
     roth_conversion_target: Optional[str] = 'none'
+    healthcare_amplifier: Optional[float] = 1.5
+    worst_case_drop: Optional[float] = 0.02
+    best_case_boost: Optional[float] = 0.02
+    stress_years: Optional[int] = 10
+    daf_transfers: Optional[List[Dict[str, Union[int, float]]]] = None
 
 class DiscretionaryItemCreate(BaseModel):
     item_id: Optional[str] = None
@@ -394,6 +403,39 @@ async def get_account_performance(mode: str = Query("actuals")):
 @app.get("/api/transactions", tags=["Data"])
 async def get_filtered_transactions(filters: Dict[str, Any] = Depends(get_transaction_filters)):
     return db.get_transactions(filters)
+
+@app.post("/api/transactions/bulk-tag", tags=["Data"])
+async def bulk_tag_transactions(payload: BulkTagRequest):
+    updated = []
+    for tx_id in payload.transaction_ids:
+        tx_dict = db.get_transaction(tx_id)
+        if tx_dict:
+            existing_tags = [t.strip() for t in (tx_dict.get('tags') or '').split(',') if t.strip()]
+            new_tags = list(set(existing_tags + payload.tags))
+            
+            tx_date = datetime.strptime(tx_dict['transaction_date'].split(' ')[0], '%Y-%m-%d').date()
+            tx_obj = Transaction(
+                transaction_id=tx_dict['transaction_id'],
+                account_id=tx_dict['account_id'],
+                transaction_date=tx_date,
+                amount=Decimal(str(tx_dict['amount'])),
+                description=tx_dict['description'],
+                category=tx_dict.get('category'),
+                cashflow_type=CashflowType.from_string(tx_dict.get('cashflow_type')),
+                tags=new_tags,
+                merchant=tx_dict.get('merchant'),
+                asset_id=tx_dict.get('asset_id'),
+                import_run_id=tx_dict.get('import_run_id'),
+                raw_data_hash=tx_dict.get('raw_data_hash'),
+                institution=tx_dict.get('institution'),
+                original_category=tx_dict.get('original_category')
+            )
+            tx_obj.is_transfer = tx_obj.cashflow_type == CashflowType.TRANSFER
+            updated.append(tx_obj)
+    
+    if updated:
+        db.save_transactions(updated)
+    return {"message": f"Successfully tagged {len(updated)} transactions."}
 
 @app.put("/api/transactions/{transaction_id}", tags=["Data"])
 async def update_transaction(transaction_id: str, payload: TransactionUpdate):
@@ -628,7 +670,12 @@ async def get_forecast_config():
         "base_col_lookback_years": db.get_setting('forecast_base_col_lookback_years') or 1,
         "withdrawal_strategy": db.get_setting('forecast_withdrawal_strategy') or 'standard',
         "tax_filing_status": db.get_setting('forecast_tax_filing_status') or 'single',
-        "roth_conversion_target": db.get_setting('forecast_roth_conversion_target') or 'none'
+        "roth_conversion_target": db.get_setting('forecast_roth_conversion_target') or 'none',
+        "healthcare_amplifier": db.get_setting('forecast_healthcare_amplifier') or 1.5,
+        "worst_case_drop": db.get_setting('forecast_worst_case_drop') or 0.02,
+        "best_case_boost": db.get_setting('forecast_best_case_boost') or 0.02,
+        "stress_years": db.get_setting('forecast_stress_years') or 10,
+        "daf_transfers": db.get_setting('forecast_daf_transfers') or []
     }
 
 @app.put("/api/forecast/config", status_code=204, tags=["Forecast"])
@@ -674,6 +721,16 @@ async def update_forecast_config(config: ForecastConfig):
         db.set_setting('forecast_tax_filing_status', config.tax_filing_status)
     if 'roth_conversion_target' in fields_set:
         db.set_setting('forecast_roth_conversion_target', config.roth_conversion_target)
+    if 'healthcare_amplifier' in fields_set:
+        db.set_setting('forecast_healthcare_amplifier', config.healthcare_amplifier)
+    if 'worst_case_drop' in fields_set:
+        db.set_setting('forecast_worst_case_drop', config.worst_case_drop)
+    if 'best_case_boost' in fields_set:
+        db.set_setting('forecast_best_case_boost', config.best_case_boost)
+    if 'stress_years' in fields_set:
+        db.set_setting('forecast_stress_years', config.stress_years)
+    if 'daf_transfers' in fields_set:
+        db.set_setting('forecast_daf_transfers', config.daf_transfers)
 
     return Response(status_code=204)
 

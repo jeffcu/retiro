@@ -13,18 +13,28 @@ const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
 
 // --- CHARTS ---
 
-const RunwayChart = ({ data }) => {
-    if (!data || data.length === 0) return <p>No simulation data available.</p>;
+const RunwayChart = ({ likelyData, worstData, bestData }) => {
+    if (!likelyData || likelyData.length === 0) return <p>No simulation data available.</p>;
 
-    const netWorthSeries = {
-        id: "Total Net Worth",
-        data: data.map(d => ({ x: d.age, y: d.total_net_worth }))
+    const likelySeries = {
+        id: "Likely Scenario",
+        data: likelyData.map(d => ({ x: d.age, y: d.total_net_worth }))
+    };
+    
+    const worstSeries = {
+        id: "Worst Case",
+        data: (worstData || []).map(d => ({ x: d.age, y: d.total_net_worth }))
+    };
+    
+    const bestSeries = {
+        id: "Best Case",
+        data: (bestData || []).map(d => ({ x: d.age, y: d.total_net_worth }))
     };
 
     return (
         <div style={{ height: '350px' }}>
             <ResponsiveLine
-                data={[netWorthSeries]}
+                data={[bestSeries, likelySeries, worstSeries]}
                 margin={{ top: 20, right: 110, bottom: 50, left: 80 }}
                 xScale={{ type: 'linear', min: 'auto', max: 'auto' }}
                 yScale={{ type: 'linear', min: 'auto', max: 'auto' }}
@@ -33,18 +43,17 @@ const RunwayChart = ({ data }) => {
                     tickSize: 5, tickPadding: 5 
                 }}
                 axisLeft={{ 
-                    legend: 'Value ($)', legendOffset: -70, legendPosition: 'middle', 
+                    legend: 'Total Net Worth ($)', legendOffset: -70, legendPosition: 'middle', 
                     format: value => `$${value / 1000000}M`
                 }}
-                colors={['#E2B254']} 
-                lineWidth={4}
-                pointSize={4}
+                colors={['#00f2fe', '#E2B254', '#ff6b6b']} 
+                lineWidth={3}
+                pointSize={2}
                 pointColor={{ theme: 'background' }}
                 pointBorderWidth={2}
                 pointBorderColor={{ from: 'serieColor' }}
                 useMesh={true}
-                enableArea={true}
-                areaOpacity={0.1}
+                enableArea={false}
                 tooltip={({ point }) => (
                     <div
                         style={{
@@ -166,15 +175,21 @@ const AssetCompositionChart = ({ data }) => {
 const ExpenseCompositionChart = ({ data }) => {
     if (!data || data.length === 0) return null;
 
+    const idMap = {
+        base_col_expense: 'Base Living',
+        discretionary_expense: 'Discretionary',
+        daf_transfer: 'DAF/Charity'
+    };
+
     return (
         <div style={{ height: '300px' }}>
             <ResponsiveBar
                 data={data}
-                keys={['base_col_expense', 'discretionary_expense']}
+                keys={['base_col_expense', 'discretionary_expense', 'daf_transfer']}
                 indexBy="age"
                 margin={{ top: 20, right: 20, bottom: 50, left: 70 }}
                 padding={0.1}
-                colors={['#ff6b6b', '#feca57']}
+                colors={['#ff6b6b', '#feca57', '#05c46b']}
                 axisBottom={{ legend: 'Age', legendOffset: 36, legendPosition: 'middle' }}
                 axisLeft={{ 
                     format: value => `$${value / 1000}k`,
@@ -182,11 +197,15 @@ const ExpenseCompositionChart = ({ data }) => {
                     legendPosition: 'middle',
                     legendOffset: -60
                 }}
-                enableLabel={false}
+                enableLabel={true}
+                labelSkipWidth={12}
+                labelSkipHeight={12}
+                labelTextColor={{ from: 'color', modifiers: [['darker', 2]] }}
+                label={d => d.value >= 1000 ? `$${Math.round(d.value / 1000)}k` : ''}
                 tooltip={({ id, value, indexValue }) => (
-                    <div style={{ padding: 12, background: '#222', color: '#fff', border: '1px solid #555' }}>
+                    <div style={{ padding: 12, background: '#222', color: '#fff', border: '1px solid #555', borderRadius: '4px' }}>
                         <strong>Age {indexValue}</strong><br />
-                        {id}: {formatCurrency(value)}
+                        {idMap[id] || id}: {formatCurrency(value)}
                     </div>
                 )}
                 theme={{
@@ -603,6 +622,55 @@ const PhaseConfiguration = ({ config, setConfig, onSave }) => {
     );
 };
 
+const DAFStrategyConfig = ({ config, onSettingChange }) => {
+    const [newTranche, setNewTranche] = useState({ year: new Date().getFullYear(), amount: '' });
+    const tranches = config.daf_transfers || [];
+
+    const handleAdd = () => {
+        if (!newTranche.year || !newTranche.amount) return;
+        const updated = [...tranches, { year: parseInt(newTranche.year), amount: parseFloat(newTranche.amount) }];
+        onSettingChange('daf_transfers', updated);
+        setNewTranche({ year: new Date().getFullYear(), amount: '' });
+    };
+
+    const handleRemove = (idx) => {
+        const updated = tranches.filter((_, i) => i !== idx);
+        onSettingChange('daf_transfers', updated);
+    };
+
+    return (
+        <CollapsibleCard title="8) Charitable & DAF Strategies" className="grid-half-right">
+            <p style={{fontSize: '0.8em', color: '#aaa', marginTop: '-0.5rem'}}>
+                Transfer highly appreciated Taxable assets to a Donor Advised Fund to bypass Capital Gains.
+            </p>
+            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+                <input type="number" placeholder="Year" value={newTranche.year} onChange={e => setNewTranche({...newTranche, year: e.target.value})} style={{width: '80px', padding: '0.5rem', background: '#333', color: '#fff', border: '1px solid #555', borderRadius: '4px'}} />
+                <input type="number" placeholder="Amount ($)" value={newTranche.amount} onChange={e => setNewTranche({...newTranche, amount: e.target.value})} style={{flex: 1, padding: '0.5rem', background: '#333', color: '#fff', border: '1px solid #555', borderRadius: '4px'}} />
+                <button onClick={handleAdd} style={{background: 'var(--gold-accent)', color: '#222', border: 'none', padding: '0.5rem 1rem', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer'}}>Add</button>
+            </div>
+            <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '0.9em'}}>
+                <thead>
+                    <tr style={{borderBottom: '1px solid #444', textAlign: 'left'}}>
+                        <th style={{paddingBottom: '0.5rem'}}>Year</th>
+                        <th style={{paddingBottom: '0.5rem'}}>Amount</th>
+                        <th style={{paddingBottom: '0.5rem'}}></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {tranches.length === 0 ? <tr><td colSpan="3" style={{color: '#666', padding: '0.5rem 0'}}>No tranches scheduled.</td></tr> : null}
+                    {tranches.map((t, i) => (
+                        <tr key={i} style={{borderBottom: '1px solid #333'}}>
+                            <td style={{padding: '0.5rem 0'}}>{t.year}</td>
+                            <td>{formatCurrency(t.amount)}</td>
+                            <td style={{textAlign: 'right'}}><button onClick={() => handleRemove(i)} style={{background: 'none', border: 'none', color: '#ff6b6b', cursor: 'pointer', fontSize: '1.2em'}}>✕</button></td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </CollapsibleCard>
+    );
+};
+
 const ForecastSettings = ({ config, setConfig, onSave, onSettingChange }) => {
     const handleChange = (e) => {
         const { name, value } = e.target;
@@ -619,7 +687,7 @@ const ForecastSettings = ({ config, setConfig, onSave, onSettingChange }) => {
     }
 
     return (
-        <CollapsibleCard title="Simulation Constants" className="grid-half-right">
+        <CollapsibleCard title="Simulation Constants & Acid Tests" className="grid-half-right">
             <div className="setting-group">
                 <label>Withdrawal Strategy</label>
                 <select 
@@ -655,35 +723,55 @@ const ForecastSettings = ({ config, setConfig, onSave, onSettingChange }) => {
                 >
                     <option value="none">No Conversions</option>
                     <option value="fill_22">Fill to Top of 22% Bracket</option>
+                    <option value="fill_24">Fill to Top of 24% Bracket</option>
+                    <option value="fill_32">Fill to Top of 32% Bracket</option>
                 </select>
             </div>
             
-            <div className="setting-group">
-                <label>Estimated State Tax Rate (e.g. 0.093 for 9.3%)</label>
-                <input 
-                    type="number" 
-                    name="state_tax_rate" 
-                    step="0.001" 
-                    placeholder="0.05" 
-                    value={config.state_tax_rate || ''} 
-                    onChange={handleChange} 
-                    onBlur={onSave} 
-                />
-                <small style={{color:'#999'}}>Applied to taxable income in simulation.</small>
+            <div style={{display:'flex', gap:'1rem'}}>
+                <div className="setting-group" style={{flex:1}}>
+                    <label>Birth Year</label>
+                    <input type="number" name="birth_year" value={config.birth_year || ''} onChange={handleChange} onBlur={onSave} />
+                </div>
+                <div className="setting-group" style={{flex:1}}>
+                    <label>State Tax Rate (0.05=5%)</label>
+                    <input type="number" name="state_tax_rate" step="0.001" value={config.state_tax_rate || ''} onChange={handleChange} onBlur={onSave} />
+                </div>
             </div>
             
-            <div className="setting-group">
-                <label>Birth Year</label>
-                <input type="number" name="birth_year" value={config.birth_year || ''} onChange={handleChange} onBlur={onSave} />
+            <div style={{display:'flex', gap:'1rem'}}>
+                <div className="setting-group" style={{flex:1}}>
+                    <label>Inflation Rate (0.03=3%)</label>
+                    <input type="number" name="inflation_rate" step="0.001" value={config.inflation_rate || ''} onChange={handleChange} onBlur={onSave} />
+                </div>
+                <div className="setting-group" style={{flex:1}}>
+                    <label>Portfolio Return (0.05=5%)</label>
+                    <input type="number" name="return_rate" step="0.001" value={config.return_rate || ''} onChange={handleChange} onBlur={onSave} />
+                </div>
             </div>
-            <div className="setting-group">
-                <label>Inflation Rate (0.03 = 3%)</label>
-                <input type="number" name="inflation_rate" step="0.001" value={config.inflation_rate || ''} onChange={handleChange} onBlur={onSave} />
+
+            <h4 style={{marginTop: '1rem', borderBottom: '1px solid #444', color: '#ff6b6b'}}>Stress Testing (Worst / Best Scenarios)</h4>
+            <div style={{display:'flex', gap:'1rem'}}>
+                <div className="setting-group" style={{flex:1}}>
+                    <label>Healthcare Infl. Amplifier</label>
+                    <input type="number" name="healthcare_amplifier" step="0.1" value={config.healthcare_amplifier || 1.5} onChange={handleChange} onBlur={onSave} title="Multiplier applied to base inflation for healthcare." />
+                </div>
+                <div className="setting-group" style={{flex:1}}>
+                    <label>Stress Years (e.g. 10)</label>
+                    <input type="number" name="stress_years" value={config.stress_years || 10} onChange={handleChange} onBlur={onSave} />
+                </div>
             </div>
-            <div className="setting-group">
-                <label>Portfolio Return Rate (0.05 = 5%)</label>
-                <input type="number" name="return_rate" step="0.001" value={config.return_rate || ''} onChange={handleChange} onBlur={onSave} />
+            <div style={{display:'flex', gap:'1rem'}}>
+                <div className="setting-group" style={{flex:1}}>
+                    <label>Worst Case Return Drop</label>
+                    <input type="number" name="worst_case_drop" step="0.01" value={config.worst_case_drop || 0.02} onChange={handleChange} onBlur={onSave} title="Subtracts from base return (0.02 = -2%)" />
+                </div>
+                <div className="setting-group" style={{flex:1}}>
+                    <label>Best Case Return Boost</label>
+                    <input type="number" name="best_case_boost" step="0.01" value={config.best_case_boost || 0.02} onChange={handleChange} onBlur={onSave} title="Adds to base return" />
+                </div>
             </div>
+
         </CollapsibleCard>
     );
 };
@@ -700,9 +788,9 @@ const ForecastTelemetryTable = ({ simulationData }) => {
     const categories = Array.from(allCategoriesSet).sort();
 
     return (
-        <CollapsibleCard title="Detailed Flight Telemetry" className="grid-full" defaultOpen={false}>
+        <CollapsibleCard title="Detailed Flight Telemetry (Likely Scenario)" className="grid-full" defaultOpen={false}>
             <div style={{overflowX: 'auto'}}>
-                <table className="budget-table" style={{minWidth: '1000px'}}>
+                <table className="budget-table" style={{minWidth: '1400px'}}>
                     <thead>
                         <tr>
                             <th>Year</th>
@@ -710,13 +798,19 @@ const ForecastTelemetryTable = ({ simulationData }) => {
                             <th>Phase</th>
                             <th>Strategy</th>
                             <th>Liquid Assets</th>
+                            <th>Real Estate</th>
+                            <th>Total Net Worth</th>
                             <th>NW Delta</th>
                             <th>IRA Bal</th>
                             <th>Roth Bal</th>
                             <th>Taxable Bal</th>
-                            <th style={{borderLeft: '2px solid #555', paddingLeft: '10px'}}>Taxable Income</th>
+                            <th style={{borderLeft: '2px solid #555', paddingLeft: '10px'}}>Soc. Security</th>
+                            <th>RMD</th>
+                            <th>Tax. W/D</th>
+                            <th>Taxable Income</th>
                             <th>Total Tax</th>
                             <th>Roth Conv.</th>
+                            <th>DAF Trans.</th>
                             {categories.map(cat => (
                                 <th key={cat}>{cat}</th>
                             ))}
@@ -732,14 +826,21 @@ const ForecastTelemetryTable = ({ simulationData }) => {
                                 <td style={{color: row.strategy_executed === 'Accumulation' ? '#05c46b' : (row.strategy_executed.includes('Age < 60') ? '#ff9f43' : '#feca57')}}>
                                     {row.strategy_executed}
                                 </td>
-                                <td style={{fontWeight: 'bold'}}>{formatCurrency(row.liquid_assets)}</td>
+                                <td>{formatCurrency(row.liquid_assets)}</td>
+                                <td>{formatCurrency(row.real_estate_equity)}</td>
+                                <td style={{fontWeight: 'bold', color: '#fff'}}>{formatCurrency(row.total_net_worth)}</td>
                                 <td style={{color: row.nw_delta >= 0 ? '#05c46b' : '#ff6b6b'}}>{formatCurrency(row.nw_delta)}</td>
                                 <td style={{color: '#feca57'}}>{formatCurrency(row.bucket_deferred)}</td>
                                 <td style={{color: '#ff9ff3'}}>{formatCurrency(row.bucket_roth)}</td>
                                 <td style={{color: '#00f2fe'}}>{formatCurrency(row.bucket_taxable)}</td>
-                                <td style={{borderLeft: '2px solid #555', paddingLeft: '10px'}}>{formatCurrency(row.tax_metrics?.taxable_income)}</td>
+                                
+                                <td style={{borderLeft: '2px solid #555', paddingLeft: '10px'}}>{formatCurrency(row.social_security_income)}</td>
+                                <td>{formatCurrency(row.rmd_event)}</td>
+                                <td style={{color: '#ff9a9a'}}>{formatCurrency(row.taxable_withdrawals)}</td>
+                                <td>{formatCurrency(row.tax_metrics?.taxable_income)}</td>
                                 <td>{formatCurrency(row.tax_metrics?.total_tax)}</td>
                                 <td style={{color: row.roth_conversion > 0 ? '#ff9ff3' : 'inherit'}}>{formatCurrency(row.roth_conversion)}</td>
+                                <td style={{color: row.daf_transfer > 0 ? '#05c46b' : 'inherit'}}>{formatCurrency(row.daf_transfer)}</td>
                                 
                                 {categories.map(cat => (
                                     <td key={cat}>{formatCurrency(row.expense_breakdown[cat])}</td>
@@ -762,7 +863,11 @@ const ForecastView = () => {
     const [baseColCategories, setBaseColCategories] = useState([]);
     const [sunsetDates, setSunsetDates] = useState({}); 
     const [baseColTotal, setBaseColTotal] = useState(0);
-    const [simulationData, setSimulationData] = useState([]);
+    
+    const [likelyData, setLikelyData] = useState([]);
+    const [worstData, setWorstData] = useState([]);
+    const [bestData, setBestData] = useState([]);
+    
     const [alerts, setAlerts] = useState([]);
     const [budgetItems, setBudgetItems] = useState([]);
     const [refreshKey, setRefreshKey] = useState(0);
@@ -779,7 +884,10 @@ const ForecastView = () => {
 
     useEffect(() => {
         fetch(`/api/forecast/simulation?mode=${mode}`).then(r => r.json()).then(data => {
-            setSimulationData(data.simulation_series);
+            setLikelyData(data.simulation_series || []);
+            setWorstData(data.worst_series || []);
+            setBestData(data.best_series || []);
+            
             setAlerts(data.alerts || []);
             if (data.settings && data.settings.starting_base_col) {
                 setBaseColTotal(data.settings.starting_base_col);
@@ -860,21 +968,24 @@ const ForecastView = () => {
                 <h2>1) The Runway (Age 95 Horizon)</h2>
                 {alerts.length > 0 && (
                     <div style={{background: '#5a2a2a', color: '#ffc048', padding: '1rem', marginBottom: '1rem', borderRadius: '4px'}}>
-                        <strong>Warning:</strong> {alerts.map((a, i) => <div key={i}>{a}</div>)}
+                        <strong>Engine Alerts:</strong> 
+                        <ul style={{margin: '0.5rem 0 0 0', paddingLeft: '1.2rem'}}>
+                            {alerts.map((a, i) => <li key={i}>{a}</li>)}
+                        </ul>
                     </div>
                 )}
-                <RunwayChart data={simulationData} />
+                <RunwayChart likelyData={likelyData} worstData={worstData} bestData={bestData} />
             </div>
             
             <div className="dashboard-grid">
                 <div className="chart-panel grid-half-left">
-                    <h3>2) Expense Profile</h3>
-                    <ExpenseCompositionChart data={simulationData} />
+                    <h3>2) Capital Outflows & Donations (Likely Scenario)</h3>
+                    <ExpenseCompositionChart data={likelyData} />
                 </div>
 
                 <div className="chart-panel grid-half-right">
-                    <h3>3) Asset Composition</h3>
-                    <AssetCompositionChart data={simulationData} />
+                    <h3>3) Asset Composition (Likely Scenario)</h3>
+                    <AssetCompositionChart data={likelyData} />
                 </div>
             </div>
 
@@ -908,6 +1019,11 @@ const ForecastView = () => {
                     onSave={() => saveConfig()}
                 />
 
+                <DAFStrategyConfig
+                    config={config}
+                    onSettingChange={handleImmediateSettingChange}
+                />
+
                 <ForecastSettings 
                     config={config} 
                     setConfig={setConfig} 
@@ -916,7 +1032,7 @@ const ForecastView = () => {
                 />
             </div>
 
-            <ForecastTelemetryTable simulationData={simulationData} />
+            <ForecastTelemetryTable simulationData={likelyData} />
         </div>
     );
 };
