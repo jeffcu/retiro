@@ -1942,7 +1942,7 @@ class Holding:
     market_value: Decimal | None = None
     last_price: Decimal | None = None
     last_price_timestamp: datetime | None = None
-    last_price_update_failed: bool = False # NEW: Flag for UI
+    last_price_update_failed: bool = False
     tags: list[str] = field(default_factory=list)
 
 
@@ -1956,6 +1956,9 @@ class Property:
     current_value: Decimal
     appreciation_rate: Decimal  # e.g. 0.03 for 3%
     is_primary: bool = False
+    purchase_year: Optional[int] = None
+    sale_year: Optional[int] = None
+    annual_maintenance: Decimal = Decimal('0.0')
 
 
 @dataclass
@@ -1972,12 +1975,12 @@ class PriceQuote:
 class FutureIncomeStream:
     """ PRS Section 8: Represents a recurring future income stream for forecasting. """
     stream_id: str
-    stream_type: str  # e.g., 'Social Security', 'RMD', 'Pension'
+    stream_type: str
     description: str
     start_date: date
     end_date: Optional[date]
     amount: Decimal
-    frequency: str  # e.g., 'monthly', 'annually'
+    frequency: str
     annual_increase_rate: Decimal = Decimal('0.0')
 
 
@@ -1993,7 +1996,6 @@ from datetime import date
 from decimal import Decimal
 
 # Per MDS, the database is a single file in the data/ directory.
-# We resolve the path to its absolute form to avoid ambiguity.
 DB_FILE = (Path(__file__).parent.parent / "data" / "trust.db").resolve()
 _schema_ensured = False
 
@@ -2069,7 +2071,10 @@ def _ensure_schema(conn: sqlite3.Connection):
         mortgage_balance REAL NOT NULL,
         current_value REAL NOT NULL,
         appreciation_rate REAL NOT NULL,
-        is_primary INTEGER DEFAULT 0
+        is_primary INTEGER DEFAULT 0,
+        purchase_year INTEGER,
+        sale_year INTEGER,
+        annual_maintenance REAL DEFAULT 0.0
     );
     """)
 
@@ -2165,176 +2170,49 @@ def _ensure_schema(conn: sqlite3.Connection):
     );
     """)
 
-    # --- GHOST PURGE PROTOCOL ---
-    # Vaporize any legacy discretionary budget items trapped with null or empty item_ids
-    cursor.execute("DELETE FROM discretionary_budget_items WHERE item_id IS NULL OR trim(item_id) = '';")
-    conn.commit() # Flush implicit transaction to prevent OperationalError
-
     # --- Schema Migrations --- 
+    cursor.execute("PRAGMA table_info(properties)")
+    prop_cols = {row[1] for row in cursor.fetchall()}
+    if 'purchase_year' not in prop_cols:
+        print("--- MIGRATING SCHEMA: Adding temporal fields to 'properties'. ---")
+        cursor.execute("ALTER TABLE properties ADD COLUMN purchase_year INTEGER;")
+        cursor.execute("ALTER TABLE properties ADD COLUMN sale_year INTEGER;")
+        cursor.execute("ALTER TABLE properties ADD COLUMN annual_maintenance REAL DEFAULT 0.0;")
+
+    # Holdings columns
     cursor.execute("PRAGMA table_info(holdings)")
     holdings_cols = {row[1] for row in cursor.fetchall()}
     if 'market_value' not in holdings_cols:
-        print("--- MIGRATING SCHEMA: Adding 'market_value' to 'holdings'. ---")
         cursor.execute("ALTER TABLE holdings ADD COLUMN market_value REAL;")
     if 'tags' not in holdings_cols:
-        print("--- MIGRATING SCHEMA: Adding 'tags' to 'holdings'. ---")
         cursor.execute("ALTER TABLE holdings ADD COLUMN tags TEXT;")
     if 'asset_type' not in holdings_cols:
-        print("--- MIGRATING SCHEMA: Adding 'asset_type' to 'holdings'. ---")
         cursor.execute("ALTER TABLE holdings ADD COLUMN asset_type TEXT;")
     if 'last_price_update_failed' not in holdings_cols:
-        print("--- MIGRATING SCHEMA: Adding 'last_price_update_failed' to 'holdings'. ---")
         cursor.execute("ALTER TABLE holdings ADD COLUMN last_price_update_failed INTEGER DEFAULT 0;")
     if 'account_number' not in holdings_cols:
-        print("--- MIGRATING SCHEMA: Adding 'account_number' to 'holdings'. ---")
         cursor.execute("ALTER TABLE holdings ADD COLUMN account_number TEXT;")
 
     cursor.execute("PRAGMA table_info(account_metadata)")
     meta_cols = {row[1] for row in cursor.fetchall()}
     if 'group_name' not in meta_cols:
-        print("--- MIGRATING SCHEMA: Adding 'group_name' to 'account_metadata'. ---")
         cursor.execute("ALTER TABLE account_metadata ADD COLUMN group_name TEXT;")
 
     cursor.execute("PRAGMA table_info(transactions)")
     trans_cols = {row[1] for row in cursor.fetchall()}
     if 'institution' not in trans_cols:
-        print("--- MIGRATING SCHEMA: Adding 'institution' to 'transactions'. ---")
         cursor.execute("ALTER TABLE transactions ADD COLUMN institution TEXT;")
     if 'original_category' not in trans_cols:
-        print("--- MIGRATING SCHEMA: Adding 'original_category' to 'transactions'. ---")
         cursor.execute("ALTER TABLE transactions ADD COLUMN original_category TEXT;")
     if 'tags' not in trans_cols:
-        print("--- MIGRATING SCHEMA: Adding 'tags' to 'transactions'. ---")
         cursor.execute("ALTER TABLE transactions ADD COLUMN tags TEXT;")
 
     cursor.execute("PRAGMA table_info(discretionary_budget_items)")
     budget_cols = {row[1] for row in cursor.fetchall()}
     if 'category' not in budget_cols:
-        print("--- MIGRATING SCHEMA: Adding 'category' to 'discretionary_budget_items'. ---")
         cursor.execute("ALTER TABLE discretionary_budget_items ADD COLUMN category TEXT;")
     if 'is_enabled' not in budget_cols:
-        print("--- MIGRATING SCHEMA: Adding 'is_enabled' to 'discretionary_budget_items'. ---")
         cursor.execute("ALTER TABLE discretionary_budget_items ADD COLUMN is_enabled INTEGER DEFAULT 1;")
-
-    # --- MIGRATING SCHEMA: Constraint Check for 'holdings' ---
-    # Ensure the UNIQUE constraint includes 'account_number'.
-    cursor.execute("PRAGMA index_list('holdings')")
-    indices = cursor.fetchall()
-    needs_rebuild = False
-    
-    found_correct_index = False
-    for idx in indices:
-        if idx['unique']:
-            cursor.execute(f"PRAGMA index_info('{idx['name']}')")
-            cols = cursor.fetchall()
-            col_names = sorted([c['name'] for c in cols])
-            # Check if the unique index covers strictly (account_id, symbol, account_number)
-            if col_names == sorted(['account_id', 'symbol', 'account_number']):
-                found_correct_index = True
-                break
-    
-    # If we didn't find the correct 3-column index, we must rebuild the table
-    if not found_correct_index:
-        needs_rebuild = True
-
-    if needs_rebuild:
-        print("--- MIGRATING SCHEMA: Updating UNIQUE constraint on 'holdings' to include 'account_number'. ---")
-        conn.commit() # Flush implicit transaction to prevent OperationalError
-        cursor.execute("PRAGMA foreign_keys=off;")
-        cursor.execute("BEGIN TRANSACTION;")
-        try:
-            cursor.execute("ALTER TABLE holdings RENAME TO _holdings_old;")
-            cursor.execute("""
-            CREATE TABLE holdings (
-                holding_id TEXT PRIMARY KEY,
-                account_id TEXT NOT NULL,
-                symbol TEXT NOT NULL,
-                quantity REAL NOT NULL,
-                cost_basis REAL NOT NULL,
-                market_value REAL, 
-                last_price REAL,
-                last_price_timestamp TEXT,
-                tags TEXT,
-                asset_type TEXT,
-                last_price_update_failed INTEGER DEFAULT 0,
-                account_number TEXT,
-                UNIQUE(account_id, symbol, account_number)
-            );
-            """)
-            cursor.execute("""
-            INSERT INTO holdings (
-                holding_id, account_id, symbol, quantity, cost_basis, 
-                market_value, last_price, last_price_timestamp, tags, 
-                asset_type, last_price_update_failed, account_number
-            )
-            SELECT 
-                holding_id, account_id, symbol, quantity, cost_basis, 
-                market_value, last_price, last_price_timestamp, tags, 
-                asset_type, last_price_update_failed, account_number
-            FROM _holdings_old;
-            """)
-            cursor.execute("DROP TABLE _holdings_old;")
-            conn.commit()
-            print("--- MIGRATION COMPLETE: 'holdings' table rebuilt with new constraints. ---")
-        except Exception as e:
-            print(f"ERROR during 'holdings' table migration: {e}. Rolling back.")
-            conn.rollback()
-            raise e
-        finally:
-            cursor.execute("PRAGMA foreign_keys=on;")
-
-    # Rules migration logic
-    conn.commit() # Flush implicit transaction to prevent OperationalError
-    cursor.execute("PRAGMA foreign_keys=off;")
-    cursor.execute("BEGIN TRANSACTION;")
-    try:
-        cursor.execute("PRAGMA table_info(rules)")
-        rules_info_rows = cursor.fetchall()
-        rules_cols = {row['name'] for row in rules_info_rows}
-        if 'pattern' in rules_cols and any(row['name'] == 'pattern' and row['notnull'] for row in rules_info_rows):
-            print("--- MIGRATING SCHEMA: Making 'pattern' column in 'rules' table nullable. ---")
-            cursor.execute("ALTER TABLE rules RENAME TO _rules_old;")
-            cursor.execute("""
-            CREATE TABLE rules (
-                rule_id TEXT PRIMARY KEY,
-                pattern TEXT,
-                category TEXT NOT NULL,
-                cashflow_type TEXT NOT NULL,
-                tags TEXT,
-                priority INTEGER DEFAULT 100
-            );
-            """)
-            cursor.execute("INSERT INTO rules (rule_id, pattern, category, cashflow_type, tags, priority) SELECT rule_id, pattern, category, cashflow_type, tags, priority FROM _rules_old;")
-            cursor.execute("DROP TABLE _rules_old;")
-
-        if 'case_sensitive' not in rules_cols:
-            print("--- MIGRATING SCHEMA: Adding 'case_sensitive' to 'rules'. ---")
-            cursor.execute("ALTER TABLE rules ADD COLUMN case_sensitive INTEGER DEFAULT 0;")
-        if 'account_filter_mode' not in rules_cols:
-            print("--- MIGRATING SCHEMA: Adding 'account_filter_mode' to 'rules'. ---")
-            cursor.execute("ALTER TABLE rules ADD COLUMN account_filter_mode TEXT DEFAULT 'include';")
-        if 'account_filter_list' not in rules_cols:
-            print("--- MIGRATING SCHEMA: Adding 'account_filter_list' to 'rules'. ---")
-            cursor.execute("ALTER TABLE rules ADD COLUMN account_filter_list TEXT;")
-        if 'condition_category' not in rules_cols:
-            print("--- MIGRATING SCHEMA: Adding 'condition_category' to 'rules'. ---")
-            cursor.execute("ALTER TABLE rules ADD COLUMN condition_category TEXT;")
-        if 'condition_institution' not in rules_cols:
-            print("--- MIGRATING SCHEMA: Adding 'condition_institution' to 'rules'. ---")
-            cursor.execute("ALTER TABLE rules ADD COLUMN condition_institution TEXT;")
-        if 'condition_cashflow_type' not in rules_cols:
-            print("--- MIGRATING SCHEMA: Adding 'condition_cashflow_type' to 'rules'. ---")
-            cursor.execute("ALTER TABLE rules ADD COLUMN condition_cashflow_type TEXT;")
-        if 'condition_tags' not in rules_cols:
-            print("--- MIGRATING SCHEMA: Adding 'condition_tags' to 'rules'. ---")
-            cursor.execute("ALTER TABLE rules ADD COLUMN condition_tags TEXT;")
-        conn.commit()
-    except Exception as e:
-        print(f"ERROR during 'rules' table migration: {e}. Rolling back.")
-        conn.rollback()
-        raise e
-    finally:
-        cursor.execute("PRAGMA foreign_keys=on;")
 
     print("--- Database schema is OK. ---")
     _schema_ensured = True
@@ -2394,9 +2272,7 @@ def save_transactions(transactions: List[Transaction]):
     try:
         cursor.executemany(sql, data_to_insert)
         conn.commit()
-        print(f"Successfully saved/updated {cursor.rowcount} transactions to the database.")
     except sqlite3.Error as e:
-        print(f"Database error during transaction save: {e}")
         conn.rollback()
         raise e
     finally:
@@ -2405,7 +2281,6 @@ def save_transactions(transactions: List[Transaction]):
 def save_holdings_snapshot(holdings: List[Holding], account_id: str):
     cleaned_account_id = account_id.strip()
     if not cleaned_account_id:
-        print("ERROR: Cannot save holdings snapshot without an account_id.")
         return 0, 0
     
     conn = get_db_connection()
@@ -2419,7 +2294,6 @@ def save_holdings_snapshot(holdings: List[Holding], account_id: str):
                 'tags': [t.strip() for t in row['tags'].split(',')] if row['tags'] else [],
                 'asset_type': row['asset_type']
             }
-    print(f"Found existing metadata for {len(existing_metadata)} symbols in account group '{cleaned_account_id}'.")
 
     for h in holdings:
         if h.symbol in existing_metadata:
@@ -2433,7 +2307,6 @@ def save_holdings_snapshot(holdings: List[Holding], account_id: str):
     try:
         cursor.execute("DELETE FROM holdings WHERE trim(lower(account_id)) = trim(lower(?))", (cleaned_account_id,))
         deleted_count = cursor.rowcount
-        print(f"Deleted {deleted_count} stale holdings for account group '{cleaned_account_id}'.")
         
         if holdings:
             sql = """INSERT INTO holdings (
@@ -2449,11 +2322,9 @@ def save_holdings_snapshot(holdings: List[Holding], account_id: str):
             ]
             cursor.executemany(sql, data_to_insert)
             inserted_count = cursor.rowcount
-            print(f"Inserted {inserted_count} new holdings for account group '{cleaned_account_id}'.")
         
         conn.commit()
     except sqlite3.Error as e:
-        print(f"Database error during holdings snapshot save: {e}")
         conn.rollback()
         raise e
     finally:
@@ -2472,7 +2343,6 @@ def save_import_run(run_data: Dict[str, Any]):
         cursor.execute(sql, data_tuple)
         conn.commit()
     except sqlite3.Error as e:
-        print(f"Database error during import run save: {e}")
         conn.rollback()
         raise e
     finally:
@@ -2897,14 +2767,12 @@ def set_account_visibility(settings: Dict[str, bool]):
     finally:
         conn.close()
 
-# --- NEW: Account Tax Metadata Functions with Group Name --- 
 def get_account_metadata() -> Dict[str, Dict[str, Any]]:
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM account_metadata")
     rows = cursor.fetchall()
     conn.close()
-    # FIX: Use dictionary key access instead of .get(), as sqlite3.Row does not support .get()
     return {row['account_id']: {"tax_status": row['tax_status'], "notes": row['notes'], "group_name": row['group_name']} for row in rows}
 
 def set_account_metadata(account_id: str, tax_status: str, notes: str = None, group_name: str = None):
@@ -2958,9 +2826,7 @@ def save_price_quotes(quotes: Dict[str, Dict[str, Any]]):
     try:
         cursor.executemany(sql, data_to_insert)
         conn.commit()
-        print(f"Saved {cursor.rowcount} price quotes to history.")
     except (sqlite3.Error, KeyError) as e:
-        print(f"Database error saving price quotes: {e}")
         conn.rollback()
         raise e
     finally:
@@ -2970,16 +2836,12 @@ def update_holdings_with_new_prices(quotes: Dict[str, Dict[str, Any]]):
     if not quotes: return
     conn = get_db_connection()
     cursor = conn.cursor()
-    updated_count = 0
     try:
         for symbol, data in quotes.items():
             price, timestamp = float(data['price']), data['timestamp']
             cursor.execute("UPDATE holdings SET last_price = ?, last_price_timestamp = ?, market_value = quantity * ?, last_price_update_failed = 0 WHERE symbol = ?;", (price, timestamp, price, symbol))
-            updated_count += cursor.rowcount
         conn.commit()
-        print(f"Updated {updated_count} holding records with new prices.")
     except (sqlite3.Error, KeyError) as e:
-        print(f"Database error updating holdings with new prices: {e}")
         conn.rollback()
         raise e
     finally:
@@ -2995,7 +2857,6 @@ def mark_holdings_as_failed(symbols: List[str]):
         cursor.execute(sql, symbols)
         conn.commit()
     except sqlite3.Error as e:
-        print(f"Database error marking holdings as failed: {e}")
         conn.rollback()
         raise e
     finally:
@@ -3042,7 +2903,6 @@ def save_tax_facts(year: int, data: Dict[str, Any]):
         cursor.execute(sql, params)
         conn.commit()
     except sqlite3.Error as e:
-        print(f"Database error saving tax facts for {year}: {e}")
         conn.rollback()
         raise e
     finally:
@@ -3069,7 +2929,6 @@ def create_future_income_stream(stream: FutureIncomeStream) -> FutureIncomeStrea
         cursor.execute(sql, params)
         conn.commit()
     except sqlite3.Error as e:
-        print(f"Database error creating income stream: {e}")
         conn.rollback()
         raise e
     finally:
@@ -3092,7 +2951,6 @@ def delete_future_income_stream(stream_id: str) -> bool:
         conn.commit()
         return cursor.rowcount > 0
     except sqlite3.Error as e:
-        print(f"Database error deleting income stream {stream_id}: {e}")
         conn.rollback()
         raise e
     finally:
@@ -3168,8 +3026,9 @@ def create_property(prop: Property) -> Property:
     cursor = conn.cursor()
     sql = """INSERT INTO properties (
                  property_id, name, purchase_price, mortgage_balance, 
-                 current_value, appreciation_rate, is_primary
-             ) VALUES (?, ?, ?, ?, ?, ?, ?);"""
+                 current_value, appreciation_rate, is_primary,
+                 purchase_year, sale_year, annual_maintenance
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"""
     params = (
         prop.property_id,
         prop.name,
@@ -3177,7 +3036,10 @@ def create_property(prop: Property) -> Property:
         float(prop.mortgage_balance),
         float(prop.current_value),
         float(prop.appreciation_rate),
-        1 if prop.is_primary else 0
+        1 if prop.is_primary else 0,
+        prop.purchase_year,
+        prop.sale_year,
+        float(prop.annual_maintenance)
     )
     try:
         cursor.execute(sql, params)
@@ -3192,7 +3054,7 @@ def create_property(prop: Property) -> Property:
 def update_property(property_id: str, updates: Dict[str, Any]):
     conn = get_db_connection()
     cursor = conn.cursor()
-    allowed_fields = ['name', 'purchase_price', 'mortgage_balance', 'current_value', 'appreciation_rate', 'is_primary']
+    allowed_fields = ['name', 'purchase_price', 'mortgage_balance', 'current_value', 'appreciation_rate', 'is_primary', 'purchase_year', 'sale_year', 'annual_maintenance']
     set_clauses, params = [], []
     for field, value in updates.items():
         if field not in allowed_fields:
@@ -3224,7 +3086,8 @@ def delete_property(property_id: str) -> bool:
 def get_total_real_estate_equity() -> float:
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT SUM(current_value) as total_val, SUM(mortgage_balance) as total_debt FROM properties")
+    current_year = date.today().year
+    cursor.execute("SELECT SUM(current_value) as total_val, SUM(mortgage_balance) as total_debt FROM properties WHERE purchase_year IS NULL OR purchase_year <= ?", (current_year,))
     row = cursor.fetchone()
     conn.close()
     if row:
@@ -3254,7 +3117,6 @@ def get_base_col_from_actuals(categories: List[str], lookback_years: int = 1) ->
         total_sum = result['total_expense'] if result and result['total_expense'] else 0.0
         return abs(total_sum) / lookback_years
     except sqlite3.Error as e:
-        print(f"Error calculating base CoL: {e}")
         return 0.0
     finally:
         conn.close()
@@ -3283,7 +3145,7 @@ def get_base_col_breakdown(categories: List[str], lookback_years: int = 1) -> Di
             total_sum = abs(row['total_expense'] or 0.0)
             breakdown[row['category']] = total_sum / lookback_years
     except sqlite3.Error as e:
-        print(f"Error calculating base CoL breakdown: {e}")
+        pass
     finally:
         conn.close()
     return breakdown
@@ -3323,7 +3185,6 @@ def save_discretionary_budget_item(item: Dict[str, Any]):
         cursor.execute(sql, params)
         conn.commit()
     except sqlite3.Error as e:
-        print(f"Database error saving discretionary item: {e}")
         conn.rollback()
         raise e
     finally:
@@ -3338,7 +3199,6 @@ def delete_discretionary_budget_item(item_id: str) -> bool:
         conn.commit()
         return deleted > 0
     except sqlite3.Error as e:
-        print(f"Database error deleting discretionary item {item_id}: {e}")
         conn.rollback()
         raise e
     finally:
@@ -3347,9 +3207,6 @@ def delete_discretionary_budget_item(item_id: str) -> bool:
 # --- TAG ENGINE ADDITIONS ---
 
 def get_tag_summary() -> List[Dict[str, Any]]:
-    """
-    Aggregates tags across transactions and holdings, providing count and volume.
-    """
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -3368,7 +3225,6 @@ def get_tag_summary() -> List[Dict[str, Any]]:
             if t not in tag_map:
                 tag_map[t] = {'tag': t, 'tx_count': 0, 'tx_value': 0.0, 'holding_count': 0, 'holding_value': 0.0}
             tag_map[t]['tx_count'] += 1
-            # Use absolute value to represent total activity volume
             tag_map[t]['tx_value'] += abs(float(row['amount']))
             
     for row in holding_rows:
@@ -3382,9 +3238,6 @@ def get_tag_summary() -> List[Dict[str, Any]]:
     return sorted(list(tag_map.values()), key=lambda x: x['tag'].lower())
 
 def get_records_by_tag(tag: str) -> Dict[str, List[Dict[str, Any]]]:
-    """
-    Fetches exact records (transactions & holdings) that contain the specified tag.
-    """
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -3744,6 +3597,9 @@ def calculate_forecast() -> Dict[str, Any]:
     residence_lease_year = int(db.get_setting('forecast_residence_lease_year') or 0) or None
     residence_lease_monthly_value = float(db.get_setting('forecast_residence_lease_monthly_value') or 0.0)
 
+    future_props_setting = db.get_setting('forecast_future_properties_enabled')
+    future_properties_enabled = bool(future_props_setting) if future_props_setting is not None else True
+
     phase_multipliers = db.get_setting('forecast_phase_multipliers') or {}
     base_col_categories = db.get_setting('forecast_base_col_categories') or []
     
@@ -3797,10 +3653,24 @@ def calculate_forecast() -> Dict[str, Any]:
 
     def _run_scenario(scenario_name: str, return_offset: float, hc_inflation_mult: float, apply_stress_years: bool):
         buckets = copy.deepcopy(base_buckets)
-        working_properties = [
-            {"id": p['property_id'], "value": float(p['current_value']), "debt": float(p['mortgage_balance']), "rate": float(p['appreciation_rate']), "is_primary": bool(p['is_primary'])}
-            for p in base_properties
-        ]
+        
+        # 0. Segregate Current vs Future Properties
+        working_properties = []
+        future_properties = []
+        for p in base_properties:
+            prop_dict = {
+                "id": p['property_id'], "value": float(p['current_value']), "debt": float(p['mortgage_balance']), 
+                "rate": float(p['appreciation_rate']), "is_primary": bool(p['is_primary']),
+                "purchase_year": p.get('purchase_year'), "sale_year": p.get('sale_year'),
+                "annual_maintenance": float(p.get('annual_maintenance') or 0.0), "name": p['name'],
+                "purchase_price": float(p['purchase_price'])
+            }
+            if prop_dict['purchase_year'] and prop_dict['purchase_year'] > current_year:
+                if future_properties_enabled:
+                    future_properties.append(prop_dict)
+            else:
+                working_properties.append(prop_dict)
+
         alerts = []
         simulation_data = []
         taxable_depleted_alerted = False
@@ -3838,6 +3708,18 @@ def calculate_forecast() -> Dict[str, Any]:
             
             inflation_factor = (1 + inflation_rate) ** years_from_start
 
+            # 0.5 Temporal Property Acquisitions
+            capital_expenditures = 0.0
+            props_to_remove = []
+            for p in future_properties:
+                if p['purchase_year'] == year:
+                    cost = p['purchase_price']
+                    capital_expenditures += cost
+                    working_properties.append(p)
+                    props_to_remove.append(p)
+            for p in props_to_remove:
+                future_properties.remove(p)
+
             # 1. Base Income & SS
             for stream in future_income_streams:
                 start = date.fromisoformat(stream['start_date'])
@@ -3873,8 +3755,9 @@ def calculate_forecast() -> Dict[str, Any]:
                 year_income += year_rmd
                 ordinary_income_events += year_rmd
 
-            # 3. Living Expenses
+            # 3. Living Expenses & Maintenance
             year_living_expenses = 0.0
+            year_property_maintenance = 0.0
             expense_breakdown = {}
 
             for cat, amount in base_col_breakdown.items():
@@ -3891,6 +3774,12 @@ def calculate_forecast() -> Dict[str, Any]:
                 cost = amount * compounded_inflation * get_phase_multiplier(cat, phase_key)
                 year_living_expenses += cost
                 expense_breakdown[cat] = round(cost, 2)
+
+            for prop in working_properties:
+                if prop.get('annual_maintenance', 0) > 0:
+                    maint_cost = prop['annual_maintenance'] * inflation_factor
+                    year_property_maintenance += maint_cost
+                    expense_breakdown[f"{prop['name']} Maint."] = round(maint_cost, 2)
             
             year_discretionary = 0.0
             for item in discretionary_items:
@@ -3903,6 +3792,9 @@ def calculate_forecast() -> Dict[str, Any]:
                         item_amount = item_amount * inflation_factor
                     year_discretionary += item_amount
                     expense_breakdown[item['name']] = round(item_amount, 2)
+
+            for p in props_to_remove:
+                expense_breakdown[f"{p['name']} Purchase"] = round(p['purchase_price'], 2)
 
             # 4. Preliminary Tax Check
             taxable_ss = calculate_taxable_ss(ss_income, ordinary_income_events + ltcg_income_events, filing_status)
@@ -3931,19 +3823,33 @@ def calculate_forecast() -> Dict[str, Any]:
                         year_daf_transfer += actual_transfer
                         # Escapes LTCG because it bypasses the liquidations section below
 
-            # 6. Residence Sale
+            # 6. Residence & Temporal Property Sale
             sale_proceeds = 0.0
             sale_event_triggered = False
+            
+            # Legacy Primary Sale Config
             if residence_sale_enabled and residence_sale_year and year == residence_sale_year:
                 for prop in [p for p in working_properties if p['is_primary']]:
                     sale_proceeds += max(0.0, prop['value'] - prop['debt'])
                     working_properties.remove(prop)
                     sale_event_triggered = True
 
+            # Temporal Lifecycle Sales
+            temporal_sold = []
+            for prop in working_properties:
+                if prop.get('sale_year') == year:
+                    sale_proceeds += max(0.0, prop['value'] - prop['debt'])
+                    temporal_sold.append(prop)
+                    sale_event_triggered = True
+            
+            for prop in temporal_sold:
+                if prop in working_properties:
+                    working_properties.remove(prop)
+
             # 7. Net Cashflow & Strategic Withdrawal
             annual_tax_bill_est = calculate_progressive_tax(ordinary_income_events + conversion_amount + taxable_ss, ltcg_income_events, filing_status, state_tax_rate)['total_tax']
             expense_breakdown['Est. Income Tax'] = round(annual_tax_bill_est, 2)
-            total_expenses = year_living_expenses + year_discretionary + annual_tax_bill_est
+            total_expenses = year_living_expenses + year_property_maintenance + year_discretionary + annual_tax_bill_est + capital_expenditures
 
             net_cashflow = year_income + sale_proceeds - total_expenses
             strategy_executed = "Standard"
@@ -4052,6 +3958,8 @@ def calculate_forecast() -> Dict[str, Any]:
                 "total_income": round(year_income, 2),
                 "total_expenses": round(total_expenses, 2),
                 "base_col_expense": round(year_living_expenses, 2),
+                "property_maintenance": round(year_property_maintenance, 2),
+                "property_purchase": round(capital_expenditures, 2),
                 "discretionary_expense": round(year_discretionary, 2),
                 "expense_breakdown": expense_breakdown,
                 "net_cashflow": round(net_cashflow, 2),
@@ -4305,6 +4213,9 @@ class PropertyCreate(BaseModel):
     current_value: float
     appreciation_rate: float
     is_primary: bool
+    purchase_year: Optional[int] = None
+    sale_year: Optional[int] = None
+    annual_maintenance: Optional[float] = 0.0
 
 class PropertyResponse(PropertyCreate):
     property_id: str
@@ -4326,6 +4237,7 @@ class ForecastConfig(BaseModel):
     residence_lease_enabled: Optional[bool] = False
     residence_lease_year: Optional[int] = None
     residence_lease_monthly_value: Optional[float] = None
+    future_properties_enabled: Optional[bool] = True
     base_col_lookback_years: Optional[int] = 1
     withdrawal_strategy: Optional[str] = 'standard'
     tax_filing_status: Optional[str] = 'single'
@@ -4714,8 +4626,8 @@ async def get_all_properties(mode: str = Query("actuals")):
 @app.post("/api/properties", response_model=PropertyResponse, status_code=201, tags=["Real Estate"])
 async def create_property(payload: PropertyCreate):
     existing = db.get_all_properties()
-    if len(existing) >= 6:
-        raise HTTPException(status_code=400, detail="Maximum property limit (6) reached.")
+    if len(existing) >= 12: # Expanded limit for temporal lifecycles
+        raise HTTPException(status_code=400, detail="Maximum property limit reached.")
     
     prop_id = str(uuid.uuid4())
     prop_obj = Property(
@@ -4725,7 +4637,10 @@ async def create_property(payload: PropertyCreate):
         mortgage_balance=Decimal(str(payload.mortgage_balance)),
         current_value=Decimal(str(payload.current_value)),
         appreciation_rate=Decimal(str(payload.appreciation_rate)),
-        is_primary=payload.is_primary
+        is_primary=payload.is_primary,
+        purchase_year=payload.purchase_year,
+        sale_year=payload.sale_year,
+        annual_maintenance=Decimal(str(payload.annual_maintenance or 0.0))
     )
     try:
         db.create_property(prop_obj)
@@ -4783,6 +4698,7 @@ async def delete_snapshot(snapshot_id: str):
 
 @app.get("/api/forecast/config", tags=["Forecast"])
 async def get_forecast_config():
+    future_props_setting = db.get_setting('forecast_future_properties_enabled')
     return {
         "birth_year": db.get_setting('forecast_birth_year'),
         "inflation_rate": db.get_setting('forecast_inflation_rate') or 0.03,
@@ -4799,6 +4715,7 @@ async def get_forecast_config():
         "residence_lease_enabled": db.get_setting('forecast_residence_lease_enabled') or False,
         "residence_lease_year": db.get_setting('forecast_residence_lease_year'),
         "residence_lease_monthly_value": db.get_setting('forecast_residence_lease_monthly_value'),
+        "future_properties_enabled": bool(future_props_setting) if future_props_setting is not None else True,
         "base_col_lookback_years": db.get_setting('forecast_base_col_lookback_years') or 1,
         "withdrawal_strategy": db.get_setting('forecast_withdrawal_strategy') or 'standard',
         "tax_filing_status": db.get_setting('forecast_tax_filing_status') or 'single',
@@ -4845,6 +4762,8 @@ async def update_forecast_config(config: ForecastConfig):
         db.set_setting('forecast_residence_lease_year', config.residence_lease_year)
     if 'residence_lease_monthly_value' in fields_set:
         db.set_setting('forecast_residence_lease_monthly_value', config.residence_lease_monthly_value)
+    if 'future_properties_enabled' in fields_set:
+        db.set_setting('forecast_future_properties_enabled', config.future_properties_enabled)
     if 'base_col_lookback_years' in fields_set: 
         db.set_setting('forecast_base_col_lookback_years', config.base_col_lookback_years)
     if 'withdrawal_strategy' in fields_set:
@@ -6843,7 +6762,9 @@ const ExpenseCompositionChart = ({ data }) => {
 
     const idMap = {
         base_col_expense: 'Base Living',
+        property_maintenance: 'Prop. Maint.',
         discretionary_expense: 'Discretionary',
+        property_purchase: 'Prop. Purchase',
         daf_transfer: 'DAF/Charity'
     };
 
@@ -6851,11 +6772,11 @@ const ExpenseCompositionChart = ({ data }) => {
         <div style={{ height: '300px' }}>
             <ResponsiveBar
                 data={data}
-                keys={['base_col_expense', 'discretionary_expense', 'daf_transfer']}
+                keys={['base_col_expense', 'property_maintenance', 'discretionary_expense', 'property_purchase', 'daf_transfer']}
                 indexBy="age"
                 margin={{ top: 20, right: 20, bottom: 50, left: 70 }}
                 padding={0.1}
-                colors={['#ff6b6b', '#feca57', '#05c46b']}
+                colors={['#ff6b6b', '#ff9f43', '#feca57', '#00f2fe', '#05c46b']}
                 axisBottom={{ legend: 'Age', legendOffset: 36, legendPosition: 'middle' }}
                 axisLeft={{ 
                     format: value => `$${value / 1000}k`,
@@ -7132,10 +7053,29 @@ const ResidenceStrategiesConfig = ({ config, setConfig, onSave }) => {
     };
 
     return (
-        <CollapsibleCard title="5) Principal Residence Strategies" className="grid-half-left">
+        <CollapsibleCard title="5) Property Lifecycle Strategies" className="grid-half-left">
             <p style={{fontSize: '0.8em', color: '#aaa', marginTop: '-0.5rem'}}>
-                Model liquidating your primary home OR converting it to a rental property.
+                Model buying, leasing, or liquidating property assets in the future.
             </p>
+
+            {/* FUTURE PROPERTY LIFECYCLE */}
+            <div style={{borderBottom: '1px solid #444', paddingBottom: '1rem', marginBottom: '1rem'}}>
+                <div className="setting-group" style={{display: 'flex', alignItems: 'center'}}>
+                    <input 
+                        type="checkbox" 
+                        id="future_properties_enabled"
+                        name="future_properties_enabled"
+                        checked={config.future_properties_enabled ?? true} 
+                        onChange={handleChange} 
+                        onBlur={onSave}
+                        style={{width: 'auto', marginRight: '0.5rem'}}
+                    />
+                    <label htmlFor="future_properties_enabled" style={{margin: 0, cursor: 'pointer', color: '#fff', fontWeight: 'bold'}}>Enable Future Property Purchases</label>
+                </div>
+                <p style={{fontSize: '0.8em', color: '#aaa', margin: '0.5rem 0 0 1.5rem'}}>
+                    Toggle off to simulate the runway if you decide NOT to buy planned future properties.
+                </p>
+            </div>
 
             {/* SALE STRATEGY */}
             <div style={{borderBottom: '1px solid #444', paddingBottom: '1rem', marginBottom: '1rem'}}>
@@ -7149,7 +7089,7 @@ const ResidenceStrategiesConfig = ({ config, setConfig, onSave }) => {
                         onBlur={onSave}
                         style={{width: 'auto', marginRight: '0.5rem'}}
                     />
-                    <label htmlFor="residence_sale_enabled" style={{margin: 0, cursor: 'pointer', color: '#fff'}}>Enable Sale Strategy</label>
+                    <label htmlFor="residence_sale_enabled" style={{margin: 0, cursor: 'pointer', color: '#fff'}}>Enable Primary Residence Sale</label>
                 </div>
                 
                 {config.residence_sale_enabled && (
@@ -7179,7 +7119,7 @@ const ResidenceStrategiesConfig = ({ config, setConfig, onSave }) => {
                         onBlur={onSave}
                         style={{width: 'auto', marginRight: '0.5rem'}}
                     />
-                    <label htmlFor="residence_lease_enabled" style={{margin: 0, cursor: 'pointer', color: '#fff'}}>Enable Lease Strategy</label>
+                    <label htmlFor="residence_lease_enabled" style={{margin: 0, cursor: 'pointer', color: '#fff'}}>Enable Primary Residence Lease</label>
                 </div>
                 
                 {config.residence_lease_enabled && (
@@ -10703,6 +10643,24 @@ const PropertyCard = ({ property, onEdit, onDelete }) => (
                 <label>Appreciation Rate</label>
                 <span>{(property.appreciation_rate * 100).toFixed(2)}%</span>
             </div>
+            {property.purchase_year && (
+                <div className="detail-item">
+                    <label>Future Purchase Year</label>
+                    <span style={{color: 'var(--gold-accent)'}}>{property.purchase_year}</span>
+                </div>
+            )}
+            {property.sale_year && (
+                <div className="detail-item">
+                    <label>Liquidation Year</label>
+                    <span style={{color: 'var(--gold-accent)'}}>{property.sale_year}</span>
+                </div>
+            )}
+            {property.annual_maintenance > 0 && (
+                <div className="detail-item">
+                    <label>Annual Maint. Drag</label>
+                    <span style={{color: '#ff6b6b'}}>{formatCurrency(property.annual_maintenance)}/yr</span>
+                </div>
+            )}
             <div className="equity-highlight">
                 <label>Equity</label>
                 <span>{formatCurrency(property.current_value - property.mortgage_balance)}</span>
@@ -10725,7 +10683,10 @@ const RealEstateView = () => {
         mortgage_balance: '',
         current_value: '',
         appreciation_rate: 0.03,
-        is_primary: false
+        is_primary: false,
+        purchase_year: '',
+        sale_year: '',
+        annual_maintenance: 0
     };
     const [formData, setFormData] = useState(initialForm);
 
@@ -10762,7 +10723,10 @@ const RealEstateView = () => {
             purchase_price: parseFloat(formData.purchase_price),
             mortgage_balance: parseFloat(formData.mortgage_balance),
             current_value: parseFloat(formData.current_value),
-            appreciation_rate: parseFloat(formData.appreciation_rate) // expects decimal if entering directly, but form might be %
+            appreciation_rate: parseFloat(formData.appreciation_rate),
+            purchase_year: formData.purchase_year ? parseInt(formData.purchase_year) : null,
+            sale_year: formData.sale_year ? parseInt(formData.sale_year) : null,
+            annual_maintenance: parseFloat(formData.annual_maintenance || 0)
         };
 
         try {
@@ -10802,7 +10766,10 @@ const RealEstateView = () => {
             mortgage_balance: prop.mortgage_balance,
             current_value: prop.current_value,
             appreciation_rate: prop.appreciation_rate,
-            is_primary: prop.is_primary
+            is_primary: prop.is_primary,
+            purchase_year: prop.purchase_year || '',
+            sale_year: prop.sale_year || '',
+            annual_maintenance: prop.annual_maintenance || 0
         });
         setEditingId(prop.property_id);
         setShowForm(true);
@@ -10820,8 +10787,8 @@ const RealEstateView = () => {
     };
 
     const startNewProperty = () => {
-        if (properties.length >= 6) {
-            alert("Maximum property limit (6) reached.");
+        if (properties.length >= 12) {
+            alert("Maximum property limit reached.");
             return;
         }
         setFormData(initialForm);
@@ -10852,9 +10819,23 @@ const RealEstateView = () => {
                             <input type="number" name="mortgage_balance" value={formData.mortgage_balance} onChange={handleInputChange} step="0.01" required />
                         </div>
                          <div className="form-group">
-                            <label>Annual Appreciation Rate (decimal, e.g. 0.03 for 3%)</label>
+                            <label>Annual Appreciation Rate (e.g. 0.03 = 3%)</label>
                             <input type="number" name="appreciation_rate" value={formData.appreciation_rate} onChange={handleInputChange} step="0.001" required />
                         </div>
+                        
+                        <div className="form-group">
+                            <label>Target Purchase Year (Optional)</label>
+                            <input type="number" name="purchase_year" value={formData.purchase_year} onChange={handleInputChange} placeholder="e.g. 2028" />
+                        </div>
+                        <div className="form-group">
+                            <label>Target Sale Year (Optional)</label>
+                            <input type="number" name="sale_year" value={formData.sale_year} onChange={handleInputChange} placeholder="e.g. 2040" />
+                        </div>
+                        <div className="form-group">
+                            <label>Annual Maintenance ($)</label>
+                            <input type="number" name="annual_maintenance" value={formData.annual_maintenance} onChange={handleInputChange} placeholder="15000" />
+                        </div>
+
                         <div className="form-group" style={{flexDirection: 'row', alignItems: 'center', marginTop: '1.5rem'}}>
                             <input type="checkbox" name="is_primary" checked={formData.is_primary} onChange={handleInputChange} style={{width: 'auto', marginRight: '0.5rem'}} />
                             <label style={{margin: 0, color: '#fff'}}>Principal Residence</label>
@@ -10867,7 +10848,7 @@ const RealEstateView = () => {
                 </div>
             )}
 
-            {!showForm && properties.length < 6 && (
+            {!showForm && properties.length < 12 && (
                 <button className="btn-primary" onClick={startNewProperty} style={{marginBottom: '1rem'}}>+ Add Property</button>
             )}
 

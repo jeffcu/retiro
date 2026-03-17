@@ -57,7 +57,7 @@ class Holding:
     market_value: Decimal | None = None
     last_price: Decimal | None = None
     last_price_timestamp: datetime | None = None
-    last_price_update_failed: bool = False # NEW: Flag for UI
+    last_price_update_failed: bool = False
     tags: list[str] = field(default_factory=list)
 
 
@@ -71,6 +71,9 @@ class Property:
     current_value: Decimal
     appreciation_rate: Decimal  # e.g. 0.03 for 3%
     is_primary: bool = False
+    purchase_year: Optional[int] = None
+    sale_year: Optional[int] = None
+    annual_maintenance: Decimal = Decimal('0.0')
 
 
 @dataclass
@@ -87,10 +90,10 @@ class PriceQuote:
 class FutureIncomeStream:
     """ PRS Section 8: Represents a recurring future income stream for forecasting. """
     stream_id: str
-    stream_type: str  # e.g., 'Social Security', 'RMD', 'Pension'
+    stream_type: str
     description: str
     start_date: date
     end_date: Optional[date]
     amount: Decimal
-    frequency: str  # e.g., 'monthly', 'annually'
+    frequency: str
     annual_increase_rate: Decimal = Decimal('0.0')

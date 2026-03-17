@@ -38,6 +38,24 @@ const PropertyCard = ({ property, onEdit, onDelete }) => (
                 <label>Appreciation Rate</label>
                 <span>{(property.appreciation_rate * 100).toFixed(2)}%</span>
             </div>
+            {property.purchase_year && (
+                <div className="detail-item">
+                    <label>Future Purchase Year</label>
+                    <span style={{color: 'var(--gold-accent)'}}>{property.purchase_year}</span>
+                </div>
+            )}
+            {property.sale_year && (
+                <div className="detail-item">
+                    <label>Liquidation Year</label>
+                    <span style={{color: 'var(--gold-accent)'}}>{property.sale_year}</span>
+                </div>
+            )}
+            {property.annual_maintenance > 0 && (
+                <div className="detail-item">
+                    <label>Annual Maint. Drag</label>
+                    <span style={{color: '#ff6b6b'}}>{formatCurrency(property.annual_maintenance)}/yr</span>
+                </div>
+            )}
             <div className="equity-highlight">
                 <label>Equity</label>
                 <span>{formatCurrency(property.current_value - property.mortgage_balance)}</span>
@@ -60,7 +78,10 @@ const RealEstateView = () => {
         mortgage_balance: '',
         current_value: '',
         appreciation_rate: 0.03,
-        is_primary: false
+        is_primary: false,
+        purchase_year: '',
+        sale_year: '',
+        annual_maintenance: 0
     };
     const [formData, setFormData] = useState(initialForm);
 
@@ -97,7 +118,10 @@ const RealEstateView = () => {
             purchase_price: parseFloat(formData.purchase_price),
             mortgage_balance: parseFloat(formData.mortgage_balance),
             current_value: parseFloat(formData.current_value),
-            appreciation_rate: parseFloat(formData.appreciation_rate) // expects decimal if entering directly, but form might be %
+            appreciation_rate: parseFloat(formData.appreciation_rate),
+            purchase_year: formData.purchase_year ? parseInt(formData.purchase_year) : null,
+            sale_year: formData.sale_year ? parseInt(formData.sale_year) : null,
+            annual_maintenance: parseFloat(formData.annual_maintenance || 0)
         };
 
         try {
@@ -137,7 +161,10 @@ const RealEstateView = () => {
             mortgage_balance: prop.mortgage_balance,
             current_value: prop.current_value,
             appreciation_rate: prop.appreciation_rate,
-            is_primary: prop.is_primary
+            is_primary: prop.is_primary,
+            purchase_year: prop.purchase_year || '',
+            sale_year: prop.sale_year || '',
+            annual_maintenance: prop.annual_maintenance || 0
         });
         setEditingId(prop.property_id);
         setShowForm(true);
@@ -155,8 +182,8 @@ const RealEstateView = () => {
     };
 
     const startNewProperty = () => {
-        if (properties.length >= 6) {
-            alert("Maximum property limit (6) reached.");
+        if (properties.length >= 12) {
+            alert("Maximum property limit reached.");
             return;
         }
         setFormData(initialForm);
@@ -187,9 +214,23 @@ const RealEstateView = () => {
                             <input type="number" name="mortgage_balance" value={formData.mortgage_balance} onChange={handleInputChange} step="0.01" required />
                         </div>
                          <div className="form-group">
-                            <label>Annual Appreciation Rate (decimal, e.g. 0.03 for 3%)</label>
+                            <label>Annual Appreciation Rate (e.g. 0.03 = 3%)</label>
                             <input type="number" name="appreciation_rate" value={formData.appreciation_rate} onChange={handleInputChange} step="0.001" required />
                         </div>
+                        
+                        <div className="form-group">
+                            <label>Target Purchase Year (Optional)</label>
+                            <input type="number" name="purchase_year" value={formData.purchase_year} onChange={handleInputChange} placeholder="e.g. 2028" />
+                        </div>
+                        <div className="form-group">
+                            <label>Target Sale Year (Optional)</label>
+                            <input type="number" name="sale_year" value={formData.sale_year} onChange={handleInputChange} placeholder="e.g. 2040" />
+                        </div>
+                        <div className="form-group">
+                            <label>Annual Maintenance ($)</label>
+                            <input type="number" name="annual_maintenance" value={formData.annual_maintenance} onChange={handleInputChange} placeholder="15000" />
+                        </div>
+
                         <div className="form-group" style={{flexDirection: 'row', alignItems: 'center', marginTop: '1.5rem'}}>
                             <input type="checkbox" name="is_primary" checked={formData.is_primary} onChange={handleInputChange} style={{width: 'auto', marginRight: '0.5rem'}} />
                             <label style={{margin: 0, color: '#fff'}}>Principal Residence</label>
@@ -202,7 +243,7 @@ const RealEstateView = () => {
                 </div>
             )}
 
-            {!showForm && properties.length < 6 && (
+            {!showForm && properties.length < 12 && (
                 <button className="btn-primary" onClick={startNewProperty} style={{marginBottom: '1rem'}}>+ Add Property</button>
             )}
 

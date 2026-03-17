@@ -8,7 +8,6 @@ from datetime import date
 from decimal import Decimal
 
 # Per MDS, the database is a single file in the data/ directory.
-# We resolve the path to its absolute form to avoid ambiguity.
 DB_FILE = (Path(__file__).parent.parent / "data" / "trust.db").resolve()
 _schema_ensured = False
 
@@ -84,7 +83,10 @@ def _ensure_schema(conn: sqlite3.Connection):
         mortgage_balance REAL NOT NULL,
         current_value REAL NOT NULL,
         appreciation_rate REAL NOT NULL,
-        is_primary INTEGER DEFAULT 0
+        is_primary INTEGER DEFAULT 0,
+        purchase_year INTEGER,
+        sale_year INTEGER,
+        annual_maintenance REAL DEFAULT 0.0
     );
     """)
 
@@ -180,176 +182,49 @@ def _ensure_schema(conn: sqlite3.Connection):
     );
     """)
 
-    # --- GHOST PURGE PROTOCOL ---
-    # Vaporize any legacy discretionary budget items trapped with null or empty item_ids
-    cursor.execute("DELETE FROM discretionary_budget_items WHERE item_id IS NULL OR trim(item_id) = '';")
-    conn.commit() # Flush implicit transaction to prevent OperationalError
-
     # --- Schema Migrations --- 
+    cursor.execute("PRAGMA table_info(properties)")
+    prop_cols = {row[1] for row in cursor.fetchall()}
+    if 'purchase_year' not in prop_cols:
+        print("--- MIGRATING SCHEMA: Adding temporal fields to 'properties'. ---")
+        cursor.execute("ALTER TABLE properties ADD COLUMN purchase_year INTEGER;")
+        cursor.execute("ALTER TABLE properties ADD COLUMN sale_year INTEGER;")
+        cursor.execute("ALTER TABLE properties ADD COLUMN annual_maintenance REAL DEFAULT 0.0;")
+
+    # Holdings columns
     cursor.execute("PRAGMA table_info(holdings)")
     holdings_cols = {row[1] for row in cursor.fetchall()}
     if 'market_value' not in holdings_cols:
-        print("--- MIGRATING SCHEMA: Adding 'market_value' to 'holdings'. ---")
         cursor.execute("ALTER TABLE holdings ADD COLUMN market_value REAL;")
     if 'tags' not in holdings_cols:
-        print("--- MIGRATING SCHEMA: Adding 'tags' to 'holdings'. ---")
         cursor.execute("ALTER TABLE holdings ADD COLUMN tags TEXT;")
     if 'asset_type' not in holdings_cols:
-        print("--- MIGRATING SCHEMA: Adding 'asset_type' to 'holdings'. ---")
         cursor.execute("ALTER TABLE holdings ADD COLUMN asset_type TEXT;")
     if 'last_price_update_failed' not in holdings_cols:
-        print("--- MIGRATING SCHEMA: Adding 'last_price_update_failed' to 'holdings'. ---")
         cursor.execute("ALTER TABLE holdings ADD COLUMN last_price_update_failed INTEGER DEFAULT 0;")
     if 'account_number' not in holdings_cols:
-        print("--- MIGRATING SCHEMA: Adding 'account_number' to 'holdings'. ---")
         cursor.execute("ALTER TABLE holdings ADD COLUMN account_number TEXT;")
 
     cursor.execute("PRAGMA table_info(account_metadata)")
     meta_cols = {row[1] for row in cursor.fetchall()}
     if 'group_name' not in meta_cols:
-        print("--- MIGRATING SCHEMA: Adding 'group_name' to 'account_metadata'. ---")
         cursor.execute("ALTER TABLE account_metadata ADD COLUMN group_name TEXT;")
 
     cursor.execute("PRAGMA table_info(transactions)")
     trans_cols = {row[1] for row in cursor.fetchall()}
     if 'institution' not in trans_cols:
-        print("--- MIGRATING SCHEMA: Adding 'institution' to 'transactions'. ---")
         cursor.execute("ALTER TABLE transactions ADD COLUMN institution TEXT;")
     if 'original_category' not in trans_cols:
-        print("--- MIGRATING SCHEMA: Adding 'original_category' to 'transactions'. ---")
         cursor.execute("ALTER TABLE transactions ADD COLUMN original_category TEXT;")
     if 'tags' not in trans_cols:
-        print("--- MIGRATING SCHEMA: Adding 'tags' to 'transactions'. ---")
         cursor.execute("ALTER TABLE transactions ADD COLUMN tags TEXT;")
 
     cursor.execute("PRAGMA table_info(discretionary_budget_items)")
     budget_cols = {row[1] for row in cursor.fetchall()}
     if 'category' not in budget_cols:
-        print("--- MIGRATING SCHEMA: Adding 'category' to 'discretionary_budget_items'. ---")
         cursor.execute("ALTER TABLE discretionary_budget_items ADD COLUMN category TEXT;")
     if 'is_enabled' not in budget_cols:
-        print("--- MIGRATING SCHEMA: Adding 'is_enabled' to 'discretionary_budget_items'. ---")
         cursor.execute("ALTER TABLE discretionary_budget_items ADD COLUMN is_enabled INTEGER DEFAULT 1;")
-
-    # --- MIGRATING SCHEMA: Constraint Check for 'holdings' ---
-    # Ensure the UNIQUE constraint includes 'account_number'.
-    cursor.execute("PRAGMA index_list('holdings')")
-    indices = cursor.fetchall()
-    needs_rebuild = False
-    
-    found_correct_index = False
-    for idx in indices:
-        if idx['unique']:
-            cursor.execute(f"PRAGMA index_info('{idx['name']}')")
-            cols = cursor.fetchall()
-            col_names = sorted([c['name'] for c in cols])
-            # Check if the unique index covers strictly (account_id, symbol, account_number)
-            if col_names == sorted(['account_id', 'symbol', 'account_number']):
-                found_correct_index = True
-                break
-    
-    # If we didn't find the correct 3-column index, we must rebuild the table
-    if not found_correct_index:
-        needs_rebuild = True
-
-    if needs_rebuild:
-        print("--- MIGRATING SCHEMA: Updating UNIQUE constraint on 'holdings' to include 'account_number'. ---")
-        conn.commit() # Flush implicit transaction to prevent OperationalError
-        cursor.execute("PRAGMA foreign_keys=off;")
-        cursor.execute("BEGIN TRANSACTION;")
-        try:
-            cursor.execute("ALTER TABLE holdings RENAME TO _holdings_old;")
-            cursor.execute("""
-            CREATE TABLE holdings (
-                holding_id TEXT PRIMARY KEY,
-                account_id TEXT NOT NULL,
-                symbol TEXT NOT NULL,
-                quantity REAL NOT NULL,
-                cost_basis REAL NOT NULL,
-                market_value REAL, 
-                last_price REAL,
-                last_price_timestamp TEXT,
-                tags TEXT,
-                asset_type TEXT,
-                last_price_update_failed INTEGER DEFAULT 0,
-                account_number TEXT,
-                UNIQUE(account_id, symbol, account_number)
-            );
-            """)
-            cursor.execute("""
-            INSERT INTO holdings (
-                holding_id, account_id, symbol, quantity, cost_basis, 
-                market_value, last_price, last_price_timestamp, tags, 
-                asset_type, last_price_update_failed, account_number
-            )
-            SELECT 
-                holding_id, account_id, symbol, quantity, cost_basis, 
-                market_value, last_price, last_price_timestamp, tags, 
-                asset_type, last_price_update_failed, account_number
-            FROM _holdings_old;
-            """)
-            cursor.execute("DROP TABLE _holdings_old;")
-            conn.commit()
-            print("--- MIGRATION COMPLETE: 'holdings' table rebuilt with new constraints. ---")
-        except Exception as e:
-            print(f"ERROR during 'holdings' table migration: {e}. Rolling back.")
-            conn.rollback()
-            raise e
-        finally:
-            cursor.execute("PRAGMA foreign_keys=on;")
-
-    # Rules migration logic
-    conn.commit() # Flush implicit transaction to prevent OperationalError
-    cursor.execute("PRAGMA foreign_keys=off;")
-    cursor.execute("BEGIN TRANSACTION;")
-    try:
-        cursor.execute("PRAGMA table_info(rules)")
-        rules_info_rows = cursor.fetchall()
-        rules_cols = {row['name'] for row in rules_info_rows}
-        if 'pattern' in rules_cols and any(row['name'] == 'pattern' and row['notnull'] for row in rules_info_rows):
-            print("--- MIGRATING SCHEMA: Making 'pattern' column in 'rules' table nullable. ---")
-            cursor.execute("ALTER TABLE rules RENAME TO _rules_old;")
-            cursor.execute("""
-            CREATE TABLE rules (
-                rule_id TEXT PRIMARY KEY,
-                pattern TEXT,
-                category TEXT NOT NULL,
-                cashflow_type TEXT NOT NULL,
-                tags TEXT,
-                priority INTEGER DEFAULT 100
-            );
-            """)
-            cursor.execute("INSERT INTO rules (rule_id, pattern, category, cashflow_type, tags, priority) SELECT rule_id, pattern, category, cashflow_type, tags, priority FROM _rules_old;")
-            cursor.execute("DROP TABLE _rules_old;")
-
-        if 'case_sensitive' not in rules_cols:
-            print("--- MIGRATING SCHEMA: Adding 'case_sensitive' to 'rules'. ---")
-            cursor.execute("ALTER TABLE rules ADD COLUMN case_sensitive INTEGER DEFAULT 0;")
-        if 'account_filter_mode' not in rules_cols:
-            print("--- MIGRATING SCHEMA: Adding 'account_filter_mode' to 'rules'. ---")
-            cursor.execute("ALTER TABLE rules ADD COLUMN account_filter_mode TEXT DEFAULT 'include';")
-        if 'account_filter_list' not in rules_cols:
-            print("--- MIGRATING SCHEMA: Adding 'account_filter_list' to 'rules'. ---")
-            cursor.execute("ALTER TABLE rules ADD COLUMN account_filter_list TEXT;")
-        if 'condition_category' not in rules_cols:
-            print("--- MIGRATING SCHEMA: Adding 'condition_category' to 'rules'. ---")
-            cursor.execute("ALTER TABLE rules ADD COLUMN condition_category TEXT;")
-        if 'condition_institution' not in rules_cols:
-            print("--- MIGRATING SCHEMA: Adding 'condition_institution' to 'rules'. ---")
-            cursor.execute("ALTER TABLE rules ADD COLUMN condition_institution TEXT;")
-        if 'condition_cashflow_type' not in rules_cols:
-            print("--- MIGRATING SCHEMA: Adding 'condition_cashflow_type' to 'rules'. ---")
-            cursor.execute("ALTER TABLE rules ADD COLUMN condition_cashflow_type TEXT;")
-        if 'condition_tags' not in rules_cols:
-            print("--- MIGRATING SCHEMA: Adding 'condition_tags' to 'rules'. ---")
-            cursor.execute("ALTER TABLE rules ADD COLUMN condition_tags TEXT;")
-        conn.commit()
-    except Exception as e:
-        print(f"ERROR during 'rules' table migration: {e}. Rolling back.")
-        conn.rollback()
-        raise e
-    finally:
-        cursor.execute("PRAGMA foreign_keys=on;")
 
     print("--- Database schema is OK. ---")
     _schema_ensured = True
@@ -409,9 +284,7 @@ def save_transactions(transactions: List[Transaction]):
     try:
         cursor.executemany(sql, data_to_insert)
         conn.commit()
-        print(f"Successfully saved/updated {cursor.rowcount} transactions to the database.")
     except sqlite3.Error as e:
-        print(f"Database error during transaction save: {e}")
         conn.rollback()
         raise e
     finally:
@@ -420,7 +293,6 @@ def save_transactions(transactions: List[Transaction]):
 def save_holdings_snapshot(holdings: List[Holding], account_id: str):
     cleaned_account_id = account_id.strip()
     if not cleaned_account_id:
-        print("ERROR: Cannot save holdings snapshot without an account_id.")
         return 0, 0
     
     conn = get_db_connection()
@@ -434,7 +306,6 @@ def save_holdings_snapshot(holdings: List[Holding], account_id: str):
                 'tags': [t.strip() for t in row['tags'].split(',')] if row['tags'] else [],
                 'asset_type': row['asset_type']
             }
-    print(f"Found existing metadata for {len(existing_metadata)} symbols in account group '{cleaned_account_id}'.")
 
     for h in holdings:
         if h.symbol in existing_metadata:
@@ -448,7 +319,6 @@ def save_holdings_snapshot(holdings: List[Holding], account_id: str):
     try:
         cursor.execute("DELETE FROM holdings WHERE trim(lower(account_id)) = trim(lower(?))", (cleaned_account_id,))
         deleted_count = cursor.rowcount
-        print(f"Deleted {deleted_count} stale holdings for account group '{cleaned_account_id}'.")
         
         if holdings:
             sql = """INSERT INTO holdings (
@@ -464,11 +334,9 @@ def save_holdings_snapshot(holdings: List[Holding], account_id: str):
             ]
             cursor.executemany(sql, data_to_insert)
             inserted_count = cursor.rowcount
-            print(f"Inserted {inserted_count} new holdings for account group '{cleaned_account_id}'.")
         
         conn.commit()
     except sqlite3.Error as e:
-        print(f"Database error during holdings snapshot save: {e}")
         conn.rollback()
         raise e
     finally:
@@ -487,7 +355,6 @@ def save_import_run(run_data: Dict[str, Any]):
         cursor.execute(sql, data_tuple)
         conn.commit()
     except sqlite3.Error as e:
-        print(f"Database error during import run save: {e}")
         conn.rollback()
         raise e
     finally:
@@ -912,14 +779,12 @@ def set_account_visibility(settings: Dict[str, bool]):
     finally:
         conn.close()
 
-# --- NEW: Account Tax Metadata Functions with Group Name --- 
 def get_account_metadata() -> Dict[str, Dict[str, Any]]:
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM account_metadata")
     rows = cursor.fetchall()
     conn.close()
-    # FIX: Use dictionary key access instead of .get(), as sqlite3.Row does not support .get()
     return {row['account_id']: {"tax_status": row['tax_status'], "notes": row['notes'], "group_name": row['group_name']} for row in rows}
 
 def set_account_metadata(account_id: str, tax_status: str, notes: str = None, group_name: str = None):
@@ -973,9 +838,7 @@ def save_price_quotes(quotes: Dict[str, Dict[str, Any]]):
     try:
         cursor.executemany(sql, data_to_insert)
         conn.commit()
-        print(f"Saved {cursor.rowcount} price quotes to history.")
     except (sqlite3.Error, KeyError) as e:
-        print(f"Database error saving price quotes: {e}")
         conn.rollback()
         raise e
     finally:
@@ -985,16 +848,12 @@ def update_holdings_with_new_prices(quotes: Dict[str, Dict[str, Any]]):
     if not quotes: return
     conn = get_db_connection()
     cursor = conn.cursor()
-    updated_count = 0
     try:
         for symbol, data in quotes.items():
             price, timestamp = float(data['price']), data['timestamp']
             cursor.execute("UPDATE holdings SET last_price = ?, last_price_timestamp = ?, market_value = quantity * ?, last_price_update_failed = 0 WHERE symbol = ?;", (price, timestamp, price, symbol))
-            updated_count += cursor.rowcount
         conn.commit()
-        print(f"Updated {updated_count} holding records with new prices.")
     except (sqlite3.Error, KeyError) as e:
-        print(f"Database error updating holdings with new prices: {e}")
         conn.rollback()
         raise e
     finally:
@@ -1010,7 +869,6 @@ def mark_holdings_as_failed(symbols: List[str]):
         cursor.execute(sql, symbols)
         conn.commit()
     except sqlite3.Error as e:
-        print(f"Database error marking holdings as failed: {e}")
         conn.rollback()
         raise e
     finally:
@@ -1057,7 +915,6 @@ def save_tax_facts(year: int, data: Dict[str, Any]):
         cursor.execute(sql, params)
         conn.commit()
     except sqlite3.Error as e:
-        print(f"Database error saving tax facts for {year}: {e}")
         conn.rollback()
         raise e
     finally:
@@ -1084,7 +941,6 @@ def create_future_income_stream(stream: FutureIncomeStream) -> FutureIncomeStrea
         cursor.execute(sql, params)
         conn.commit()
     except sqlite3.Error as e:
-        print(f"Database error creating income stream: {e}")
         conn.rollback()
         raise e
     finally:
@@ -1107,7 +963,6 @@ def delete_future_income_stream(stream_id: str) -> bool:
         conn.commit()
         return cursor.rowcount > 0
     except sqlite3.Error as e:
-        print(f"Database error deleting income stream {stream_id}: {e}")
         conn.rollback()
         raise e
     finally:
@@ -1183,8 +1038,9 @@ def create_property(prop: Property) -> Property:
     cursor = conn.cursor()
     sql = """INSERT INTO properties (
                  property_id, name, purchase_price, mortgage_balance, 
-                 current_value, appreciation_rate, is_primary
-             ) VALUES (?, ?, ?, ?, ?, ?, ?);"""
+                 current_value, appreciation_rate, is_primary,
+                 purchase_year, sale_year, annual_maintenance
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"""
     params = (
         prop.property_id,
         prop.name,
@@ -1192,7 +1048,10 @@ def create_property(prop: Property) -> Property:
         float(prop.mortgage_balance),
         float(prop.current_value),
         float(prop.appreciation_rate),
-        1 if prop.is_primary else 0
+        1 if prop.is_primary else 0,
+        prop.purchase_year,
+        prop.sale_year,
+        float(prop.annual_maintenance)
     )
     try:
         cursor.execute(sql, params)
@@ -1207,7 +1066,7 @@ def create_property(prop: Property) -> Property:
 def update_property(property_id: str, updates: Dict[str, Any]):
     conn = get_db_connection()
     cursor = conn.cursor()
-    allowed_fields = ['name', 'purchase_price', 'mortgage_balance', 'current_value', 'appreciation_rate', 'is_primary']
+    allowed_fields = ['name', 'purchase_price', 'mortgage_balance', 'current_value', 'appreciation_rate', 'is_primary', 'purchase_year', 'sale_year', 'annual_maintenance']
     set_clauses, params = [], []
     for field, value in updates.items():
         if field not in allowed_fields:
@@ -1239,7 +1098,8 @@ def delete_property(property_id: str) -> bool:
 def get_total_real_estate_equity() -> float:
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT SUM(current_value) as total_val, SUM(mortgage_balance) as total_debt FROM properties")
+    current_year = date.today().year
+    cursor.execute("SELECT SUM(current_value) as total_val, SUM(mortgage_balance) as total_debt FROM properties WHERE purchase_year IS NULL OR purchase_year <= ?", (current_year,))
     row = cursor.fetchone()
     conn.close()
     if row:
@@ -1269,7 +1129,6 @@ def get_base_col_from_actuals(categories: List[str], lookback_years: int = 1) ->
         total_sum = result['total_expense'] if result and result['total_expense'] else 0.0
         return abs(total_sum) / lookback_years
     except sqlite3.Error as e:
-        print(f"Error calculating base CoL: {e}")
         return 0.0
     finally:
         conn.close()
@@ -1298,7 +1157,7 @@ def get_base_col_breakdown(categories: List[str], lookback_years: int = 1) -> Di
             total_sum = abs(row['total_expense'] or 0.0)
             breakdown[row['category']] = total_sum / lookback_years
     except sqlite3.Error as e:
-        print(f"Error calculating base CoL breakdown: {e}")
+        pass
     finally:
         conn.close()
     return breakdown
@@ -1338,7 +1197,6 @@ def save_discretionary_budget_item(item: Dict[str, Any]):
         cursor.execute(sql, params)
         conn.commit()
     except sqlite3.Error as e:
-        print(f"Database error saving discretionary item: {e}")
         conn.rollback()
         raise e
     finally:
@@ -1353,7 +1211,6 @@ def delete_discretionary_budget_item(item_id: str) -> bool:
         conn.commit()
         return deleted > 0
     except sqlite3.Error as e:
-        print(f"Database error deleting discretionary item {item_id}: {e}")
         conn.rollback()
         raise e
     finally:
@@ -1362,9 +1219,6 @@ def delete_discretionary_budget_item(item_id: str) -> bool:
 # --- TAG ENGINE ADDITIONS ---
 
 def get_tag_summary() -> List[Dict[str, Any]]:
-    """
-    Aggregates tags across transactions and holdings, providing count and volume.
-    """
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -1383,7 +1237,6 @@ def get_tag_summary() -> List[Dict[str, Any]]:
             if t not in tag_map:
                 tag_map[t] = {'tag': t, 'tx_count': 0, 'tx_value': 0.0, 'holding_count': 0, 'holding_value': 0.0}
             tag_map[t]['tx_count'] += 1
-            # Use absolute value to represent total activity volume
             tag_map[t]['tx_value'] += abs(float(row['amount']))
             
     for row in holding_rows:
@@ -1397,9 +1250,6 @@ def get_tag_summary() -> List[Dict[str, Any]]:
     return sorted(list(tag_map.values()), key=lambda x: x['tag'].lower())
 
 def get_records_by_tag(tag: str) -> Dict[str, List[Dict[str, Any]]]:
-    """
-    Fetches exact records (transactions & holdings) that contain the specified tag.
-    """
     conn = get_db_connection()
     cursor = conn.cursor()
     

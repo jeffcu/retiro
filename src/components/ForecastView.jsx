@@ -177,7 +177,9 @@ const ExpenseCompositionChart = ({ data }) => {
 
     const idMap = {
         base_col_expense: 'Base Living',
+        property_maintenance: 'Prop. Maint.',
         discretionary_expense: 'Discretionary',
+        property_purchase: 'Prop. Purchase',
         daf_transfer: 'DAF/Charity'
     };
 
@@ -185,11 +187,11 @@ const ExpenseCompositionChart = ({ data }) => {
         <div style={{ height: '300px' }}>
             <ResponsiveBar
                 data={data}
-                keys={['base_col_expense', 'discretionary_expense', 'daf_transfer']}
+                keys={['base_col_expense', 'property_maintenance', 'discretionary_expense', 'property_purchase', 'daf_transfer']}
                 indexBy="age"
                 margin={{ top: 20, right: 20, bottom: 50, left: 70 }}
                 padding={0.1}
-                colors={['#ff6b6b', '#feca57', '#05c46b']}
+                colors={['#ff6b6b', '#ff9f43', '#feca57', '#00f2fe', '#05c46b']}
                 axisBottom={{ legend: 'Age', legendOffset: 36, legendPosition: 'middle' }}
                 axisLeft={{ 
                     format: value => `$${value / 1000}k`,
@@ -466,10 +468,29 @@ const ResidenceStrategiesConfig = ({ config, setConfig, onSave }) => {
     };
 
     return (
-        <CollapsibleCard title="5) Principal Residence Strategies" className="grid-half-left">
+        <CollapsibleCard title="5) Property Lifecycle Strategies" className="grid-half-left">
             <p style={{fontSize: '0.8em', color: '#aaa', marginTop: '-0.5rem'}}>
-                Model liquidating your primary home OR converting it to a rental property.
+                Model buying, leasing, or liquidating property assets in the future.
             </p>
+
+            {/* FUTURE PROPERTY LIFECYCLE */}
+            <div style={{borderBottom: '1px solid #444', paddingBottom: '1rem', marginBottom: '1rem'}}>
+                <div className="setting-group" style={{display: 'flex', alignItems: 'center'}}>
+                    <input 
+                        type="checkbox" 
+                        id="future_properties_enabled"
+                        name="future_properties_enabled"
+                        checked={config.future_properties_enabled ?? true} 
+                        onChange={handleChange} 
+                        onBlur={onSave}
+                        style={{width: 'auto', marginRight: '0.5rem'}}
+                    />
+                    <label htmlFor="future_properties_enabled" style={{margin: 0, cursor: 'pointer', color: '#fff', fontWeight: 'bold'}}>Enable Future Property Purchases</label>
+                </div>
+                <p style={{fontSize: '0.8em', color: '#aaa', margin: '0.5rem 0 0 1.5rem'}}>
+                    Toggle off to simulate the runway if you decide NOT to buy planned future properties.
+                </p>
+            </div>
 
             {/* SALE STRATEGY */}
             <div style={{borderBottom: '1px solid #444', paddingBottom: '1rem', marginBottom: '1rem'}}>
@@ -483,7 +504,7 @@ const ResidenceStrategiesConfig = ({ config, setConfig, onSave }) => {
                         onBlur={onSave}
                         style={{width: 'auto', marginRight: '0.5rem'}}
                     />
-                    <label htmlFor="residence_sale_enabled" style={{margin: 0, cursor: 'pointer', color: '#fff'}}>Enable Sale Strategy</label>
+                    <label htmlFor="residence_sale_enabled" style={{margin: 0, cursor: 'pointer', color: '#fff'}}>Enable Primary Residence Sale</label>
                 </div>
                 
                 {config.residence_sale_enabled && (
@@ -513,7 +534,7 @@ const ResidenceStrategiesConfig = ({ config, setConfig, onSave }) => {
                         onBlur={onSave}
                         style={{width: 'auto', marginRight: '0.5rem'}}
                     />
-                    <label htmlFor="residence_lease_enabled" style={{margin: 0, cursor: 'pointer', color: '#fff'}}>Enable Lease Strategy</label>
+                    <label htmlFor="residence_lease_enabled" style={{margin: 0, cursor: 'pointer', color: '#fff'}}>Enable Primary Residence Lease</label>
                 </div>
                 
                 {config.residence_lease_enabled && (

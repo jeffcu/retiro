@@ -156,6 +156,9 @@ def calculate_forecast() -> Dict[str, Any]:
     residence_lease_year = int(db.get_setting('forecast_residence_lease_year') or 0) or None
     residence_lease_monthly_value = float(db.get_setting('forecast_residence_lease_monthly_value') or 0.0)
 
+    future_props_setting = db.get_setting('forecast_future_properties_enabled')
+    future_properties_enabled = bool(future_props_setting) if future_props_setting is not None else True
+
     phase_multipliers = db.get_setting('forecast_phase_multipliers') or {}
     base_col_categories = db.get_setting('forecast_base_col_categories') or []
     
@@ -209,10 +212,24 @@ def calculate_forecast() -> Dict[str, Any]:
 
     def _run_scenario(scenario_name: str, return_offset: float, hc_inflation_mult: float, apply_stress_years: bool):
         buckets = copy.deepcopy(base_buckets)
-        working_properties = [
-            {"id": p['property_id'], "value": float(p['current_value']), "debt": float(p['mortgage_balance']), "rate": float(p['appreciation_rate']), "is_primary": bool(p['is_primary'])}
-            for p in base_properties
-        ]
+        
+        # 0. Segregate Current vs Future Properties
+        working_properties = []
+        future_properties = []
+        for p in base_properties:
+            prop_dict = {
+                "id": p['property_id'], "value": float(p['current_value']), "debt": float(p['mortgage_balance']), 
+                "rate": float(p['appreciation_rate']), "is_primary": bool(p['is_primary']),
+                "purchase_year": p.get('purchase_year'), "sale_year": p.get('sale_year'),
+                "annual_maintenance": float(p.get('annual_maintenance') or 0.0), "name": p['name'],
+                "purchase_price": float(p['purchase_price'])
+            }
+            if prop_dict['purchase_year'] and prop_dict['purchase_year'] > current_year:
+                if future_properties_enabled:
+                    future_properties.append(prop_dict)
+            else:
+                working_properties.append(prop_dict)
+
         alerts = []
         simulation_data = []
         taxable_depleted_alerted = False
@@ -250,6 +267,18 @@ def calculate_forecast() -> Dict[str, Any]:
             
             inflation_factor = (1 + inflation_rate) ** years_from_start
 
+            # 0.5 Temporal Property Acquisitions
+            capital_expenditures = 0.0
+            props_to_remove = []
+            for p in future_properties:
+                if p['purchase_year'] == year:
+                    cost = p['purchase_price']
+                    capital_expenditures += cost
+                    working_properties.append(p)
+                    props_to_remove.append(p)
+            for p in props_to_remove:
+                future_properties.remove(p)
+
             # 1. Base Income & SS
             for stream in future_income_streams:
                 start = date.fromisoformat(stream['start_date'])
@@ -285,8 +314,9 @@ def calculate_forecast() -> Dict[str, Any]:
                 year_income += year_rmd
                 ordinary_income_events += year_rmd
 
-            # 3. Living Expenses
+            # 3. Living Expenses & Maintenance
             year_living_expenses = 0.0
+            year_property_maintenance = 0.0
             expense_breakdown = {}
 
             for cat, amount in base_col_breakdown.items():
@@ -303,6 +333,12 @@ def calculate_forecast() -> Dict[str, Any]:
                 cost = amount * compounded_inflation * get_phase_multiplier(cat, phase_key)
                 year_living_expenses += cost
                 expense_breakdown[cat] = round(cost, 2)
+
+            for prop in working_properties:
+                if prop.get('annual_maintenance', 0) > 0:
+                    maint_cost = prop['annual_maintenance'] * inflation_factor
+                    year_property_maintenance += maint_cost
+                    expense_breakdown[f"{prop['name']} Maint."] = round(maint_cost, 2)
             
             year_discretionary = 0.0
             for item in discretionary_items:
@@ -315,6 +351,9 @@ def calculate_forecast() -> Dict[str, Any]:
                         item_amount = item_amount * inflation_factor
                     year_discretionary += item_amount
                     expense_breakdown[item['name']] = round(item_amount, 2)
+
+            for p in props_to_remove:
+                expense_breakdown[f"{p['name']} Purchase"] = round(p['purchase_price'], 2)
 
             # 4. Preliminary Tax Check
             taxable_ss = calculate_taxable_ss(ss_income, ordinary_income_events + ltcg_income_events, filing_status)
@@ -343,19 +382,33 @@ def calculate_forecast() -> Dict[str, Any]:
                         year_daf_transfer += actual_transfer
                         # Escapes LTCG because it bypasses the liquidations section below
 
-            # 6. Residence Sale
+            # 6. Residence & Temporal Property Sale
             sale_proceeds = 0.0
             sale_event_triggered = False
+            
+            # Legacy Primary Sale Config
             if residence_sale_enabled and residence_sale_year and year == residence_sale_year:
                 for prop in [p for p in working_properties if p['is_primary']]:
                     sale_proceeds += max(0.0, prop['value'] - prop['debt'])
                     working_properties.remove(prop)
                     sale_event_triggered = True
 
+            # Temporal Lifecycle Sales
+            temporal_sold = []
+            for prop in working_properties:
+                if prop.get('sale_year') == year:
+                    sale_proceeds += max(0.0, prop['value'] - prop['debt'])
+                    temporal_sold.append(prop)
+                    sale_event_triggered = True
+            
+            for prop in temporal_sold:
+                if prop in working_properties:
+                    working_properties.remove(prop)
+
             # 7. Net Cashflow & Strategic Withdrawal
             annual_tax_bill_est = calculate_progressive_tax(ordinary_income_events + conversion_amount + taxable_ss, ltcg_income_events, filing_status, state_tax_rate)['total_tax']
             expense_breakdown['Est. Income Tax'] = round(annual_tax_bill_est, 2)
-            total_expenses = year_living_expenses + year_discretionary + annual_tax_bill_est
+            total_expenses = year_living_expenses + year_property_maintenance + year_discretionary + annual_tax_bill_est + capital_expenditures
 
             net_cashflow = year_income + sale_proceeds - total_expenses
             strategy_executed = "Standard"
@@ -464,6 +517,8 @@ def calculate_forecast() -> Dict[str, Any]:
                 "total_income": round(year_income, 2),
                 "total_expenses": round(total_expenses, 2),
                 "base_col_expense": round(year_living_expenses, 2),
+                "property_maintenance": round(year_property_maintenance, 2),
+                "property_purchase": round(capital_expenditures, 2),
                 "discretionary_expense": round(year_discretionary, 2),
                 "expense_breakdown": expense_breakdown,
                 "net_cashflow": round(net_cashflow, 2),

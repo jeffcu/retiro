@@ -173,6 +173,9 @@ class PropertyCreate(BaseModel):
     current_value: float
     appreciation_rate: float
     is_primary: bool
+    purchase_year: Optional[int] = None
+    sale_year: Optional[int] = None
+    annual_maintenance: Optional[float] = 0.0
 
 class PropertyResponse(PropertyCreate):
     property_id: str
@@ -194,6 +197,7 @@ class ForecastConfig(BaseModel):
     residence_lease_enabled: Optional[bool] = False
     residence_lease_year: Optional[int] = None
     residence_lease_monthly_value: Optional[float] = None
+    future_properties_enabled: Optional[bool] = True
     base_col_lookback_years: Optional[int] = 1
     withdrawal_strategy: Optional[str] = 'standard'
     tax_filing_status: Optional[str] = 'single'
@@ -582,8 +586,8 @@ async def get_all_properties(mode: str = Query("actuals")):
 @app.post("/api/properties", response_model=PropertyResponse, status_code=201, tags=["Real Estate"])
 async def create_property(payload: PropertyCreate):
     existing = db.get_all_properties()
-    if len(existing) >= 6:
-        raise HTTPException(status_code=400, detail="Maximum property limit (6) reached.")
+    if len(existing) >= 12: # Expanded limit for temporal lifecycles
+        raise HTTPException(status_code=400, detail="Maximum property limit reached.")
     
     prop_id = str(uuid.uuid4())
     prop_obj = Property(
@@ -593,7 +597,10 @@ async def create_property(payload: PropertyCreate):
         mortgage_balance=Decimal(str(payload.mortgage_balance)),
         current_value=Decimal(str(payload.current_value)),
         appreciation_rate=Decimal(str(payload.appreciation_rate)),
-        is_primary=payload.is_primary
+        is_primary=payload.is_primary,
+        purchase_year=payload.purchase_year,
+        sale_year=payload.sale_year,
+        annual_maintenance=Decimal(str(payload.annual_maintenance or 0.0))
     )
     try:
         db.create_property(prop_obj)
@@ -651,6 +658,7 @@ async def delete_snapshot(snapshot_id: str):
 
 @app.get("/api/forecast/config", tags=["Forecast"])
 async def get_forecast_config():
+    future_props_setting = db.get_setting('forecast_future_properties_enabled')
     return {
         "birth_year": db.get_setting('forecast_birth_year'),
         "inflation_rate": db.get_setting('forecast_inflation_rate') or 0.03,
@@ -667,6 +675,7 @@ async def get_forecast_config():
         "residence_lease_enabled": db.get_setting('forecast_residence_lease_enabled') or False,
         "residence_lease_year": db.get_setting('forecast_residence_lease_year'),
         "residence_lease_monthly_value": db.get_setting('forecast_residence_lease_monthly_value'),
+        "future_properties_enabled": bool(future_props_setting) if future_props_setting is not None else True,
         "base_col_lookback_years": db.get_setting('forecast_base_col_lookback_years') or 1,
         "withdrawal_strategy": db.get_setting('forecast_withdrawal_strategy') or 'standard',
         "tax_filing_status": db.get_setting('forecast_tax_filing_status') or 'single',
@@ -713,6 +722,8 @@ async def update_forecast_config(config: ForecastConfig):
         db.set_setting('forecast_residence_lease_year', config.residence_lease_year)
     if 'residence_lease_monthly_value' in fields_set:
         db.set_setting('forecast_residence_lease_monthly_value', config.residence_lease_monthly_value)
+    if 'future_properties_enabled' in fields_set:
+        db.set_setting('forecast_future_properties_enabled', config.future_properties_enabled)
     if 'base_col_lookback_years' in fields_set: 
         db.set_setting('forecast_base_col_lookback_years', config.base_col_lookback_years)
     if 'withdrawal_strategy' in fields_set:
