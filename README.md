@@ -25,7 +25,7 @@ This system is built for the **hands-on planner**.
 *   **You want "Live" Net Worth.** While you manage the transaction history, the system automatically pulls end-of-day stock and bond prices to keep your portfolio value current.
 *   **You are planning complex scenarios.** You need to model selling a primary residence in 2030, paying for a wedding in 2032, or funding long-term care in 2045.
 *   **You care about Tax Drag.** You want to see how drawing from your IRA vs. your Brokerage account affects your long-term survival rate.
-*   **No cost to operate.** Market updates use a slow drip strategy to stay under the pay levels for market prices.   Add an free API keys from Massive and/or AlphaVantage to enable the free daily price refresh after market close, and a mid-day refresh of your top 25 holdings.
+*   **No cost to operate.** Market updates use a slow drip strategy to stay under the pay levels for market prices. Add free API keys from Massive and/or AlphaVantage to enable the free daily price refresh after market close, and a mid-day refresh of your top 25 holdings.
 
 ---
 
@@ -50,17 +50,6 @@ This system is built for the **hands-on planner**.
 ### 4. Portfolio Performance
 *   **Waterfall Analysis:** Breaks down performance into Contributions, Yield, Withdrawals, Fees, and Market Growth.
 *   **Layered Returns:** Calculates Gross Return → Net of Fees → Net of Taxes.
-
----
-
-## 🏗️ Technical Architecture
-
-This is a **monorepo** containing a full-stack application designed to be run locally:
-
-*   **Backend:** Python 3.11+ (FastAPI, Pandas, SQLite)
-*   **Frontend:** React 18 (Vite, Nivo Charts)
-*   **Database:** SQLite (`data/trust.db`) - Simple, portable, and local.
-*   **Market Data:** Integrates with Massive and AlphaVantage APIs for end-of-day pricing.
 
 ---
 
@@ -97,6 +86,20 @@ We provide a unified startup script that spins up both the Python backend and Re
 
 *   **Frontend:** http://localhost:5173
 *   **Backend API:** http://localhost:8000/docs
+
+---
+
+## 🧪 Trying the Demo Dataset (The Calibration Matrix)
+
+If you want to explore the system's features without uploading your own personal data, we provide a mathematically perfect test dataset featuring a fictional 55-year-old user with a $2.5M net worth.
+
+1. Ensure the system is running.
+2. In a separate terminal, generate the demo database:
+   ```bash
+   python scripts/build_demo_db.py
+   ```
+3. Navigate to **Data & Settings** in the application.
+4. Under **System Backup & Restore**, select the newly created `demo_data/trust_demo.db` file and click **Restore**.
 
 ---
 

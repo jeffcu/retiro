@@ -194,10 +194,16 @@ def calculate_forecast() -> Dict[str, Any]:
     base_col_breakdown = db.get_base_col_breakdown(filtered_col_categories, lookback_years)
     base_col_total_initial = sum(base_col_breakdown.values())
     
+    # Pre-simulation Starting Mass Calculation
+    current_year = date.today().year
+    initial_liquid = sum(base_buckets.values())
+    initial_re_equity = sum([float(p['current_value']) - float(p['mortgage_balance']) 
+                            for p in base_properties 
+                            if not p.get('purchase_year') or p.get('purchase_year') <= current_year])
+    initial_net_worth = initial_liquid + initial_re_equity
+
     discretionary_items = db.get_discretionary_budget_items()
     future_income_streams = db.get_all_future_income_streams()
-    
-    current_year = date.today().year
     end_year = birth_year + 95
 
     def get_phase_multiplier(category_name: str, phase_key: str) -> float:
@@ -555,7 +561,7 @@ def calculate_forecast() -> Dict[str, Any]:
         "alerts": likely_alerts,
         "settings": {
             "birth_year": birth_year,
-            "starting_nw": likely_series[0]['total_net_worth'] if likely_series else 0,
+            "starting_nw": round(initial_net_worth, 2),
             "starting_base_col": round(base_col_total_initial, 2),
             "withdrawal_strategy": withdrawal_strategy
         }

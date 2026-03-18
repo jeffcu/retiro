@@ -310,190 +310,13 @@ async def import_holdings_csv(account_id: str = Form(...), file: UploadFile = Fi
 async def get_all_import_runs():
     return db.get_all_import_runs()
 
-@app.post("/api/rules", response_model=RuleResponse, status_code=201, tags=["Rules"])
-async def create_new_rule(rule: RuleCreate):
-    try:
-        new_rule = db.create_rule(rule.dict())
-        return new_rule
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/rules", response_model=List[RuleResponse], tags=["Rules"])
-async def get_all_rules():
-    return db.get_all_rules()
-
-@app.delete("/api/rules/{rule_id}", status_code=204, tags=["Rules"])
-async def delete_rule_by_id(rule_id: str):
-    if not db.delete_rule(rule_id):
-        raise HTTPException(status_code=404, detail="Rule not found.")
-    return Response(status_code=204)
-
-@app.post("/api/transactions/recategorize", tags=["Processing"])
-async def trigger_recategorization():
-    re_categorized_count = rules_engine.recategorize_all_transactions()
-    return {"message": f"Successfully re-categorized {re_categorized_count} transactions."}
-
-@app.get("/api/sankey/home", tags=["Analysis"])
-async def get_home_sankey_data(period: str = "all"):
-    return analysis.generate_capital_flow_sankey(period, exclude_invisible=True)
-
-@app.get("/api/analysis/capital-flow-table", tags=["Analysis"])
-async def get_home_capital_flow_table(period: str = "all"):
-    return analysis.generate_capital_flow_table_data(period, exclude_invisible=True)
-
-@app.get("/api/analysis/investment-cashflow-summary", tags=["Analysis"])
-async def get_investment_cashflow_summary(period: str = "all"):
-    return analysis.calculate_investment_cashflow_summary(period)
-
-@app.get("/api/portfolio/summary", tags=["Analysis"])
-async def get_portfolio_summary(mode: str = Query("actuals")):
-    holdings = db.get_holdings()
-    total_market_value = sum(h.get('market_value', 0) for h in holdings if h.get('market_value') is not None)
-    total_re_equity = db.get_total_real_estate_equity()
-    result = {
-        "total_market_value": total_market_value,
-        "total_real_estate_equity": total_re_equity,
-        "total_net_worth": total_market_value + total_re_equity
-    }
-    if mode == 'demo':
-        return demo_mode.process_for_demo_mode(result)
-    return result
-
-@app.get("/api/analysis/cashflow-chart", tags=["Analysis"])
-async def get_cashflow_chart(filters: Dict[str, Any] = Depends(get_transaction_filters)):
-    return analysis.prepare_cashflow_chart_data(filters)
-
-@app.get("/api/analysis/portfolio-allocation", tags=["Analysis"], response_model=PortfolioAllocationResponse)
-async def get_portfolio_allocation_data(mode: str = Query("actuals")):
-    result = analysis.prepare_portfolio_allocation_chart_data()
-    if mode == 'demo':
-        return demo_mode.process_for_demo_mode(result)
-    return result
-
-@app.get("/api/analysis/portfolio-chart", tags=["Analysis"])
-async def get_portfolio_chart(filters: Dict[str, Any] = Depends(get_holding_filters), mode: str = Query("actuals")):
-    result = analysis.prepare_portfolio_chart_data(filters)
-    if mode == 'demo':
-        return demo_mode.process_for_demo_mode(result)
-    return result
-
-@app.get("/api/analysis/effective-tax-rates", response_model=List[TaxRateSummary], tags=["Analysis"])
-async def get_effective_tax_rates():
-    target_years = [2023, 2024]
-    return analysis.calculate_effective_tax_rates_for_years(target_years)
-
-@app.get("/api/portfolio/overall-return", response_model=PortfolioOverallReturnSummary, tags=["Analysis"])
-async def get_portfolio_overall_return(mode: str = Query("actuals")):
-    result = analysis.calculate_portfolio_summary_metrics()
-    if mode == 'demo':
-        return demo_mode.process_for_demo_mode(result)
-    return result
-
-@app.get("/api/portfolio/layered-returns-summary", response_model=LayeredReturnsResponse, tags=["Analysis"])
-async def get_layered_returns_summary(mode: str = Query("actuals")):
-    result = analysis.calculate_layered_returns_summary()
-    return result
-
-@app.get("/api/analysis/portfolio-waterfall", response_model=PortfolioWaterfallResponse, tags=["Analysis"])
-async def get_portfolio_waterfall(period: str = Query("all", description="Time period, e.g., '2023', '6m', 'all'")):
-    return analysis.calculate_portfolio_waterfall(period)
-
-@app.get("/api/accounts/performance", tags=["Analysis"])
-async def get_account_performance(mode: str = Query("actuals")):
-    data = analysis.get_account_performance_summary()
-    if mode == 'demo':
-        return demo_mode.process_for_demo_mode(data)
-    return data
-
-@app.get("/api/transactions", tags=["Data"])
-async def get_filtered_transactions(filters: Dict[str, Any] = Depends(get_transaction_filters)):
-    return db.get_transactions(filters)
-
-@app.post("/api/transactions/bulk-tag", tags=["Data"])
-async def bulk_tag_transactions(payload: BulkTagRequest):
-    updated = []
-    for tx_id in payload.transaction_ids:
-        tx_dict = db.get_transaction(tx_id)
-        if tx_dict:
-            existing_tags = [t.strip() for t in (tx_dict.get('tags') or '').split(',') if t.strip()]
-            new_tags = list(set(existing_tags + payload.tags))
-            
-            tx_date = datetime.strptime(tx_dict['transaction_date'].split(' ')[0], '%Y-%m-%d').date()
-            tx_obj = Transaction(
-                transaction_id=tx_dict['transaction_id'],
-                account_id=tx_dict['account_id'],
-                transaction_date=tx_date,
-                amount=Decimal(str(tx_dict['amount'])),
-                description=tx_dict['description'],
-                category=tx_dict.get('category'),
-                cashflow_type=CashflowType.from_string(tx_dict.get('cashflow_type')),
-                tags=new_tags,
-                merchant=tx_dict.get('merchant'),
-                asset_id=tx_dict.get('asset_id'),
-                import_run_id=tx_dict.get('import_run_id'),
-                raw_data_hash=tx_dict.get('raw_data_hash'),
-                institution=tx_dict.get('institution'),
-                original_category=tx_dict.get('original_category')
-            )
-            tx_obj.is_transfer = tx_obj.cashflow_type == CashflowType.TRANSFER
-            updated.append(tx_obj)
-    
-    if updated:
-        db.save_transactions(updated)
-    return {"message": f"Successfully tagged {len(updated)} transactions."}
-
-@app.put("/api/transactions/{transaction_id}", tags=["Data"])
-async def update_transaction(transaction_id: str, payload: TransactionUpdate):
-    tx_dict = db.get_transaction(transaction_id)
-    if not tx_dict:
-        raise HTTPException(status_code=404, detail="Transaction not found.")
-    
-    tx_date = datetime.strptime(tx_dict['transaction_date'].split(' ')[0], '%Y-%m-%d').date()
-    amount = Decimal(str(tx_dict['amount']))
-    cashflow_type = CashflowType.from_string(payload.cashflow_type)
-
-    tx_obj = Transaction(
-        transaction_id=tx_dict['transaction_id'],
-        account_id=tx_dict['account_id'],
-        transaction_date=tx_date,
-        amount=amount,
-        description=payload.description,
-        category=payload.category,
-        cashflow_type=cashflow_type,
-        tags=payload.tags,
-        merchant=tx_dict.get('merchant'),
-        asset_id=tx_dict.get('asset_id'),
-        import_run_id=tx_dict.get('import_run_id'),
-        raw_data_hash=tx_dict.get('raw_data_hash'),
-        institution=tx_dict.get('institution'),
-        original_category=tx_dict.get('original_category')
-    )
-    tx_obj.is_transfer = tx_obj.cashflow_type == CashflowType.TRANSFER
-    db.save_transactions([tx_obj])
-    return {"message": "Transaction updated successfully", "transaction": tx_obj}
-
-@app.get("/api/holdings", tags=["Data"])
-async def get_filtered_holdings(filters: Dict[str, Any] = Depends(get_holding_filters), mode: str = Query("actuals")):
-    result = db.get_holdings(filters)
-    if mode == 'demo':
-        return demo_mode.process_for_demo_mode(result)
-    return result
-
-@app.put("/api/holdings/{holding_id}", tags=["Data"])
-async def update_holding(holding_id: str, payload: HoldingUpdate):
-    db.update_holding(holding_id, payload.dict())
-    updated_holding = db.get_holding(holding_id)
-    if not updated_holding:
-        raise HTTPException(status_code=404, detail="Holding not found after update.")
-    return updated_holding
+@app.get("/api/filter-options/income-categories", response_model=List[str], tags=["Filters"])
+async def get_income_category_options():
+    return db.get_income_categories()
 
 @app.get("/api/filter-options", tags=["Filters"])
 async def get_filter_options():
     return db.get_filter_options()
-
-@app.get("/api/filter-options/income-categories", response_model=List[str], tags=["Filters"])
-async def get_income_category_options():
-    return db.get_income_categories()
 
 @app.get("/api/accounts", response_model=List[str], tags=["Accounts"])
 async def get_all_accounts():
@@ -587,7 +410,7 @@ async def get_all_properties(mode: str = Query("actuals")):
 @app.post("/api/properties", response_model=PropertyResponse, status_code=201, tags=["Real Estate"])
 async def create_property(payload: PropertyCreate):
     existing = db.get_all_properties()
-    if len(existing) >= 12: # Expanded limit for temporal lifecycles
+    if len(existing) >= 12:
         raise HTTPException(status_code=400, detail="Maximum property limit reached.")
     
     prop_id = str(uuid.uuid4())
@@ -782,6 +605,183 @@ async def get_all_tags_summary():
 async def get_tag_records(tag_name: str):
     return db.get_records_by_tag(tag_name)
 
+@app.post("/api/rules", response_model=RuleResponse, status_code=201, tags=["Rules"])
+async def create_new_rule(rule: RuleCreate):
+    try:
+        new_rule = db.create_rule(rule.dict())
+        return new_rule
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/rules", response_model=List[RuleResponse], tags=["Rules"])
+async def get_all_rules():
+    return db.get_all_rules()
+
+@app.delete("/api/rules/{rule_id}", status_code=204, tags=["Rules"])
+async def delete_rule_by_id(rule_id: str):
+    if not db.delete_rule(rule_id):
+        raise HTTPException(status_code=404, detail="Rule not found.")
+    return Response(status_code=204)
+
+@app.post("/api/transactions/recategorize", tags=["Processing"])
+async def trigger_recategorization():
+    re_categorized_count = rules_engine.recategorize_all_transactions()
+    return {"message": f"Successfully re-categorized {re_categorized_count} transactions."}
+
+@app.get("/api/sankey/home", tags=["Analysis"])
+async def get_home_sankey_data(period: str = "all"):
+    return analysis.generate_capital_flow_sankey(period, exclude_invisible=True)
+
+@app.get("/api/analysis/capital-flow-table", tags=["Analysis"])
+async def get_home_capital_flow_table(period: str = "all"):
+    return analysis.generate_capital_flow_table_data(period, exclude_invisible=True)
+
+@app.get("/api/analysis/investment-cashflow-summary", tags=["Analysis"])
+async def get_investment_cashflow_summary(period: str = "all"):
+    return analysis.calculate_investment_cashflow_summary(period)
+
+@app.get("/api/portfolio/summary", tags=["Analysis"])
+async def get_portfolio_summary(mode: str = Query("actuals")):
+    holdings = db.get_holdings()
+    total_market_value = sum(h.get('market_value', 0) for h in holdings if h.get('market_value') is not None)
+    total_re_equity = db.get_total_real_estate_equity()
+    result = {
+        "total_market_value": total_market_value,
+        "total_real_estate_equity": total_re_equity,
+        "total_net_worth": total_market_value + total_re_equity
+    }
+    if mode == 'demo':
+        return demo_mode.process_for_demo_mode(result)
+    return result
+
+@app.get("/api/analysis/cashflow-chart", tags=["Analysis"])
+async def get_cashflow_chart(filters: Dict[str, Any] = Depends(get_transaction_filters)):
+    return analysis.prepare_cashflow_chart_data(filters)
+
+@app.get("/api/analysis/portfolio-allocation", tags=["Analysis"], response_model=PortfolioAllocationResponse)
+async def get_portfolio_allocation_data(mode: str = Query("actuals")):
+    result = analysis.prepare_portfolio_allocation_chart_data()
+    if mode == 'demo':
+        return demo_mode.process_for_demo_mode(result)
+    return result
+
+@app.get("/api/analysis/portfolio-chart", tags=["Analysis"])
+async def get_portfolio_chart(filters: Dict[str, Any] = Depends(get_holding_filters), mode: str = Query("actuals")):
+    result = analysis.prepare_portfolio_chart_data(filters)
+    if mode == 'demo':
+        return demo_mode.process_for_demo_mode(result)
+    return result
+
+@app.get("/api/analysis/effective-tax-rates", response_model=List[TaxRateSummary], tags=["Analysis"])
+async def get_effective_tax_rates():
+    target_years = [2023, 2024]
+    return analysis.calculate_effective_tax_rates_for_years(target_years)
+
+@app.get("/api/portfolio/overall-return", response_model=PortfolioOverallReturnSummary, tags=["Analysis"])
+async def get_portfolio_overall_return(mode: str = Query("actuals")):
+    result = analysis.calculate_portfolio_summary_metrics()
+    if mode == 'demo':
+        return demo_mode.process_for_demo_mode(result)
+    return result
+
+@app.get("/api/portfolio/layered-returns-summary", response_model=LayeredReturnsResponse, tags=["Analysis"])
+async def get_layered_returns_summary(mode: str = Query("actuals")):
+    result = analysis.calculate_layered_returns_summary()
+    return result
+
+@app.get("/api/analysis/portfolio-waterfall", response_model=PortfolioWaterfallResponse, tags=["Analysis"])
+async def get_portfolio_waterfall(period: str = Query("all", description="Time period, e.g., '2023', '6m', 'all'")):
+    return analysis.calculate_portfolio_waterfall(period)
+
+@app.get("/api/accounts/performance", tags=["Analysis"])
+async def get_account_performance(mode: str = Query("actuals")):
+    data = analysis.get_account_performance_summary()
+    if mode == 'demo':
+        return demo_mode.process_for_demo_mode(data)
+    return data
+
+@app.get("/api/transactions", tags=["Data"])
+async def get_filtered_transactions(filters: Dict[str, Any] = Depends(get_transaction_filters)):
+    return db.get_transactions(filters)
+
+@app.post("/api/transactions/bulk-tag", tags=["Data"])
+async def bulk_tag_transactions(payload: BulkTagRequest):
+    updated = []
+    for tx_id in payload.transaction_ids:
+        tx_dict = db.get_transaction(tx_id)
+        if tx_dict:
+            existing_tags = [t.strip() for t in (tx_dict.get('tags') or '').split(',') if t.strip()]
+            new_tags = list(set(existing_tags + payload.tags))
+            
+            tx_date = datetime.strptime(tx_dict['transaction_date'].split(' ')[0], '%Y-%m-%d').date()
+            tx_obj = Transaction(
+                transaction_id=tx_dict['transaction_id'],
+                account_id=tx_dict['account_id'],
+                transaction_date=tx_date,
+                amount=Decimal(str(tx_dict['amount'])),
+                description=tx_dict['description'],
+                category=tx_dict.get('category'),
+                cashflow_type=CashflowType.from_string(tx_dict.get('cashflow_type')),
+                tags=new_tags,
+                merchant=tx_dict.get('merchant'),
+                asset_id=tx_dict.get('asset_id'),
+                import_run_id=tx_dict.get('import_run_id'),
+                raw_data_hash=tx_dict.get('raw_data_hash'),
+                institution=tx_dict.get('institution'),
+                original_category=tx_dict.get('original_category')
+            )
+            tx_obj.is_transfer = tx_obj.cashflow_type == CashflowType.TRANSFER
+            updated.append(tx_obj)
+    
+    if updated:
+        db.save_transactions(updated)
+    return {"message": f"Successfully tagged {len(updated)} transactions."}
+
+@app.put("/api/transactions/{transaction_id}", tags=["Data"])
+async def update_transaction(transaction_id: str, payload: TransactionUpdate):
+    tx_dict = db.get_transaction(transaction_id)
+    if not tx_dict:
+        raise HTTPException(status_code=404, detail="Transaction not found.")
+    
+    tx_date = datetime.strptime(tx_dict['transaction_date'].split(' ')[0], '%Y-%m-%d').date()
+    amount = Decimal(str(tx_dict['amount']))
+    cashflow_type = CashflowType.from_string(payload.cashflow_type)
+
+    tx_obj = Transaction(
+        transaction_id=tx_dict['transaction_id'],
+        account_id=tx_dict['account_id'],
+        transaction_date=tx_date,
+        amount=amount,
+        description=payload.description,
+        category=payload.category,
+        cashflow_type=cashflow_type,
+        tags=payload.tags,
+        merchant=tx_dict.get('merchant'),
+        asset_id=tx_dict.get('asset_id'),
+        import_run_id=tx_dict.get('import_run_id'),
+        raw_data_hash=tx_dict.get('raw_data_hash'),
+        institution=tx_dict.get('institution'),
+        original_category=tx_dict.get('original_category')
+    )
+    tx_obj.is_transfer = tx_obj.cashflow_type == CashflowType.TRANSFER
+    db.save_transactions([tx_obj])
+    return {"message": "Transaction updated successfully", "transaction": tx_obj}
+
+@app.get("/api/holdings", tags=["Data"])
+async def get_filtered_holdings(filters: Dict[str, Any] = Depends(get_holding_filters), mode: str = Query("actuals")):
+    result = db.get_holdings(filters)
+    if mode == 'demo':
+        return demo_mode.process_for_demo_mode(result)
+    return result
+
+@app.put("/api/holdings/{holding_id}", tags=["Data"])
+async def update_holding(holding_id: str, payload: HoldingUpdate):
+    db.update_holding(holding_id, payload.dict())
+    updated_holding = db.get_holding(holding_id)
+    if not updated_holding:
+        raise HTTPException(status_code=404, detail="Holding not found after update.")
+    return updated_holding
+
 @app.post("/api/data/purge", tags=["Admin"])
 async def purge_data(request: PurgeRequest):
     try:
@@ -812,8 +812,25 @@ async def restore_backup(file: UploadFile = File(...)):
     try:
         if not file.filename.endswith('.db') and not file.filename.endswith('.sqlite'):
             raise HTTPException(status_code=400, detail="Invalid file type. Please upload a .db file.")
-        with open(db.DB_FILE, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        
+        # Read completely into memory first to avoid blocking the event loop with I/O
+        content = await file.read()
+        
+        # Write the file down to disk
+        with open(db.DB_FILE, "wb") as f:
+            f.write(content)
+            
+        # Critical: Purge lingering SQLite WAL and SHM files to prevent disk image malformation
+        wal_path = str(db.DB_FILE) + "-wal"
+        shm_path = str(db.DB_FILE) + "-shm"
+        if os.path.exists(wal_path):
+            os.remove(wal_path)
+        if os.path.exists(shm_path):
+            os.remove(shm_path)
+            
+        # Tell the database module to re-run schema validation on the next query
+        db._schema_ensured = False
+
         return {"message": "Database restored successfully. Please refresh the application."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to restore backup: {e}")

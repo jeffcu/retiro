@@ -1120,6 +1120,16 @@ def get_base_col_from_actuals(categories: List[str], lookback_years: int = 1) ->
     months = lookback_years * 12
     conn = get_db_connection()
     cursor = conn.cursor()
+    
+    cursor.execute(f"SELECT MIN(transaction_date) as min_date FROM transactions WHERE transaction_date >= date('now', '-{months} months')")
+    row = cursor.fetchone()
+    divisor = float(lookback_years)
+    if row and row['min_date']:
+        first_date = date.fromisoformat(row['min_date'][:10])
+        years_available = (date.today() - first_date).days / 365.25
+        if 0 < years_available < lookback_years:
+            divisor = max(1.0, years_available)
+            
     placeholders = ', '.join('?' for _ in categories)
     query = f"""
         SELECT SUM(amount) as total_expense 
@@ -1132,7 +1142,7 @@ def get_base_col_from_actuals(categories: List[str], lookback_years: int = 1) ->
         cursor.execute(query, categories)
         result = cursor.fetchone()
         total_sum = result['total_expense'] if result and result['total_expense'] else 0.0
-        return abs(total_sum) / lookback_years
+        return abs(total_sum) / divisor
     except sqlite3.Error as e:
         return 0.0
     finally:
@@ -1145,6 +1155,16 @@ def get_base_col_breakdown(categories: List[str], lookback_years: int = 1) -> Di
     months = lookback_years * 12
     conn = get_db_connection()
     cursor = conn.cursor()
+    
+    cursor.execute(f"SELECT MIN(transaction_date) as min_date FROM transactions WHERE transaction_date >= date('now', '-{months} months')")
+    row = cursor.fetchone()
+    divisor = float(lookback_years)
+    if row and row['min_date']:
+        first_date = date.fromisoformat(row['min_date'][:10])
+        years_available = (date.today() - first_date).days / 365.25
+        if 0 < years_available < lookback_years:
+            divisor = max(1.0, years_available)
+
     placeholders = ', '.join('?' for _ in categories)
     query = f"""
         SELECT category, SUM(amount) as total_expense
@@ -1160,7 +1180,7 @@ def get_base_col_breakdown(categories: List[str], lookback_years: int = 1) -> Di
         rows = cursor.fetchall()
         for row in rows:
             total_sum = abs(row['total_expense'] or 0.0)
-            breakdown[row['category']] = total_sum / lookback_years
+            breakdown[row['category']] = total_sum / divisor
     except sqlite3.Error as e:
         pass
     finally:

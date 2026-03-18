@@ -120,7 +120,7 @@ This system is built for the **hands-on planner**.
 *   **You want "Live" Net Worth.** While you manage the transaction history, the system automatically pulls end-of-day stock and bond prices to keep your portfolio value current.
 *   **You are planning complex scenarios.** You need to model selling a primary residence in 2030, paying for a wedding in 2032, or funding long-term care in 2045.
 *   **You care about Tax Drag.** You want to see how drawing from your IRA vs. your Brokerage account affects your long-term survival rate.
-*   **No cost to operate.** Market updates use a slow drip strategy to stay under the pay levels for market prices.   Add an free API keys from Massive and/or AlphaVantage to enable the free daily price refresh after market close, and a mid-day refresh of your top 25 holdings.
+*   **No cost to operate.** Market updates use a slow drip strategy to stay under the pay levels for market prices. Add free API keys from Massive and/or AlphaVantage to enable the free daily price refresh after market close, and a mid-day refresh of your top 25 holdings.
 
 ---
 
@@ -145,17 +145,6 @@ This system is built for the **hands-on planner**.
 ### 4. Portfolio Performance
 *   **Waterfall Analysis:** Breaks down performance into Contributions, Yield, Withdrawals, Fees, and Market Growth.
 *   **Layered Returns:** Calculates Gross Return → Net of Fees → Net of Taxes.
-
----
-
-## 🏗️ Technical Architecture
-
-This is a **monorepo** containing a full-stack application designed to be run locally:
-
-*   **Backend:** Python 3.11+ (FastAPI, Pandas, SQLite)
-*   **Frontend:** React 18 (Vite, Nivo Charts)
-*   **Database:** SQLite (`data/trust.db`) - Simple, portable, and local.
-*   **Market Data:** Integrates with Massive and AlphaVantage APIs for end-of-day pricing.
 
 ---
 
@@ -192,6 +181,20 @@ We provide a unified startup script that spins up both the Python backend and Re
 
 *   **Frontend:** http://localhost:5173
 *   **Backend API:** http://localhost:8000/docs
+
+---
+
+## 🧪 Trying the Demo Dataset (The Calibration Matrix)
+
+If you want to explore the system's features without uploading your own personal data, we provide a mathematically perfect test dataset featuring a fictional 55-year-old user with a $2.5M net worth.
+
+1. Ensure the system is running.
+2. In a separate terminal, generate the demo database:
+   ```bash
+   python scripts/build_demo_db.py
+   ```
+3. Navigate to **Data & Settings** in the application.
+4. Under **System Backup & Restore**, select the newly created `demo_data/trust_demo.db` file and click **Restore**.
 
 ---
 
@@ -636,6 +639,178 @@ Stable.
 - [ ] **Embedded Tax**: Verify the system displays a "Liquidation Value" that subtracts estimated taxes from the Deferred bucket (Ordinary Income) and Taxable bucket (Capital Gains).
 - [ ] **Roth Premium**: Verify that $1 in Roth contributes exactly $1 to Liquidation Value, while $1 in Deferred contributes less (e.g., $0.76).
 
+--- FILE: projects/trust/scripts/build_demo_db.py ---
+
+import sys
+import os
+import uuid
+import random
+from datetime import date, timedelta
+from decimal import Decimal
+from pathlib import Path
+
+# Add project root to path
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, project_root)
+
+# Hijack the Database Path BEFORE importing models that use it
+import src.database as db
+demo_dir = Path(project_root) / "demo_data"
+demo_dir.mkdir(exist_ok=True)
+demo_db_path = demo_dir / "trust_demo.db"
+
+# Remove old demo db if it exists to ensure a clean slate
+if demo_db_path.exists():
+    os.remove(demo_db_path)
+
+# Override the engine's target file
+db.DB_FILE = demo_db_path
+
+from src.data_model import Transaction, Holding, Property, CashflowType, FutureIncomeStream
+
+def build_demo_dataset():
+    print(f"--- Initializing Calibration Matrix at {demo_db_path} ---")
+    db.initialize_database()
+    
+    current_year = date.today().year
+    
+    # 1. Base Settings (Subject is 65 years old for retirement demographic)
+    print("Injecting Temporal Settings...")
+    settings = {
+        'forecast_birth_year': current_year - 65,
+        'forecast_inflation_rate': 0.03,
+        'forecast_return_rate': 0.06,
+        'forecast_withdrawal_tax_rate': 0.15,
+        'forecast_state_tax_rate': 0.04,
+        'forecast_retirement_age': 65,
+        'forecast_nogo_age': 80,
+        'forecast_tax_filing_status': 'joint',
+        'forecast_withdrawal_strategy': 'standard',
+        'forecast_base_col_lookback_years': 1,
+        'forecast_base_col_categories': ['Groceries', 'Utilities', 'Property Tax', 'Insurance', 'Dining & Entertainment', 'Healthcare', 'Hobbies', 'Travel'],
+        'portfolio_inception_date': f"{current_year-2}-01-01"
+    }
+    for k, v in settings.items():
+        db.set_setting(k, v)
+
+    # 2. Account Metadata
+    print("Obfuscating Institutions...")
+    db.set_account_metadata("Horizon Bank", "Taxable", "Primary Checking")
+    db.set_account_metadata("Apex Wealth", "Taxable", "Standard Brokerage")
+    db.set_account_metadata("Starlight 401k", "Deferred", "Pre-tax Retirement")
+    db.set_account_metadata("Starlight Roth", "Roth", "Post-tax Retirement")
+
+    # 3. Real Estate (Primary Residence: $1.2M Value, $200k Debt = $1M Equity)
+    print("Constructing Real Estate Assets...")
+    prop = Property(
+        property_id=str(uuid.uuid4()),
+        name="Primary Residence (Demo)",
+        purchase_price=Decimal('500000'),
+        mortgage_balance=Decimal('200000'),
+        current_value=Decimal('1200000'),
+        appreciation_rate=Decimal('0.03'),
+        is_primary=True,
+        annual_maintenance=Decimal('12000')
+    )
+    db.create_property(prop)
+
+    # 4. Holdings ($1.5M Liquid Net Worth)
+    print("Injecting Diversified Portfolio Data...")
+    apex_holdings = [
+        Holding(holding_id=str(uuid.uuid4()), account_id="Apex Wealth", symbol="VTI", quantity=Decimal('1500'), cost_basis=Decimal('200000'), market_value=Decimal('350000'), asset_type="Equities", tags=["Core"]),
+        Holding(holding_id=str(uuid.uuid4()), account_id="Apex Wealth", symbol="VGIT", quantity=Decimal('2000'), cost_basis=Decimal('120000'), market_value=Decimal('115000'), asset_type="Government Bonds", tags=["Yield"]),
+        Holding(holding_id=str(uuid.uuid4()), account_id="Apex Wealth", symbol="SGOV", quantity=Decimal('5000'), cost_basis=Decimal('500000'), market_value=Decimal('501000'), asset_type="Cash Equivalent", tags=["Liquidity"])
+    ]
+    
+    starlight_401k_holdings = [
+        Holding(holding_id=str(uuid.uuid4()), account_id="Starlight 401k", symbol="FXAIX", quantity=Decimal('4000'), cost_basis=Decimal('300000'), market_value=Decimal('600000'), asset_type="Equities", tags=["Retirement"]),
+        Holding(holding_id=str(uuid.uuid4()), account_id="Starlight 401k", symbol="BND", quantity=Decimal('3000'), cost_basis=Decimal('220000'), market_value=Decimal('215000'), asset_type="Fixed Income", tags=["Safety"])
+    ]
+    
+    starlight_roth_holdings = [
+        Holding(holding_id=str(uuid.uuid4()), account_id="Starlight Roth", symbol="QQQ", quantity=Decimal('400'), cost_basis=Decimal('100000'), market_value=Decimal('200000'), asset_type="Equities", tags=["Growth"])
+    ]
+
+    db.save_holdings_snapshot(apex_holdings, "Apex Wealth")
+    db.save_holdings_snapshot(starlight_401k_holdings, "Starlight 401k")
+    db.save_holdings_snapshot(starlight_roth_holdings, "Starlight Roth")
+
+    # 5. Deterministic Transactions with Organic Variance
+    print("Synthesizing 12 Months of Organic Cashflow...")
+    transactions = []
+    
+    random.seed(42) # Ensure the generated data is perfectly deterministic across runs
+    
+    for month_offset in range(12):
+        tx_date = date.today() - timedelta(days=30 * month_offset)
+        
+        # Income
+        transactions.append(Transaction(transaction_id=str(uuid.uuid4()), account_id="Horizon Bank", transaction_date=tx_date, amount=Decimal('9000'), description="Tech Corp Pension", category="Pension", cashflow_type=CashflowType.INCOME))
+        transactions.append(Transaction(transaction_id=str(uuid.uuid4()), account_id="Horizon Bank", transaction_date=tx_date, amount=Decimal('3200'), description="SSA TREAS 310 XXSOC SEC", category="Social Security", cashflow_type=CashflowType.INCOME))
+        
+        # Helper to generate varied amounts for organic simulation
+        def var_amt(base, low=0.8, high=1.2):
+            multiplier = Decimal(str(round(random.uniform(low, high), 2)))
+            return (Decimal(str(base)) * multiplier).quantize(Decimal('0.01'))
+
+        # Expenses (Varied month to month)
+        transactions.append(Transaction(transaction_id=str(uuid.uuid4()), account_id="Horizon Bank", transaction_date=tx_date, amount=var_amt('-1200'), description="MegaMart", category="Groceries", cashflow_type=CashflowType.EXPENSE))
+        transactions.append(Transaction(transaction_id=str(uuid.uuid4()), account_id="Horizon Bank", transaction_date=tx_date, amount=var_amt('-400', 0.9, 1.1), description="City Power & Light", category="Utilities", cashflow_type=CashflowType.EXPENSE))
+        transactions.append(Transaction(transaction_id=str(uuid.uuid4()), account_id="Horizon Bank", transaction_date=tx_date, amount=var_amt('-350', 0.95, 1.05), description="Medicare Part B Premium", category="Healthcare", cashflow_type=CashflowType.EXPENSE))
+        transactions.append(Transaction(transaction_id=str(uuid.uuid4()), account_id="Horizon Bank", transaction_date=tx_date, amount=var_amt('-1000', 0.9, 1.0), description="State Farm Auto/Home", category="Insurance", cashflow_type=CashflowType.EXPENSE))
+        transactions.append(Transaction(transaction_id=str(uuid.uuid4()), account_id="Horizon Bank", transaction_date=tx_date, amount=var_amt('-1500', 0.6, 1.5), description="Local Restaurants & Theaters", category="Dining & Entertainment", cashflow_type=CashflowType.EXPENSE))
+        transactions.append(Transaction(transaction_id=str(uuid.uuid4()), account_id="Horizon Bank", transaction_date=tx_date, amount=var_amt('-600', 0.5, 1.8), description="Pine Valley Golf Club", category="Hobbies", cashflow_type=CashflowType.EXPENSE))
+        
+        # Sporadic Events
+        if month_offset % 4 == 0:
+            transactions.append(Transaction(transaction_id=str(uuid.uuid4()), account_id="Horizon Bank", transaction_date=tx_date, amount=var_amt('-2500', 0.8, 1.5), description="Delta Airlines / Marriott", category="Travel", cashflow_type=CashflowType.EXPENSE))
+            
+        if month_offset == 5:
+            transactions.append(Transaction(transaction_id=str(uuid.uuid4()), account_id="Horizon Bank", transaction_date=tx_date, amount=var_amt('-4500', 0.9, 1.1), description="Home Depot / Lowe's", category="Home Improvement", cashflow_type=CashflowType.CAPEX))
+
+        if month_offset == 1:
+            transactions.append(Transaction(transaction_id=str(uuid.uuid4()), account_id="Horizon Bank", transaction_date=tx_date, amount=Decimal('-12000'), description="County Tax Collector", category="Property Tax", cashflow_type=CashflowType.EXPENSE))
+
+        # Transfers/Investments
+        transactions.append(Transaction(transaction_id=str(uuid.uuid4()), account_id="Horizon Bank", transaction_date=tx_date, amount=Decimal('-2000'), description="Transfer to Apex Wealth", category="Transfer", cashflow_type=CashflowType.TRANSFER, is_transfer=True))
+
+    db.save_transactions(transactions)
+
+    # 6. Future Income & Discretionary Budget
+    print("Configuring Runway Events...")
+    db.create_future_income_stream(FutureIncomeStream(
+        stream_id=str(uuid.uuid4()), stream_type="Pension", description="Spouse Pension (Age 67)", 
+        start_date=date(current_year + 2, 1, 1), end_date=None, amount=Decimal('1500'), frequency="monthly", annual_increase_rate=Decimal('0.02')
+    ))
+    
+    db.save_discretionary_budget_item({
+        'name': 'Daughter\'s Wedding',
+        'amount': 40000,
+        'start_year': current_year + 3,
+        'is_recurring': False,
+        'inflation_adjusted': True,
+        'category': 'Family',
+        'is_enabled': True
+    })
+    
+    db.save_discretionary_budget_item({
+        'name': 'European Vacation',
+        'amount': 15000,
+        'start_year': current_year + 1,
+        'is_recurring': False,
+        'inflation_adjusted': True,
+        'category': 'Travel',
+        'is_enabled': True
+    })
+
+    print("\n--- Calibration Matrix Complete! ---")
+    print(f"Dataset successfully forged at: {demo_db_path}")
+    print("To use: Navigate to 'Data & Settings' in the UI and 'Restore' this file.")
+
+if __name__ == "__main__":
+    build_demo_dataset()
+
+
 --- FILE: projects/trust/scripts/purge_disabled_budget_items.py ---
 
 import sys
@@ -810,8 +985,9 @@ pip install -r requirements.txt
 
 # Launch the uvicorn server with hot-reloading
 # Scotty: Bind to 0.0.0.0 to allow access from local network (iPad, etc.)
+# Scotty: Tell uvicorn to ignore data directory so DB hot-swaps do not crash the server
 echo "Launching uvicorn with --reload on http://0.0.0.0:$PORT..."
-uvicorn src.main:app --reload --host 0.0.0.0 --port $PORT
+uvicorn src.main:app --reload --reload-exclude "data/*" --reload-exclude "*.db" --reload-exclude "*.db-*" --host 0.0.0.0 --port $PORT
 
 echo "--- Backend server process terminated. ---"
 
@@ -881,8 +1057,8 @@ pip install -r requirements.txt > /dev/null
 # --- Step 3: Start Backend (Background) ---
 echo "3. Starting backend server on http://0.0.0.0:$BACKEND_PORT..."
 # Using --workers 1 to avoid complexity with concurrency/DB locks for now, and --reload for dev ease.
-# Scotty: Bind to 0.0.0.0 for LAN access
-uvicorn src.main:app --reload --host 0.0.0.0 --port $BACKEND_PORT &
+# Scotty: Bind to 0.0.0.0 for LAN access and exclude data files to prevent reload death loop.
+uvicorn src.main:app --reload --reload-exclude "data/*" --reload-exclude "*.db" --reload-exclude "*.db-*" --host 0.0.0.0 --port $BACKEND_PORT &
 
 # Capture the PID of the background process
 BACKEND_PID=$!
@@ -1091,6 +1267,108 @@ def run_test():
 
 if __name__ == "__main__":
     run_test()
+
+
+--- FILE: projects/trust/scripts/verify_demo_forecast.py ---
+
+import sys
+import os
+from pathlib import Path
+
+# Add project root to path
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, project_root)
+
+# 1. Hijack the database path to point to the Demo Matrix
+import src.database as db
+demo_db_path = Path(project_root) / "demo_data" / "trust_demo.db"
+
+if not demo_db_path.exists():
+    print("CRITICAL: Calibration Matrix not found. Run build_demo_db.py first.")
+    sys.exit(1)
+
+# Override the engine's target file BEFORE importing the forecast engine
+db.DB_FILE = demo_db_path
+
+from src import forecast
+from src import analysis
+
+def run_verification():
+    print(f"--- Initiating Forecast Verification against {demo_db_path.name} ---")
+    
+    # 1. Verify Pre-Simulation Mass (The True Start)
+    account_summaries = analysis.get_account_performance_summary()
+    starting_liquid = sum(acc['total_market_value'] for acc in account_summaries)
+    starting_re = db.get_total_real_estate_equity()
+    starting_nw = starting_liquid + starting_re
+
+    # 2. Execute the Simulation
+    result = forecast.calculate_forecast()
+    
+    if "error" in result:
+        print(f"ENGINE FAILURE: {result['error']}")
+        sys.exit(1)
+        
+    likely_series = result["simulation_series"]
+    settings = result["settings"]
+    
+    year_0 = likely_series[0] # End of Current Year (0 years inflation)
+    year_1 = likely_series[1] # End of Future Year 1 (3% inflation + Vacation)
+    
+    # 3. Assert Deterministic Physics
+    print("\n[Verifying Pre-Simulation Initial Mass]")
+    
+    expected_liquid = 1500000.00
+    expected_equity = 1000000.00
+    expected_nw = 2500000.00
+    expected_col = 72000.00
+    
+    liquid_pass = abs(starting_liquid - expected_liquid) < 0.01
+    equity_pass = abs(starting_re - expected_equity) < 0.01
+    nw_pass = abs(starting_nw - expected_nw) < 0.01
+    col_pass = abs(settings['starting_base_col'] - expected_col) < 0.01
+    
+    print(f"Liquid Assets:   ${starting_liquid:,.2f} | Expected: ${expected_liquid:,.2f} -> {'✅' if liquid_pass else '❌'}")
+    print(f"Real Estate Eq:  ${starting_re:,.2f} | Expected: ${expected_equity:,.2f} -> {'✅' if equity_pass else '❌'}")
+    print(f"Total Net Worth: ${starting_nw:,.2f} | Expected: ${expected_nw:,.2f} -> {'✅' if nw_pass else '❌'}")
+    print(f"Base Living (Yr):${settings['starting_base_col']:,.2f} | Expected: ${expected_col:,.2f} -> {'✅' if col_pass else '❌'}")
+
+    print("\n[Verifying Current Year Trajectory (Year 0)]")
+    
+    expected_y0_nw = 2547054.00
+    expected_y0_exp = 84400.00
+    expected_y0_grw = 85454.00
+
+    y0_nw_pass = abs(year_0['total_net_worth'] - expected_y0_nw) < 0.01
+    y0_exp_pass = abs(year_0['total_expenses'] - expected_y0_exp) < 0.01
+    y0_grw_pass = abs(year_0['investment_growth'] - expected_y0_grw) < 0.01
+
+    print(f"Year 0 Net Worth: ${year_0['total_net_worth']:,.2f} | Expected: ${expected_y0_nw:,.2f} -> {'✅' if y0_nw_pass else '❌'}")
+    print(f"Year 0 Expenses:  ${year_0['total_expenses']:,.2f} | Expected: ${expected_y0_exp:,.2f} -> {'✅' if y0_exp_pass else '❌'}")
+    print(f"Year 0 Growth:    ${year_0['investment_growth']:,.2f} | Expected: ${expected_y0_grw:,.2f} -> {'✅' if y0_grw_pass else '❌'}")
+
+    print("\n[Verifying Future Trajectory (Year 1)]")
+    
+    expected_y1_nw = 2576666.19
+    expected_y1_exp = 102330.84
+    expected_y1_grw = 85841.95
+
+    y1_nw_pass = abs(year_1['total_net_worth'] - expected_y1_nw) < 0.01
+    y1_exp_pass = abs(year_1['total_expenses'] - expected_y1_exp) < 0.01
+    y1_grw_pass = abs(year_1['investment_growth'] - expected_y1_grw) < 0.01
+
+    print(f"Year 1 Net Worth: ${year_1['total_net_worth']:,.2f} | Expected: ${expected_y1_nw:,.2f} -> {'✅' if y1_nw_pass else '❌'}")
+    print(f"Year 1 Expenses:  ${year_1['total_expenses']:,.2f} | Expected: ${expected_y1_exp:,.2f} -> {'✅' if y1_exp_pass else '❌'}")
+    print(f"Year 1 Growth:    ${year_1['investment_growth']:,.2f} | Expected: ${expected_y1_grw:,.2f} -> {'✅' if y1_grw_pass else '❌'}")
+    
+    if all([liquid_pass, equity_pass, nw_pass, col_pass, y0_nw_pass, y0_exp_pass, y0_grw_pass, y1_nw_pass, y1_exp_pass, y1_grw_pass]):
+        print("\nSUCCESS: The Forecast Engine's mathematical baseline and temporal acceleration are perfectly anchored.")
+    else:
+        print("\nWARNING: Hull breach detected in mathematical aggregation. Logic has drifted.")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    run_verification()
 
 
 --- FILE: projects/trust/scripts/verify_forecast_logic.py ---
@@ -3109,6 +3387,16 @@ def get_base_col_from_actuals(categories: List[str], lookback_years: int = 1) ->
     months = lookback_years * 12
     conn = get_db_connection()
     cursor = conn.cursor()
+    
+    cursor.execute(f"SELECT MIN(transaction_date) as min_date FROM transactions WHERE transaction_date >= date('now', '-{months} months')")
+    row = cursor.fetchone()
+    divisor = float(lookback_years)
+    if row and row['min_date']:
+        first_date = date.fromisoformat(row['min_date'][:10])
+        years_available = (date.today() - first_date).days / 365.25
+        if 0 < years_available < lookback_years:
+            divisor = max(1.0, years_available)
+            
     placeholders = ', '.join('?' for _ in categories)
     query = f"""
         SELECT SUM(amount) as total_expense 
@@ -3121,7 +3409,7 @@ def get_base_col_from_actuals(categories: List[str], lookback_years: int = 1) ->
         cursor.execute(query, categories)
         result = cursor.fetchone()
         total_sum = result['total_expense'] if result and result['total_expense'] else 0.0
-        return abs(total_sum) / lookback_years
+        return abs(total_sum) / divisor
     except sqlite3.Error as e:
         return 0.0
     finally:
@@ -3134,6 +3422,16 @@ def get_base_col_breakdown(categories: List[str], lookback_years: int = 1) -> Di
     months = lookback_years * 12
     conn = get_db_connection()
     cursor = conn.cursor()
+    
+    cursor.execute(f"SELECT MIN(transaction_date) as min_date FROM transactions WHERE transaction_date >= date('now', '-{months} months')")
+    row = cursor.fetchone()
+    divisor = float(lookback_years)
+    if row and row['min_date']:
+        first_date = date.fromisoformat(row['min_date'][:10])
+        years_available = (date.today() - first_date).days / 365.25
+        if 0 < years_available < lookback_years:
+            divisor = max(1.0, years_available)
+
     placeholders = ', '.join('?' for _ in categories)
     query = f"""
         SELECT category, SUM(amount) as total_expense
@@ -3149,7 +3447,7 @@ def get_base_col_breakdown(categories: List[str], lookback_years: int = 1) -> Di
         rows = cursor.fetchall()
         for row in rows:
             total_sum = abs(row['total_expense'] or 0.0)
-            breakdown[row['category']] = total_sum / lookback_years
+            breakdown[row['category']] = total_sum / divisor
     except sqlite3.Error as e:
         pass
     finally:
@@ -3641,10 +3939,16 @@ def calculate_forecast() -> Dict[str, Any]:
     base_col_breakdown = db.get_base_col_breakdown(filtered_col_categories, lookback_years)
     base_col_total_initial = sum(base_col_breakdown.values())
     
+    # Pre-simulation Starting Mass Calculation
+    current_year = date.today().year
+    initial_liquid = sum(base_buckets.values())
+    initial_re_equity = sum([float(p['current_value']) - float(p['mortgage_balance']) 
+                            for p in base_properties 
+                            if not p.get('purchase_year') or p.get('purchase_year') <= current_year])
+    initial_net_worth = initial_liquid + initial_re_equity
+
     discretionary_items = db.get_discretionary_budget_items()
     future_income_streams = db.get_all_future_income_streams()
-    
-    current_year = date.today().year
     end_year = birth_year + 95
 
     def get_phase_multiplier(category_name: str, phase_key: str) -> float:
@@ -4002,7 +4306,7 @@ def calculate_forecast() -> Dict[str, Any]:
         "alerts": likely_alerts,
         "settings": {
             "birth_year": birth_year,
-            "starting_nw": likely_series[0]['total_net_worth'] if likely_series else 0,
+            "starting_nw": round(initial_net_worth, 2),
             "starting_base_col": round(base_col_total_initial, 2),
             "withdrawal_strategy": withdrawal_strategy
         }
@@ -4362,190 +4666,13 @@ async def import_holdings_csv(account_id: str = Form(...), file: UploadFile = Fi
 async def get_all_import_runs():
     return db.get_all_import_runs()
 
-@app.post("/api/rules", response_model=RuleResponse, status_code=201, tags=["Rules"])
-async def create_new_rule(rule: RuleCreate):
-    try:
-        new_rule = db.create_rule(rule.dict())
-        return new_rule
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/rules", response_model=List[RuleResponse], tags=["Rules"])
-async def get_all_rules():
-    return db.get_all_rules()
-
-@app.delete("/api/rules/{rule_id}", status_code=204, tags=["Rules"])
-async def delete_rule_by_id(rule_id: str):
-    if not db.delete_rule(rule_id):
-        raise HTTPException(status_code=404, detail="Rule not found.")
-    return Response(status_code=204)
-
-@app.post("/api/transactions/recategorize", tags=["Processing"])
-async def trigger_recategorization():
-    re_categorized_count = rules_engine.recategorize_all_transactions()
-    return {"message": f"Successfully re-categorized {re_categorized_count} transactions."}
-
-@app.get("/api/sankey/home", tags=["Analysis"])
-async def get_home_sankey_data(period: str = "all"):
-    return analysis.generate_capital_flow_sankey(period, exclude_invisible=True)
-
-@app.get("/api/analysis/capital-flow-table", tags=["Analysis"])
-async def get_home_capital_flow_table(period: str = "all"):
-    return analysis.generate_capital_flow_table_data(period, exclude_invisible=True)
-
-@app.get("/api/analysis/investment-cashflow-summary", tags=["Analysis"])
-async def get_investment_cashflow_summary(period: str = "all"):
-    return analysis.calculate_investment_cashflow_summary(period)
-
-@app.get("/api/portfolio/summary", tags=["Analysis"])
-async def get_portfolio_summary(mode: str = Query("actuals")):
-    holdings = db.get_holdings()
-    total_market_value = sum(h.get('market_value', 0) for h in holdings if h.get('market_value') is not None)
-    total_re_equity = db.get_total_real_estate_equity()
-    result = {
-        "total_market_value": total_market_value,
-        "total_real_estate_equity": total_re_equity,
-        "total_net_worth": total_market_value + total_re_equity
-    }
-    if mode == 'demo':
-        return demo_mode.process_for_demo_mode(result)
-    return result
-
-@app.get("/api/analysis/cashflow-chart", tags=["Analysis"])
-async def get_cashflow_chart(filters: Dict[str, Any] = Depends(get_transaction_filters)):
-    return analysis.prepare_cashflow_chart_data(filters)
-
-@app.get("/api/analysis/portfolio-allocation", tags=["Analysis"], response_model=PortfolioAllocationResponse)
-async def get_portfolio_allocation_data(mode: str = Query("actuals")):
-    result = analysis.prepare_portfolio_allocation_chart_data()
-    if mode == 'demo':
-        return demo_mode.process_for_demo_mode(result)
-    return result
-
-@app.get("/api/analysis/portfolio-chart", tags=["Analysis"])
-async def get_portfolio_chart(filters: Dict[str, Any] = Depends(get_holding_filters), mode: str = Query("actuals")):
-    result = analysis.prepare_portfolio_chart_data(filters)
-    if mode == 'demo':
-        return demo_mode.process_for_demo_mode(result)
-    return result
-
-@app.get("/api/analysis/effective-tax-rates", response_model=List[TaxRateSummary], tags=["Analysis"])
-async def get_effective_tax_rates():
-    target_years = [2023, 2024]
-    return analysis.calculate_effective_tax_rates_for_years(target_years)
-
-@app.get("/api/portfolio/overall-return", response_model=PortfolioOverallReturnSummary, tags=["Analysis"])
-async def get_portfolio_overall_return(mode: str = Query("actuals")):
-    result = analysis.calculate_portfolio_summary_metrics()
-    if mode == 'demo':
-        return demo_mode.process_for_demo_mode(result)
-    return result
-
-@app.get("/api/portfolio/layered-returns-summary", response_model=LayeredReturnsResponse, tags=["Analysis"])
-async def get_layered_returns_summary(mode: str = Query("actuals")):
-    result = analysis.calculate_layered_returns_summary()
-    return result
-
-@app.get("/api/analysis/portfolio-waterfall", response_model=PortfolioWaterfallResponse, tags=["Analysis"])
-async def get_portfolio_waterfall(period: str = Query("all", description="Time period, e.g., '2023', '6m', 'all'")):
-    return analysis.calculate_portfolio_waterfall(period)
-
-@app.get("/api/accounts/performance", tags=["Analysis"])
-async def get_account_performance(mode: str = Query("actuals")):
-    data = analysis.get_account_performance_summary()
-    if mode == 'demo':
-        return demo_mode.process_for_demo_mode(data)
-    return data
-
-@app.get("/api/transactions", tags=["Data"])
-async def get_filtered_transactions(filters: Dict[str, Any] = Depends(get_transaction_filters)):
-    return db.get_transactions(filters)
-
-@app.post("/api/transactions/bulk-tag", tags=["Data"])
-async def bulk_tag_transactions(payload: BulkTagRequest):
-    updated = []
-    for tx_id in payload.transaction_ids:
-        tx_dict = db.get_transaction(tx_id)
-        if tx_dict:
-            existing_tags = [t.strip() for t in (tx_dict.get('tags') or '').split(',') if t.strip()]
-            new_tags = list(set(existing_tags + payload.tags))
-            
-            tx_date = datetime.strptime(tx_dict['transaction_date'].split(' ')[0], '%Y-%m-%d').date()
-            tx_obj = Transaction(
-                transaction_id=tx_dict['transaction_id'],
-                account_id=tx_dict['account_id'],
-                transaction_date=tx_date,
-                amount=Decimal(str(tx_dict['amount'])),
-                description=tx_dict['description'],
-                category=tx_dict.get('category'),
-                cashflow_type=CashflowType.from_string(tx_dict.get('cashflow_type')),
-                tags=new_tags,
-                merchant=tx_dict.get('merchant'),
-                asset_id=tx_dict.get('asset_id'),
-                import_run_id=tx_dict.get('import_run_id'),
-                raw_data_hash=tx_dict.get('raw_data_hash'),
-                institution=tx_dict.get('institution'),
-                original_category=tx_dict.get('original_category')
-            )
-            tx_obj.is_transfer = tx_obj.cashflow_type == CashflowType.TRANSFER
-            updated.append(tx_obj)
-    
-    if updated:
-        db.save_transactions(updated)
-    return {"message": f"Successfully tagged {len(updated)} transactions."}
-
-@app.put("/api/transactions/{transaction_id}", tags=["Data"])
-async def update_transaction(transaction_id: str, payload: TransactionUpdate):
-    tx_dict = db.get_transaction(transaction_id)
-    if not tx_dict:
-        raise HTTPException(status_code=404, detail="Transaction not found.")
-    
-    tx_date = datetime.strptime(tx_dict['transaction_date'].split(' ')[0], '%Y-%m-%d').date()
-    amount = Decimal(str(tx_dict['amount']))
-    cashflow_type = CashflowType.from_string(payload.cashflow_type)
-
-    tx_obj = Transaction(
-        transaction_id=tx_dict['transaction_id'],
-        account_id=tx_dict['account_id'],
-        transaction_date=tx_date,
-        amount=amount,
-        description=payload.description,
-        category=payload.category,
-        cashflow_type=cashflow_type,
-        tags=payload.tags,
-        merchant=tx_dict.get('merchant'),
-        asset_id=tx_dict.get('asset_id'),
-        import_run_id=tx_dict.get('import_run_id'),
-        raw_data_hash=tx_dict.get('raw_data_hash'),
-        institution=tx_dict.get('institution'),
-        original_category=tx_dict.get('original_category')
-    )
-    tx_obj.is_transfer = tx_obj.cashflow_type == CashflowType.TRANSFER
-    db.save_transactions([tx_obj])
-    return {"message": "Transaction updated successfully", "transaction": tx_obj}
-
-@app.get("/api/holdings", tags=["Data"])
-async def get_filtered_holdings(filters: Dict[str, Any] = Depends(get_holding_filters), mode: str = Query("actuals")):
-    result = db.get_holdings(filters)
-    if mode == 'demo':
-        return demo_mode.process_for_demo_mode(result)
-    return result
-
-@app.put("/api/holdings/{holding_id}", tags=["Data"])
-async def update_holding(holding_id: str, payload: HoldingUpdate):
-    db.update_holding(holding_id, payload.dict())
-    updated_holding = db.get_holding(holding_id)
-    if not updated_holding:
-        raise HTTPException(status_code=404, detail="Holding not found after update.")
-    return updated_holding
+@app.get("/api/filter-options/income-categories", response_model=List[str], tags=["Filters"])
+async def get_income_category_options():
+    return db.get_income_categories()
 
 @app.get("/api/filter-options", tags=["Filters"])
 async def get_filter_options():
     return db.get_filter_options()
-
-@app.get("/api/filter-options/income-categories", response_model=List[str], tags=["Filters"])
-async def get_income_category_options():
-    return db.get_income_categories()
 
 @app.get("/api/accounts", response_model=List[str], tags=["Accounts"])
 async def get_all_accounts():
@@ -4639,7 +4766,7 @@ async def get_all_properties(mode: str = Query("actuals")):
 @app.post("/api/properties", response_model=PropertyResponse, status_code=201, tags=["Real Estate"])
 async def create_property(payload: PropertyCreate):
     existing = db.get_all_properties()
-    if len(existing) >= 12: # Expanded limit for temporal lifecycles
+    if len(existing) >= 12:
         raise HTTPException(status_code=400, detail="Maximum property limit reached.")
     
     prop_id = str(uuid.uuid4())
@@ -4834,6 +4961,183 @@ async def get_all_tags_summary():
 async def get_tag_records(tag_name: str):
     return db.get_records_by_tag(tag_name)
 
+@app.post("/api/rules", response_model=RuleResponse, status_code=201, tags=["Rules"])
+async def create_new_rule(rule: RuleCreate):
+    try:
+        new_rule = db.create_rule(rule.dict())
+        return new_rule
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/rules", response_model=List[RuleResponse], tags=["Rules"])
+async def get_all_rules():
+    return db.get_all_rules()
+
+@app.delete("/api/rules/{rule_id}", status_code=204, tags=["Rules"])
+async def delete_rule_by_id(rule_id: str):
+    if not db.delete_rule(rule_id):
+        raise HTTPException(status_code=404, detail="Rule not found.")
+    return Response(status_code=204)
+
+@app.post("/api/transactions/recategorize", tags=["Processing"])
+async def trigger_recategorization():
+    re_categorized_count = rules_engine.recategorize_all_transactions()
+    return {"message": f"Successfully re-categorized {re_categorized_count} transactions."}
+
+@app.get("/api/sankey/home", tags=["Analysis"])
+async def get_home_sankey_data(period: str = "all"):
+    return analysis.generate_capital_flow_sankey(period, exclude_invisible=True)
+
+@app.get("/api/analysis/capital-flow-table", tags=["Analysis"])
+async def get_home_capital_flow_table(period: str = "all"):
+    return analysis.generate_capital_flow_table_data(period, exclude_invisible=True)
+
+@app.get("/api/analysis/investment-cashflow-summary", tags=["Analysis"])
+async def get_investment_cashflow_summary(period: str = "all"):
+    return analysis.calculate_investment_cashflow_summary(period)
+
+@app.get("/api/portfolio/summary", tags=["Analysis"])
+async def get_portfolio_summary(mode: str = Query("actuals")):
+    holdings = db.get_holdings()
+    total_market_value = sum(h.get('market_value', 0) for h in holdings if h.get('market_value') is not None)
+    total_re_equity = db.get_total_real_estate_equity()
+    result = {
+        "total_market_value": total_market_value,
+        "total_real_estate_equity": total_re_equity,
+        "total_net_worth": total_market_value + total_re_equity
+    }
+    if mode == 'demo':
+        return demo_mode.process_for_demo_mode(result)
+    return result
+
+@app.get("/api/analysis/cashflow-chart", tags=["Analysis"])
+async def get_cashflow_chart(filters: Dict[str, Any] = Depends(get_transaction_filters)):
+    return analysis.prepare_cashflow_chart_data(filters)
+
+@app.get("/api/analysis/portfolio-allocation", tags=["Analysis"], response_model=PortfolioAllocationResponse)
+async def get_portfolio_allocation_data(mode: str = Query("actuals")):
+    result = analysis.prepare_portfolio_allocation_chart_data()
+    if mode == 'demo':
+        return demo_mode.process_for_demo_mode(result)
+    return result
+
+@app.get("/api/analysis/portfolio-chart", tags=["Analysis"])
+async def get_portfolio_chart(filters: Dict[str, Any] = Depends(get_holding_filters), mode: str = Query("actuals")):
+    result = analysis.prepare_portfolio_chart_data(filters)
+    if mode == 'demo':
+        return demo_mode.process_for_demo_mode(result)
+    return result
+
+@app.get("/api/analysis/effective-tax-rates", response_model=List[TaxRateSummary], tags=["Analysis"])
+async def get_effective_tax_rates():
+    target_years = [2023, 2024]
+    return analysis.calculate_effective_tax_rates_for_years(target_years)
+
+@app.get("/api/portfolio/overall-return", response_model=PortfolioOverallReturnSummary, tags=["Analysis"])
+async def get_portfolio_overall_return(mode: str = Query("actuals")):
+    result = analysis.calculate_portfolio_summary_metrics()
+    if mode == 'demo':
+        return demo_mode.process_for_demo_mode(result)
+    return result
+
+@app.get("/api/portfolio/layered-returns-summary", response_model=LayeredReturnsResponse, tags=["Analysis"])
+async def get_layered_returns_summary(mode: str = Query("actuals")):
+    result = analysis.calculate_layered_returns_summary()
+    return result
+
+@app.get("/api/analysis/portfolio-waterfall", response_model=PortfolioWaterfallResponse, tags=["Analysis"])
+async def get_portfolio_waterfall(period: str = Query("all", description="Time period, e.g., '2023', '6m', 'all'")):
+    return analysis.calculate_portfolio_waterfall(period)
+
+@app.get("/api/accounts/performance", tags=["Analysis"])
+async def get_account_performance(mode: str = Query("actuals")):
+    data = analysis.get_account_performance_summary()
+    if mode == 'demo':
+        return demo_mode.process_for_demo_mode(data)
+    return data
+
+@app.get("/api/transactions", tags=["Data"])
+async def get_filtered_transactions(filters: Dict[str, Any] = Depends(get_transaction_filters)):
+    return db.get_transactions(filters)
+
+@app.post("/api/transactions/bulk-tag", tags=["Data"])
+async def bulk_tag_transactions(payload: BulkTagRequest):
+    updated = []
+    for tx_id in payload.transaction_ids:
+        tx_dict = db.get_transaction(tx_id)
+        if tx_dict:
+            existing_tags = [t.strip() for t in (tx_dict.get('tags') or '').split(',') if t.strip()]
+            new_tags = list(set(existing_tags + payload.tags))
+            
+            tx_date = datetime.strptime(tx_dict['transaction_date'].split(' ')[0], '%Y-%m-%d').date()
+            tx_obj = Transaction(
+                transaction_id=tx_dict['transaction_id'],
+                account_id=tx_dict['account_id'],
+                transaction_date=tx_date,
+                amount=Decimal(str(tx_dict['amount'])),
+                description=tx_dict['description'],
+                category=tx_dict.get('category'),
+                cashflow_type=CashflowType.from_string(tx_dict.get('cashflow_type')),
+                tags=new_tags,
+                merchant=tx_dict.get('merchant'),
+                asset_id=tx_dict.get('asset_id'),
+                import_run_id=tx_dict.get('import_run_id'),
+                raw_data_hash=tx_dict.get('raw_data_hash'),
+                institution=tx_dict.get('institution'),
+                original_category=tx_dict.get('original_category')
+            )
+            tx_obj.is_transfer = tx_obj.cashflow_type == CashflowType.TRANSFER
+            updated.append(tx_obj)
+    
+    if updated:
+        db.save_transactions(updated)
+    return {"message": f"Successfully tagged {len(updated)} transactions."}
+
+@app.put("/api/transactions/{transaction_id}", tags=["Data"])
+async def update_transaction(transaction_id: str, payload: TransactionUpdate):
+    tx_dict = db.get_transaction(transaction_id)
+    if not tx_dict:
+        raise HTTPException(status_code=404, detail="Transaction not found.")
+    
+    tx_date = datetime.strptime(tx_dict['transaction_date'].split(' ')[0], '%Y-%m-%d').date()
+    amount = Decimal(str(tx_dict['amount']))
+    cashflow_type = CashflowType.from_string(payload.cashflow_type)
+
+    tx_obj = Transaction(
+        transaction_id=tx_dict['transaction_id'],
+        account_id=tx_dict['account_id'],
+        transaction_date=tx_date,
+        amount=amount,
+        description=payload.description,
+        category=payload.category,
+        cashflow_type=cashflow_type,
+        tags=payload.tags,
+        merchant=tx_dict.get('merchant'),
+        asset_id=tx_dict.get('asset_id'),
+        import_run_id=tx_dict.get('import_run_id'),
+        raw_data_hash=tx_dict.get('raw_data_hash'),
+        institution=tx_dict.get('institution'),
+        original_category=tx_dict.get('original_category')
+    )
+    tx_obj.is_transfer = tx_obj.cashflow_type == CashflowType.TRANSFER
+    db.save_transactions([tx_obj])
+    return {"message": "Transaction updated successfully", "transaction": tx_obj}
+
+@app.get("/api/holdings", tags=["Data"])
+async def get_filtered_holdings(filters: Dict[str, Any] = Depends(get_holding_filters), mode: str = Query("actuals")):
+    result = db.get_holdings(filters)
+    if mode == 'demo':
+        return demo_mode.process_for_demo_mode(result)
+    return result
+
+@app.put("/api/holdings/{holding_id}", tags=["Data"])
+async def update_holding(holding_id: str, payload: HoldingUpdate):
+    db.update_holding(holding_id, payload.dict())
+    updated_holding = db.get_holding(holding_id)
+    if not updated_holding:
+        raise HTTPException(status_code=404, detail="Holding not found after update.")
+    return updated_holding
+
 @app.post("/api/data/purge", tags=["Admin"])
 async def purge_data(request: PurgeRequest):
     try:
@@ -4864,8 +5168,25 @@ async def restore_backup(file: UploadFile = File(...)):
     try:
         if not file.filename.endswith('.db') and not file.filename.endswith('.sqlite'):
             raise HTTPException(status_code=400, detail="Invalid file type. Please upload a .db file.")
-        with open(db.DB_FILE, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        
+        # Read completely into memory first to avoid blocking the event loop with I/O
+        content = await file.read()
+        
+        # Write the file down to disk
+        with open(db.DB_FILE, "wb") as f:
+            f.write(content)
+            
+        # Critical: Purge lingering SQLite WAL and SHM files to prevent disk image malformation
+        wal_path = str(db.DB_FILE) + "-wal"
+        shm_path = str(db.DB_FILE) + "-shm"
+        if os.path.exists(wal_path):
+            os.remove(wal_path)
+        if os.path.exists(shm_path):
+            os.remove(shm_path)
+            
+        # Tell the database module to re-run schema validation on the next query
+        db._schema_ensured = False
+
         return {"message": "Database restored successfully. Please refresh the application."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to restore backup: {e}")
@@ -6645,7 +6966,12 @@ const RunwayChart = ({ likelyData, worstData, bestData }) => {
                     legend: 'Total Net Worth ($)', legendOffset: -70, legendPosition: 'middle', 
                     format: value => `$${value / 1000000}M`
                 }}
-                colors={['#00f2fe', '#E2B254', '#ff6b6b']} 
+                colors={(serie) => {
+                    if (serie.id === "Best Case") return '#00f2fe';
+                    if (serie.id === "Likely Scenario") return '#E2B254';
+                    if (serie.id === "Worst Case") return '#ff6b6b';
+                    return '#cccccc';
+                }}
                 lineWidth={3}
                 pointSize={2}
                 pointColor={{ theme: 'background' }}
@@ -6740,7 +7066,13 @@ const AssetCompositionChart = ({ data }) => {
                 yScale={{ type: 'linear', stacked: true }}
                 axisBottom={{ legend: 'Age', legendOffset: 36, legendPosition: 'middle' }}
                 axisLeft={{ format: value => `$${value / 1000000}M` }}
-                colors={['#05c46b', '#00f2fe', '#feca57', '#ff9ff3']} 
+                colors={(serie) => {
+                    if (serie.id === "Real Estate Equity") return '#05c46b';
+                    if (serie.id === "Taxable") return '#00f2fe';
+                    if (serie.id === "Deferred (IRA)") return '#feca57';
+                    if (serie.id === "Roth") return '#ff9ff3';
+                    return '#cccccc';
+                }} 
                 enableArea={true}
                 areaOpacity={0.6}
                 enablePoints={false}

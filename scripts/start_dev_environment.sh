@@ -61,8 +61,8 @@ pip install -r requirements.txt > /dev/null
 # --- Step 3: Start Backend (Background) ---
 echo "3. Starting backend server on http://0.0.0.0:$BACKEND_PORT..."
 # Using --workers 1 to avoid complexity with concurrency/DB locks for now, and --reload for dev ease.
-# Scotty: Bind to 0.0.0.0 for LAN access
-uvicorn src.main:app --reload --host 0.0.0.0 --port $BACKEND_PORT &
+# Scotty: Bind to 0.0.0.0 for LAN access and exclude data files to prevent reload death loop.
+uvicorn src.main:app --reload --reload-exclude "data/*" --reload-exclude "*.db" --reload-exclude "*.db-*" --host 0.0.0.0 --port $BACKEND_PORT &
 
 # Capture the PID of the background process
 BACKEND_PID=$!

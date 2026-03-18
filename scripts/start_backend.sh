@@ -37,7 +37,8 @@ pip install -r requirements.txt
 
 # Launch the uvicorn server with hot-reloading
 # Scotty: Bind to 0.0.0.0 to allow access from local network (iPad, etc.)
+# Scotty: Tell uvicorn to ignore data directory so DB hot-swaps do not crash the server
 echo "Launching uvicorn with --reload on http://0.0.0.0:$PORT..."
-uvicorn src.main:app --reload --host 0.0.0.0 --port $PORT
+uvicorn src.main:app --reload --reload-exclude "data/*" --reload-exclude "*.db" --reload-exclude "*.db-*" --host 0.0.0.0 --port $PORT
 
 echo "--- Backend server process terminated. ---"

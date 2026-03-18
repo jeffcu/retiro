@@ -46,7 +46,12 @@ const RunwayChart = ({ likelyData, worstData, bestData }) => {
                     legend: 'Total Net Worth ($)', legendOffset: -70, legendPosition: 'middle', 
                     format: value => `$${value / 1000000}M`
                 }}
-                colors={['#00f2fe', '#E2B254', '#ff6b6b']} 
+                colors={(serie) => {
+                    if (serie.id === "Best Case") return '#00f2fe';
+                    if (serie.id === "Likely Scenario") return '#E2B254';
+                    if (serie.id === "Worst Case") return '#ff6b6b';
+                    return '#cccccc';
+                }}
                 lineWidth={3}
                 pointSize={2}
                 pointColor={{ theme: 'background' }}
@@ -141,7 +146,13 @@ const AssetCompositionChart = ({ data }) => {
                 yScale={{ type: 'linear', stacked: true }}
                 axisBottom={{ legend: 'Age', legendOffset: 36, legendPosition: 'middle' }}
                 axisLeft={{ format: value => `$${value / 1000000}M` }}
-                colors={['#05c46b', '#00f2fe', '#feca57', '#ff9ff3']} 
+                colors={(serie) => {
+                    if (serie.id === "Real Estate Equity") return '#05c46b';
+                    if (serie.id === "Taxable") return '#00f2fe';
+                    if (serie.id === "Deferred (IRA)") return '#feca57';
+                    if (serie.id === "Roth") return '#ff9ff3';
+                    return '#cccccc';
+                }} 
                 enableArea={true}
                 areaOpacity={0.6}
                 enablePoints={false}
