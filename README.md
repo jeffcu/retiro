@@ -21,13 +21,14 @@ Unlike commercial aggregators that scrape your passwords and sell your data, **R
 
 ## 👤 The Ideal User
 
-This system is built for the **hands-on planner**.
+This system is built for the **hands-on planner with a knack for vibe-coding**.
 
 *   **You value privacy above convenience.** You prefer uploading CSVs once a month over giving a third-party app your bank login credentials.
 *   **You want "Live" Net Worth.** While you manage the transaction history, the system automatically pulls end-of-day stock and bond prices to keep your portfolio value current.
 *   **You are planning complex scenarios.** You need to model selling a primary residence in 2030, paying for a wedding in 2032, or funding long-term care in 2045.
 *   **You care about Tax Drag.** You want to see how drawing from your IRA vs. your Brokerage account affects your long-term survival rate.
 *   **No cost to operate.** Market updates use a slow drip strategy to stay under the pay levels for market prices. Add free API keys from Massive and/or AlphaVantage to enable the free daily price refresh after market close, and a mid-day refresh of your top 25 holdings.
+*   **You tinker.** Retiro is a starting point you can modify with vibe coding skills, add reports, expand the simulation, add a new view, add tracking for collectables, watches, art.   Remember, you break it, you bought it!
 
 ---
 
