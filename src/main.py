@@ -1,10 +1,12 @@
 import uvicorn
+import sys
 import uuid
 import asyncio
 import shutil
 from datetime import datetime, timezone, date
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body, Response, Query, Depends, BackgroundTasks, Path
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import os
@@ -253,7 +255,7 @@ def get_holding_filters(
 ):
     return {k: v for k, v in locals().items() if v is not None}
 
-@app.get("/")
+@app.get("/api")
 async def root():
     return {"message": "Curie Trust Financial Control Center API is running."}
 
@@ -790,6 +792,14 @@ async def purge_data(request: PurgeRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+@app.post("/api/admin/factory-reset", tags=["Admin"])
+async def factory_reset_db():
+    try:
+        db.factory_reset()
+        return {"message": "System purged. Factory reset complete."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/market-data/refresh", tags=["Market Data"])
 async def trigger_market_data_refresh(background_tasks: BackgroundTasks, limit: int = Query(25, description="Number of top holdings to refresh. Use 0 for all.")):
     limit = limit if limit > 0 else 1000
@@ -834,6 +844,30 @@ async def restore_backup(file: UploadFile = File(...)):
         return {"message": "Database restored successfully. Please refresh the application."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to restore backup: {e}")
+
+# --- SPA / STATIC FILE MOUNTING FOR STANDALONE APP ---
+def get_base_path():
+    if getattr(sys, 'frozen', False):
+        return sys._MEIPASS
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+base_path = get_base_path()
+dist_dir = os.path.join(base_path, "dist")
+
+if os.path.exists(dist_dir):
+    assets_dir = os.path.join(dist_dir, "assets")
+    if os.path.exists(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+    
+    @app.get("/{full_path:path}")
+    async def catch_all(full_path: str):
+        if full_path.startswith("api/"):
+            return {"error": "API route not found"}
+            
+        index_path = os.path.join(dist_dir, "index.html")
+        if os.path.exists(index_path):
+            return FileResponse(index_path)
+        return {"error": "Frontend build index.html not found."}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

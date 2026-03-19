@@ -1298,3 +1298,22 @@ def get_records_by_tag(tag: str) -> Dict[str, List[Dict[str, Any]]]:
             matched_holdings.append(dict(r))
             
     return {"transactions": matched_tx, "holdings": matched_holdings}
+
+def factory_reset():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    tables_to_clear = [
+        'transactions', 'holdings', 'properties', 'price_history',
+        'import_runs', 'account_visibility', 'account_metadata',
+        'tax_year_facts', 'future_income_streams', 'portfolio_value_snapshots',
+        'discretionary_budget_items', 'rules'
+    ]
+    try:
+        for table in tables_to_clear:
+            cursor.execute(f"DELETE FROM {table};")
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()

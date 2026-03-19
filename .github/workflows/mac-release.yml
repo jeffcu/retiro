@@ -1,0 +1,52 @@
+name: Build Mac Standalone App
+
+on:
+  workflow_dispatch:
+  release:
+    types: [created]
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+
+    - name: Build Frontend (Vite)
+      run: |
+        cd projects/trust
+        npm install
+        npm run build
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install Python Dependencies
+      run: |
+        cd projects/trust
+        pip install -r requirements.txt
+        pip install pyinstaller
+
+    - name: Build Mac App via PyInstaller
+      run: |
+        cd projects/trust
+        pyinstaller build_mac.spec
+
+    - name: Archive App Bundle
+      run: |
+        cd projects/trust/dist
+        zip -r RetiroMoney-Mac.zip RetiroMoney.app
+
+    - name: Upload Release Asset
+      uses: softprops/action-gh-release@v1
+      if: startsWith(github.ref, 'refs/tags/')
+      with:
+        files: projects/trust/dist/RetiroMoney-Mac.zip

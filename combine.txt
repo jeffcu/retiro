@@ -93,18 +93,20 @@ coverage/
 
 --- FILE: projects/trust/README.md ---
 
-# Trust Financial System
+# Retiro Money
 
 **A Local-First, Open Source Financial Control Center & Retirement Forecasting Engine.**
 
+![The Bridge - Homepage](docs/assets/homepage.jpg)
+
 ## 🎯 Mission
 
-The Trust Financial System is a privacy-centric application designed for **retirees and serious financial planners** who demand high-fidelity modeling without sacrificing data sovereignty.
+Retiro Money is a privacy-centric application designed for **retirees and serious financial planners** who demand high-fidelity modeling without sacrificing data sovereignty.
 
-Unlike commercial aggregators that scrape your passwords and sell your data, **Trust** runs entirely on your local machine. You import your own ledgers; the system enriches them with live market data to answer the critical questions of retirement:
+Unlike commercial aggregators that scrape your passwords and sell your data, **Retiro Money** runs entirely on your local machine. You import your own ledgers; the system enriches them with live market data to answer the critical questions of retirement:
 
 1.  **Will the capital last?** (Modeling market conditions against spending needs)
-2.  **How do life phases impact our runway?** (Transitioning from "Go" years to "Slow Go" and "No Go" years)
+2.  **How do life phases impact our runway?** (Transitioning from "Go" to "Slow Go" and "No Go" years)
 3.  **Are we tax-optimized?** (Visualizing the impact of RMDs, Roth conversions, and specific withdrawal orders)
 4.  **What is our True Net Worth?** (Liquid Assets + Real Estate Equity - Liabilities)
 
@@ -127,6 +129,7 @@ This system is built for the **hands-on planner**.
 ## 🚀 Key Features
 
 ### 1. "The Time Machine" Forecast Engine
+![The Time Machine - Forecast](docs/assets/forecast.jpg)
 *   **Life Phase Modeling:** distinct spending multipliers for your "Go" (Active), "Slow Go" (Aging), and "No Go" (Late stage) years.
 *   **Strategic Levers:** Toggle "Roth Conversion" strategies to fill low tax brackets.
 *   **Real Estate Logic:** Model the sale of a primary residence and the subsequent liquidity event.
@@ -134,6 +137,7 @@ This system is built for the **hands-on planner**.
 *   **Tax Awareness:** Automatically calculates Required Minimum Distributions (RMDs) and applies progressive tax brackets to your withdrawals.
 
 ### 2. The Bridge (Dashboard)
+![Asset Allocation](docs/assets/asset_allocation.jpg)
 *   **Real-Time Net Worth:** Aggregates portfolio holdings and real estate equity.
 *   **Asset Allocation:** Visualizes exposure across asset classes.
 *   **Tax Status Breakdown:** Tracks assets by tax bucket (Taxable, Deferred, Roth, Exempt).
@@ -157,12 +161,12 @@ This system is built for the **hands-on planner**.
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/your-username/trust.git
-cd trust/projects/trust
+git clone https://github.com/your-username/retiro-money.git
+cd retiro-money
 ```
 
 ### 2. Configure Environment
-Create a `.env` file in the `projects/trust` directory:
+Create a `.env` file in the root directory:
 ```bash
 cp .env.example .env
 ```
@@ -186,7 +190,7 @@ We provide a unified startup script that spins up both the Python backend and Re
 
 ## 🧪 Trying the Demo Dataset (The Calibration Matrix)
 
-If you want to explore the system's features without uploading your own personal data, we provide a mathematically perfect test dataset featuring a fictional 55-year-old user with a $2.5M net worth.
+If you want to explore the system's features without uploading your own personal data, we provide a mathematically perfect test dataset featuring a fictional 65-year-old user with a $2.5M net worth.
 
 1. Ensure the system is running.
 2. In a separate terminal, generate the demo database:
@@ -216,7 +220,6 @@ Navigate to **Forecast**. Adjust the "Flight Controls" (Inflation, Return Rate, 
 ## 🤝 Contributing
 
 This project is open source to encourage private financial sovereignty. Pull requests are welcome. If you find a bug in the tax calculation logic or want to add a new importer for a specific brokerage, please open an issue.
-
 
 --- FILE: projects/trust/agent_manifests.json ---
 
@@ -252,6 +255,68 @@ This project is open source to encourage private financial sovereignty. Pull req
   }
 }
 
+--- FILE: projects/trust/build_mac.spec ---
+
+# -*- mode: python ; coding: utf-8 -*-
+import sys
+import os
+
+block_cipher = None
+
+a = Analysis(
+    ['src/main.py'],
+    pathex=['.'],
+    binaries=[],
+    datas=[('dist', 'dist')],
+    hiddenimports=['fastapi', 'uvicorn', 'pandas', 'sqlite3', 'starlette', 'src.market_data', 'src.market_data.massive_provider', 'src.market_data.alphavantage_provider'],
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[],
+    win_no_prefer_redirects=False,
+    win_private_assemblies=False,
+    cipher=block_cipher,
+    noarchive=False,
+)
+pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name='RetiroMoney_Engine',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    console=True,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name='RetiroMoney',
+)
+
+app = BUNDLE(
+    coll,
+    name='RetiroMoney.app',
+    icon=None,
+    bundle_identifier='com.scotty.retiromoney',
+)
+
+
 --- FILE: projects/trust/index.html ---
 
 <!doctype html>
@@ -259,7 +324,7 @@ This project is open source to encourage private financial sovereignty. Pull req
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>trust</title>
+    <title>Retiro Money</title>
   </head>
   <body>
     <div id="root"></div>
@@ -328,6 +393,62 @@ export default defineConfig({
     },
   },
 })
+
+
+--- FILE: projects/trust/.github/workflows/mac-release.yml ---
+
+name: Build Mac Standalone App
+
+on:
+  workflow_dispatch:
+  release:
+    types: [created]
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+
+    - name: Build Frontend (Vite)
+      run: |
+        cd projects/trust
+        npm install
+        npm run build
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install Python Dependencies
+      run: |
+        cd projects/trust
+        pip install -r requirements.txt
+        pip install pyinstaller
+
+    - name: Build Mac App via PyInstaller
+      run: |
+        cd projects/trust
+        pyinstaller build_mac.spec
+
+    - name: Archive App Bundle
+      run: |
+        cd projects/trust/dist
+        zip -r RetiroMoney-Mac.zip RetiroMoney.app
+
+    - name: Upload Release Asset
+      uses: softprops/action-gh-release@v1
+      if: startsWith(github.ref, 'refs/tags/')
+      with:
+        files: projects/trust/dist/RetiroMoney-Mac.zip
 
 
 --- FILE: projects/trust/docs/Master_Design_Specification.md ---
@@ -3570,6 +3691,25 @@ def get_records_by_tag(tag: str) -> Dict[str, List[Dict[str, Any]]]:
             
     return {"transactions": matched_tx, "holdings": matched_holdings}
 
+def factory_reset():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    tables_to_clear = [
+        'transactions', 'holdings', 'properties', 'price_history',
+        'import_runs', 'account_visibility', 'account_metadata',
+        'tax_year_facts', 'future_income_streams', 'portfolio_value_snapshots',
+        'discretionary_budget_items', 'rules'
+    ]
+    try:
+        for table in tables_to_clear:
+            cursor.execute(f"DELETE FROM {table};")
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
 
 --- FILE: projects/trust/src/demo_mode.py ---
 
@@ -4359,12 +4499,14 @@ ReactDOM.createRoot(document.getElementById('root')).render(
 --- FILE: projects/trust/src/main.py ---
 
 import uvicorn
+import sys
 import uuid
 import asyncio
 import shutil
 from datetime import datetime, timezone, date
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body, Response, Query, Depends, BackgroundTasks, Path
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import os
@@ -4613,7 +4755,7 @@ def get_holding_filters(
 ):
     return {k: v for k, v in locals().items() if v is not None}
 
-@app.get("/")
+@app.get("/api")
 async def root():
     return {"message": "Curie Trust Financial Control Center API is running."}
 
@@ -5150,6 +5292,14 @@ async def purge_data(request: PurgeRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+@app.post("/api/admin/factory-reset", tags=["Admin"])
+async def factory_reset_db():
+    try:
+        db.factory_reset()
+        return {"message": "System purged. Factory reset complete."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/market-data/refresh", tags=["Market Data"])
 async def trigger_market_data_refresh(background_tasks: BackgroundTasks, limit: int = Query(25, description="Number of top holdings to refresh. Use 0 for all.")):
     limit = limit if limit > 0 else 1000
@@ -5194,6 +5344,30 @@ async def restore_backup(file: UploadFile = File(...)):
         return {"message": "Database restored successfully. Please refresh the application."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to restore backup: {e}")
+
+# --- SPA / STATIC FILE MOUNTING FOR STANDALONE APP ---
+def get_base_path():
+    if getattr(sys, 'frozen', False):
+        return sys._MEIPASS
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+base_path = get_base_path()
+dist_dir = os.path.join(base_path, "dist")
+
+if os.path.exists(dist_dir):
+    assets_dir = os.path.join(dist_dir, "assets")
+    if os.path.exists(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+    
+    @app.get("/{full_path:path}")
+    async def catch_all(full_path: str):
+        if full_path.startswith("api/"):
+            return {"error": "API route not found"}
+            
+        index_path = os.path.join(dist_dir, "index.html")
+        if os.path.exists(index_path):
+            return FileResponse(index_path)
+        return {"error": "Frontend build index.html not found."}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
@@ -6317,6 +6491,23 @@ const BackupManager = () => {
         }
     };
 
+    const handleFactoryReset = async () => {
+        if (!confirm("☢️ CRITICAL WARNING ☢️\n\nThis will permanently vaporize ALL transactions, holdings, properties, and custom rules. This action CANNOT be undone.\n\nAre you absolutely sure you want to wipe the database?")) {
+            return;
+        }
+        setIsRestoring(true);
+        try {
+            const response = await fetch('/api/admin/factory-reset', { method: 'POST' });
+            if (!response.ok) throw new Error('Factory reset failed');
+            alert('Database wiped clean. The calibration matrix has been reset. Reloading...');
+            window.location.reload();
+        } catch (error) {
+            alert(`Error: ${error.message}`);
+        } finally {
+            setIsRestoring(false);
+        }
+    };
+
     return (
         <div className="backup-card">
             <h3>System Backup & Restore</h3>
@@ -6326,7 +6517,7 @@ const BackupManager = () => {
                     <button className="backup-btn" onClick={handleDownload}>⬇ Download Database Snapshot</button>
                 </div>
                 <div className="backup-section restore-zone">
-                    <p style={{color: '#ff9a9a'}}>Dangerous: Overwrite current data with a backup.</p>
+                    <p style={{color: '#ff9a9a'}}>Dangerous: Overwrite or wipe current data.</p>
                     <form onSubmit={handleRestore} className="restore-input-group">
                         <input 
                             type="file" 
@@ -6339,6 +6530,14 @@ const BackupManager = () => {
                             {isRestoring ? 'Restoring...' : '⬆ Restore'}
                         </button>
                     </form>
+                    <button 
+                        type="button" 
+                        onClick={handleFactoryReset} 
+                        disabled={isRestoring}
+                        style={{marginTop: '0.5rem', width: '100%', backgroundColor: 'transparent', color: '#ff6b6b', border: '1px solid #ff6b6b', padding: '0.6rem 1rem', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold'}}
+                    >
+                        ☢️ Factory Reset (Wipe All Data)
+                    </button>
                 </div>
             </div>
         </div>
@@ -6510,6 +6709,7 @@ const DataImportView = () => {
 };
 
 export default DataImportView;
+
 
 --- FILE: projects/trust/src/components/ErrorBoundary.css ---
 
@@ -11939,7 +12139,7 @@ const SideBar = ({ activeView, setActiveView }) => {
     return (
         <nav className="sidebar">
             <div className="logo">
-                Trust Financial
+                Retiro Money
             </div>
             <ul>
                 {navItems.map(item => (

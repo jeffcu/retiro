@@ -257,6 +257,23 @@ const BackupManager = () => {
         }
     };
 
+    const handleFactoryReset = async () => {
+        if (!confirm("☢️ CRITICAL WARNING ☢️\n\nThis will permanently vaporize ALL transactions, holdings, properties, and custom rules. This action CANNOT be undone.\n\nAre you absolutely sure you want to wipe the database?")) {
+            return;
+        }
+        setIsRestoring(true);
+        try {
+            const response = await fetch('/api/admin/factory-reset', { method: 'POST' });
+            if (!response.ok) throw new Error('Factory reset failed');
+            alert('Database wiped clean. The calibration matrix has been reset. Reloading...');
+            window.location.reload();
+        } catch (error) {
+            alert(`Error: ${error.message}`);
+        } finally {
+            setIsRestoring(false);
+        }
+    };
+
     return (
         <div className="backup-card">
             <h3>System Backup & Restore</h3>
@@ -266,7 +283,7 @@ const BackupManager = () => {
                     <button className="backup-btn" onClick={handleDownload}>⬇ Download Database Snapshot</button>
                 </div>
                 <div className="backup-section restore-zone">
-                    <p style={{color: '#ff9a9a'}}>Dangerous: Overwrite current data with a backup.</p>
+                    <p style={{color: '#ff9a9a'}}>Dangerous: Overwrite or wipe current data.</p>
                     <form onSubmit={handleRestore} className="restore-input-group">
                         <input 
                             type="file" 
@@ -279,6 +296,14 @@ const BackupManager = () => {
                             {isRestoring ? 'Restoring...' : '⬆ Restore'}
                         </button>
                     </form>
+                    <button 
+                        type="button" 
+                        onClick={handleFactoryReset} 
+                        disabled={isRestoring}
+                        style={{marginTop: '0.5rem', width: '100%', backgroundColor: 'transparent', color: '#ff6b6b', border: '1px solid #ff6b6b', padding: '0.6rem 1rem', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold'}}
+                    >
+                        ☢️ Factory Reset (Wipe All Data)
+                    </button>
                 </div>
             </div>
         </div>
