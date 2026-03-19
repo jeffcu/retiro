@@ -2,6 +2,8 @@
 
 **A Local-First, Open Source Financial Control Center & Retirement Forecasting Engine.**
 
+![The Bridge - Homepage](docs/assets/homepage.jpg)
+
 ## 🎯 Mission
 
 Retiro Money is a privacy-centric application designed for **retirees and serious financial planners** who demand high-fidelity modeling without sacrificing data sovereignty.
@@ -9,7 +11,7 @@ Retiro Money is a privacy-centric application designed for **retirees and seriou
 Unlike commercial aggregators that scrape your passwords and sell your data, **Retiro Money** runs entirely on your local machine. You import your own ledgers; the system enriches them with live market data to answer the critical questions of retirement:
 
 1.  **Will the capital last?** (Modeling market conditions against spending needs)
-2.  **How do life phases impact our runway?** (Transitioning from "Go" years to "Slow Go" and "No Go" years)
+2.  **How do life phases impact our runway?** (Transitioning from "Go" to "Slow Go" and "No Go" years)
 3.  **Are we tax-optimized?** (Visualizing the impact of RMDs, Roth conversions, and specific withdrawal orders)
 4.  **What is our True Net Worth?** (Liquid Assets + Real Estate Equity - Liabilities)
 
@@ -32,6 +34,7 @@ This system is built for the **hands-on planner**.
 ## 🚀 Key Features
 
 ### 1. "The Time Machine" Forecast Engine
+![The Time Machine - Forecast](docs/assets/forecast.jpg)
 *   **Life Phase Modeling:** distinct spending multipliers for your "Go" (Active), "Slow Go" (Aging), and "No Go" (Late stage) years.
 *   **Strategic Levers:** Toggle "Roth Conversion" strategies to fill low tax brackets.
 *   **Real Estate Logic:** Model the sale of a primary residence and the subsequent liquidity event.
@@ -39,6 +42,7 @@ This system is built for the **hands-on planner**.
 *   **Tax Awareness:** Automatically calculates Required Minimum Distributions (RMDs) and applies progressive tax brackets to your withdrawals.
 
 ### 2. The Bridge (Dashboard)
+![Asset Allocation](docs/assets/asset_allocation.jpg)
 *   **Real-Time Net Worth:** Aggregates portfolio holdings and real estate equity.
 *   **Asset Allocation:** Visualizes exposure across asset classes.
 *   **Tax Status Breakdown:** Tracks assets by tax bucket (Taxable, Deferred, Roth, Exempt).
