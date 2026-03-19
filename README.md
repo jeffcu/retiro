@@ -1,12 +1,12 @@
-# Trust Financial System
+# Retiro Money
 
 **A Local-First, Open Source Financial Control Center & Retirement Forecasting Engine.**
 
 ## 🎯 Mission
 
-The Trust Financial System is a privacy-centric application designed for **retirees and serious financial planners** who demand high-fidelity modeling without sacrificing data sovereignty.
+Retiro Money is a privacy-centric application designed for **retirees and serious financial planners** who demand high-fidelity modeling without sacrificing data sovereignty.
 
-Unlike commercial aggregators that scrape your passwords and sell your data, **Trust** runs entirely on your local machine. You import your own ledgers; the system enriches them with live market data to answer the critical questions of retirement:
+Unlike commercial aggregators that scrape your passwords and sell your data, **Retiro Money** runs entirely on your local machine. You import your own ledgers; the system enriches them with live market data to answer the critical questions of retirement:
 
 1.  **Will the capital last?** (Modeling market conditions against spending needs)
 2.  **How do life phases impact our runway?** (Transitioning from "Go" years to "Slow Go" and "No Go" years)
@@ -62,12 +62,12 @@ This system is built for the **hands-on planner**.
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/your-username/trust.git
-cd trust/projects/trust
+git clone https://github.com/your-username/retiro-money.git
+cd retiro-money
 ```
 
 ### 2. Configure Environment
-Create a `.env` file in the `projects/trust` directory:
+Create a `.env` file in the root directory:
 ```bash
 cp .env.example .env
 ```
@@ -91,7 +91,7 @@ We provide a unified startup script that spins up both the Python backend and Re
 
 ## 🧪 Trying the Demo Dataset (The Calibration Matrix)
 
-If you want to explore the system's features without uploading your own personal data, we provide a mathematically perfect test dataset featuring a fictional 55-year-old user with a $2.5M net worth.
+If you want to explore the system's features without uploading your own personal data, we provide a mathematically perfect test dataset featuring a fictional 65-year-old user with a $2.5M net worth.
 
 1. Ensure the system is running.
 2. In a separate terminal, generate the demo database:

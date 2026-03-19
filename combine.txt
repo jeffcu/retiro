@@ -688,7 +688,8 @@ def build_demo_dataset():
         'forecast_withdrawal_strategy': 'standard',
         'forecast_base_col_lookback_years': 1,
         'forecast_base_col_categories': ['Groceries', 'Utilities', 'Property Tax', 'Insurance', 'Dining & Entertainment', 'Healthcare', 'Hobbies', 'Travel'],
-        'portfolio_inception_date': f"{current_year-2}-01-01"
+        'portfolio_inception_date': f"{current_year-2}-01-01",
+        'sankey_income_categories': ['Pension', 'Social Security']
     }
     for k, v in settings.items():
         db.set_setting(k, v)
@@ -714,12 +715,15 @@ def build_demo_dataset():
     )
     db.create_property(prop)
 
-    # 4. Holdings ($1.5M Liquid Net Worth)
-    print("Injecting Diversified Portfolio Data...")
+    # 4. Holdings ($1.5M Liquid Net Worth + Highly Appreciated Tech)
+    print("Injecting Diversified Portfolio Data & Legacy Assets...")
     apex_holdings = [
         Holding(holding_id=str(uuid.uuid4()), account_id="Apex Wealth", symbol="VTI", quantity=Decimal('1500'), cost_basis=Decimal('200000'), market_value=Decimal('350000'), asset_type="Equities", tags=["Core"]),
         Holding(holding_id=str(uuid.uuid4()), account_id="Apex Wealth", symbol="VGIT", quantity=Decimal('2000'), cost_basis=Decimal('120000'), market_value=Decimal('115000'), asset_type="Government Bonds", tags=["Yield"]),
-        Holding(holding_id=str(uuid.uuid4()), account_id="Apex Wealth", symbol="SGOV", quantity=Decimal('5000'), cost_basis=Decimal('500000'), market_value=Decimal('501000'), asset_type="Cash Equivalent", tags=["Liquidity"])
+        Holding(holding_id=str(uuid.uuid4()), account_id="Apex Wealth", symbol="SGOV", quantity=Decimal('5000'), cost_basis=Decimal('500000'), market_value=Decimal('501000'), asset_type="Cash Equivalent", tags=["Liquidity"]),
+        Holding(holding_id=str(uuid.uuid4()), account_id="Apex Wealth", symbol="AAPL", quantity=Decimal('2500'), cost_basis=Decimal('4500'), market_value=Decimal('450000'), asset_type="Equities", tags=["Highly Appreciated", "Tech"]),
+        Holding(holding_id=str(uuid.uuid4()), account_id="Apex Wealth", symbol="AMZN", quantity=Decimal('2000'), cost_basis=Decimal('3000'), market_value=Decimal('340000'), asset_type="Equities", tags=["Highly Appreciated", "Tech"]),
+        Holding(holding_id=str(uuid.uuid4()), account_id="Apex Wealth", symbol="GOOGL", quantity=Decimal('1500'), cost_basis=Decimal('5000'), market_value=Decimal('210000'), asset_type="Equities", tags=["Highly Appreciated", "Tech"])
     ]
     
     starlight_401k_holdings = [
