@@ -6,6 +6,7 @@ import shutil
 import socket
 import threading
 import webbrowser
+import time
 from datetime import datetime, timezone, date
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body, Response, Query, Depends, BackgroundTasks, Path
@@ -882,13 +883,24 @@ def get_free_port(start_port=8000, max_port=8100):
                 return port
     return 8000
 
-def open_browser(port):
+def open_browser_when_ready(port):
     url = f"http://127.0.0.1:{port}"
-    print(f"\n🚀 Control Center active! Opening browser at {url}\n")
-    webbrowser.open(url)
+    print(f"--- Engaging active port sensors for {url} ---")
+    
+    # Actively poll the port instead of a blind timeout
+    for _ in range(40):  # Maximum 20 seconds wait
+        try:
+            with socket.create_connection(('127.0.0.1', port), timeout=0.5):
+                print(f"\n🚀 Warp core stable! Opening browser at {url}\n")
+                webbrowser.open(url)
+                return
+        except OSError:
+            time.sleep(0.5)
+            
+    print(f"⚠️ Warning: Main screen offline. Please manually navigate to {url}")
 
 if __name__ == "__main__":
     port = get_free_port()
-    # Automatically launch default browser shortly after server begins binding
-    threading.Timer(1.5, open_browser, args=(port,)).start()
+    # Spawn a background thread that actively waits for the server to bind
+    threading.Thread(target=open_browser_when_ready, args=(port,), daemon=True).start()
     uvicorn.run(app, host="0.0.0.0", port=port)
