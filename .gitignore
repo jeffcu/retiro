@@ -67,3 +67,8 @@ dist-ssr
 
 # Vitest cache
 coverage/
+
+# Agent / Diagnostic Combiners
+combine.txt
+combined.txt
+*_combine.txt
